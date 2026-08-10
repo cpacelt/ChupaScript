@@ -165,6 +165,8 @@ TEST(LexerPunctuator, ForbiddenBytesAreErrors) {
     for (const std::string source : {"@", "#", "$", "^", "~", "\\"}) {
         const Lexed lexed = lexAll(source);
         EXPECT_FALSE(lexed.ok) << "должно быть ошибкой: " << source;
+        EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax) << source;
+        EXPECT_EQ(lexed.diag.offset, 0u) << source;
     }
 }
 
@@ -207,7 +209,9 @@ TEST(LexerIdentifier, IdentifierCannotStartWithDigit) {
 
 TEST(LexerIdentifier, NonAsciiIsNotAnIdentifier) {
     const Lexed lexed = lexAll("привет");
-    EXPECT_FALSE(lexed.ok);
+    ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 0u);
 }
 
 TEST(LexerIdentifier, ActiveKeywords) {
@@ -419,6 +423,8 @@ TEST(LexerString, UnknownEscapeIsError) {
 TEST(LexerString, UnicodeEscapeIsUnknown) {
     const Lexed lexed = lexAll("'\\u0041'");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 1u);
 }
 
 TEST(LexerString, UnterminatedLiteralIsError) {
@@ -436,11 +442,15 @@ TEST(LexerString, LineBreakInsideLiteralIsError) {
 TEST(LexerString, CarriageReturnInsideLiteralIsError) {
     const Lexed lexed = lexAll("'abc\rdef'");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 4u);
 }
 
 TEST(LexerString, TrailingBackslashIsError) {
     const Lexed lexed = lexAll("'abc\\");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 0u);
 }
 
 // ─── Совместный разбор ───────────────────────────────────────────────

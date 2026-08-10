@@ -3,6 +3,7 @@
 # version.cpp is a placeholder so the target has at least one translation unit;
 # delete it once real sources land here.
 add_library(chupascript STATIC
+    src/lexer.cpp
     src/version.cpp
 )
 

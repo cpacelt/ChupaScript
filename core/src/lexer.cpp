@@ -61,6 +61,70 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
         return true;
     }
 
+    const char c = src_[pos_];
+
+    // Двухбайтовые токены выигрывают у однобайтовых: правило максимального
+    // жевания, docs/grammar.md §4.3.
+    const bool hasNext = pos_ + 1 < len_;
+    const char n = hasNext ? src_[pos_ + 1] : '\0';
+
+    const auto emit = [&out, this](TokenKind kind, std::uint32_t length) noexcept {
+        out.kind = kind;
+        out.length = length;
+        pos_ += length;
+        return true;
+    };
+
+    switch (c) {
+        case '(': return emit(TokenKind::LParen, 1);
+        case ')': return emit(TokenKind::RParen, 1);
+        case '[': return emit(TokenKind::LBracket, 1);
+        case ']': return emit(TokenKind::RBracket, 1);
+        case '{': return emit(TokenKind::LBrace, 1);
+        case '}': return emit(TokenKind::RBrace, 1);
+        case ',': return emit(TokenKind::Comma, 1);
+        case ':': return emit(TokenKind::Colon, 1);
+        case ';': return emit(TokenKind::Semicolon, 1);
+        case '.': return emit(TokenKind::Dot, 1);
+
+        case '+': return emit(n == '=' ? TokenKind::PlusAssign : TokenKind::Plus,
+                              n == '=' ? 2 : 1);
+        case '-': return emit(n == '=' ? TokenKind::MinusAssign : TokenKind::Minus,
+                              n == '=' ? 2 : 1);
+        case '*': return emit(n == '=' ? TokenKind::StarAssign : TokenKind::Star,
+                              n == '=' ? 2 : 1);
+        // '//' и '/*' уже съедены skipTrivia, здесь остаются только '/=' и '/'.
+        case '/': return emit(n == '=' ? TokenKind::SlashAssign : TokenKind::Slash,
+                              n == '=' ? 2 : 1);
+        case '%': return emit(TokenKind::Percent, 1);
+
+        case '=': return emit(n == '=' ? TokenKind::Equal : TokenKind::Assign,
+                              n == '=' ? 2 : 1);
+        case '!': return emit(n == '=' ? TokenKind::NotEqual : TokenKind::Bang,
+                              n == '=' ? 2 : 1);
+        case '<': return emit(n == '=' ? TokenKind::LessEqual : TokenKind::Less,
+                              n == '=' ? 2 : 1);
+        case '>': return emit(n == '=' ? TokenKind::GreaterEqual : TokenKind::Greater,
+                              n == '=' ? 2 : 1);
+        case '?': return emit(n == '?' ? TokenKind::QuestionQuestion : TokenKind::Question,
+                              n == '?' ? 2 : 1);
+
+        // Одиночные '&' и '|' в языке отсутствуют, docs/grammar.md §4.8.
+        case '&':
+            if (n == '&') {
+                return emit(TokenKind::AndAnd, 2);
+            }
+            break;
+        case '|':
+            if (n == '|') {
+                return emit(TokenKind::OrOr, 2);
+            }
+            break;
+
+        default:
+            break;
+    }
+
     diag = Diagnostic{ErrorCode::Syntax, pos_, "unexpected byte"};
     return false;
 }

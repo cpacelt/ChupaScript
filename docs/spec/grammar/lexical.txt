@@ -1,0 +1,423 @@
+# ChupaScript — лексическая грамматика
+#
+# Нормативный артефакт. Определяет, из каких токенов состоит исходный текст.
+# Правила, невыразимые продукциями (самое длинное совпадение, учёт перевода
+# строки между токенами, значение токена), — в 03-lexical.md.
+#
+# Нотация ECMA-262:
+#   Имя ::                продукция лексической грамматики
+#   Имя_opt               необязательный элемент
+#   one of a b c          сокращение для списка односимвольных альтернатив
+#   [lookahead != x]      следующий символ не x
+#   [lookahead <- {a, b}] следующий символ принадлежит множеству
+#   [lookahead !<- {a,b}] следующий символ не принадлежит множеству
+#   but not X             исключение из множества, задаваемого альтернативой
+#   <ABC>                 именованная кодовая единица (см. таблицу ниже)
+#   # текст               комментарий, ненормативен
+#
+# Идентификатор правила = имя продукции. Тесты ссылаются на него.
+# Ссылка в спецификации: раздел 3.
+
+
+# =============================================================================
+# 1. Цели разбора
+# =============================================================================
+
+# Лексическая грамматика имеет две цели разбора. Какая из них применяется,
+# определяется контекстом синтаксической грамматики, потребляющей токены:
+# InputElementTemplateTail применяется там, где допустимы TemplateMiddle или
+# TemplateTail, то есть непосредственно после выражения подстановки шаблона;
+# во всех остальных местах применяется InputElement.
+
+InputElement ::
+    WhiteSpace
+    LineTerminator
+    Comment
+    Token
+    RightBracePunctuator
+
+InputElementTemplateTail ::
+    WhiteSpace
+    LineTerminator
+    Comment
+    Token
+    TemplateSubstitutionTail
+
+Token ::
+    IdentifierName
+    Punctuator
+    NumericLiteral
+    StringLiteral
+    Template
+
+
+# =============================================================================
+# 2. Исходный текст
+# =============================================================================
+
+SourceCharacter ::
+    любая кодовая единица UTF-16
+
+# Именованные кодовые единицы, используемые ниже:
+#   <TAB>   U+0009    <VT>    U+000B    <FF>    U+000C
+#   <SP>    U+0020    <NBSP>  U+00A0    <ZWNBSP> U+FEFF
+#   <LF>    U+000A    <CR>    U+000D    <LS>    U+2028    <PS> U+2029
+
+
+# =============================================================================
+# 3. Пробелы, переводы строк, комментарии
+# =============================================================================
+
+WhiteSpace ::
+    <TAB>
+    <VT>
+    <FF>
+    <ZWNBSP>
+    SpaceSeparator
+
+SpaceSeparator :: one of
+    U+0020  U+00A0  U+1680  U+2000  U+2001  U+2002  U+2003  U+2004  U+2005
+    U+2006  U+2007  U+2008  U+2009  U+200A  U+202F  U+205F  U+3000
+
+LineTerminator ::
+    <LF>
+    <CR>
+    <LS>
+    <PS>
+
+LineTerminatorSequence ::
+    <LF>
+    <CR> [lookahead != <LF>]
+    <LS>
+    <PS>
+    <CR> <LF>
+
+Comment ::
+    MultiLineComment
+    SingleLineComment
+
+MultiLineComment ::
+    /* MultiLineCommentChars_opt */
+
+MultiLineCommentChars ::
+    MultiLineNotAsteriskChar MultiLineCommentChars_opt
+    * PostAsteriskCommentChars_opt
+
+PostAsteriskCommentChars ::
+    MultiLineNotForwardSlashOrAsteriskChar MultiLineCommentChars_opt
+    * PostAsteriskCommentChars_opt
+
+MultiLineNotAsteriskChar ::
+    SourceCharacter but not *
+
+MultiLineNotForwardSlashOrAsteriskChar ::
+    SourceCharacter but not one of / or *
+
+SingleLineComment ::
+    // SingleLineCommentChars_opt
+
+SingleLineCommentChars ::
+    SingleLineCommentChar SingleLineCommentChars_opt
+
+SingleLineCommentChar ::
+    SourceCharacter but not LineTerminator
+
+
+# =============================================================================
+# 4. Идентификаторы
+# =============================================================================
+
+# Только ASCII. Экранированные последовательности в составе имени, допустимые
+# в JavaScript (UnicodeEscapeSequence вместо буквы), здесь не поддерживаются.
+
+IdentifierName ::
+    IdentifierStart
+    IdentifierName IdentifierPart
+
+IdentifierStart :: one of
+    a b c d e f g h i j k l m n o p q r s t u v w x y z
+    A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
+    $ _
+
+IdentifierPart ::
+    IdentifierStart
+    DecimalDigit
+
+# Продукция синтаксической грамматики, приведена здесь для полноты:
+# именем переменной, параметра или функции может быть не всякий IdentifierName.
+# После точки в обращении к свойству допустим любой IdentifierName, включая
+# зарезервированные слова: obj.default, obj.class.
+
+Identifier ::
+    IdentifierName but not ReservedWord
+
+
+# =============================================================================
+# 5. Зарезервированные слова
+# =============================================================================
+
+# Зарезервированы все ключевые слова JavaScript, включая не используемые ни
+# одной продукцией настоящей грамматики. Иное нарушало бы CS-CONF-0001:
+# `let class = 1` был бы допустимой единицей исполнения ChupaLang и при этом
+# синтаксической ошибкой JavaScript.
+#
+# Слова implements, interface, let, package, private, protected, public, static
+# и yield зарезервированы в JavaScript только в строгом режиме. ChupaLang
+# исполняется в строгом режиме всегда, поэтому они входят в список безусловно.
+
+ReservedWord :: one of
+    await      break      case       catch      class      const
+    continue   debugger   default    delete     do         else
+    enum       export     extends    false      finally    for
+    function   if         implements import     in         instanceof
+    interface  let        new        null       of         package
+    private    protected  public     return     static     super
+    switch     this       throw      true       try        typeof
+    var        void       while      with       yield
+
+# `of` в JavaScript — контекстное ключевое слово, а не зарезервированное. Здесь
+# оно зарезервировано: это сужение, при котором единица исполнения ChupaLang
+# остаётся корректной программой JavaScript, и оно устраняет единственную
+# контекстную зависимость при разборе for...of.
+#
+# Контекстными и допустимыми в качестве Identifier остаются async, get, set,
+# from, as, target.
+#
+# undefined, NaN и Infinity зарезервированными словами не являются: это
+# Identifier, разрешаемые в предопределённые значения. Запрет объявлять их и
+# присваивать им задан статическим правилом, а не грамматикой.
+
+
+# =============================================================================
+# 6. Пунктуаторы
+# =============================================================================
+
+Punctuator ::
+    OptionalChainingPunctuator
+    OtherPunctuator
+
+OptionalChainingPunctuator ::
+    ?. [lookahead !<- DecimalDigit]
+
+# Ограничение нужно, чтобы `a ? .5 : b` разбиралось как тернарный оператор.
+
+OtherPunctuator :: one of
+    {    (    )    [    ]    .    ;    ,    :    ?    =>
+    <    >    <=   >=   ==   !=   ===  !==
+    +    -    ++   --   *    /    %    !    &&   ||   ??
+    =    +=   -=   *=   /=   %=
+
+# ++ и -- не выводятся ни одной продукцией синтаксической грамматики:
+# UpdateExpression отсутствует, а других продукций, начинающихся или
+# продолжающихся этими токенами, нет. Они всё равно перечислены здесь, а не
+# просто отсутствуют в Punctuator: под самым длинным совпадением (CS-LEX-0002)
+# `++` обязана лексироваться одним токеном, а не как два `+`. Не будь их в этом
+# списке, `++i` читалось бы как `+(+i)`, а `a++b` — как `a + (+b)`: оба
+# принимались бы разбором с чужим смыслом вместо того, чтобы быть отвергнутыми.
+# Токен, не потребляемый ни одной продукцией, — способ гарантировать отказ, а
+# не переосмысление.
+
+RightBracePunctuator ::
+    }
+
+# `}` вынесена из Punctuator: при цели разбора InputElementTemplateTail она
+# начинает TemplateMiddle или TemplateTail, а не является отдельным токеном.
+#
+# Поскольку литералы регулярных выражений отсутствуют, символ / всегда означает
+# деление, и разделения целей разбора на InputElementDiv и InputElementRegExp,
+# как в ECMA-262, здесь не требуется.
+
+
+# =============================================================================
+# 7. Числовые литералы
+# =============================================================================
+
+# Ограничение: символ, непосредственно следующий за NumericLiteral, не может
+# быть IdentifierStart или DecimalDigit. Поэтому `3in x` — ошибка, а не
+# `3 in x`, а восьмеричная запись вида `0755` отвергается: она разбирается как
+# `0`, за которым сразу идёт цифра.
+
+NumericLiteral ::
+    DecimalLiteral
+    NonDecimalIntegerLiteral
+
+DecimalLiteral ::
+    DecimalIntegerLiteral . DecimalDigits_opt ExponentPart_opt
+    . DecimalDigits ExponentPart_opt
+    DecimalIntegerLiteral ExponentPart_opt
+
+DecimalIntegerLiteral ::
+    0
+    NonZeroDigit
+    NonZeroDigit NumericLiteralSeparator_opt DecimalDigits
+
+DecimalDigits ::
+    DecimalDigit
+    DecimalDigits DecimalDigit
+    DecimalDigits NumericLiteralSeparator DecimalDigit
+
+DecimalDigit :: one of
+    0 1 2 3 4 5 6 7 8 9
+
+NonZeroDigit :: one of
+    1 2 3 4 5 6 7 8 9
+
+NumericLiteralSeparator ::
+    _
+
+# Разделитель допустим только между цифрами: `1_000_000` — литерал,
+# `_1`, `1_`, `1__0` — нет.
+
+ExponentPart ::
+    ExponentIndicator SignedInteger
+
+ExponentIndicator :: one of
+    e E
+
+SignedInteger ::
+    DecimalDigits
+    + DecimalDigits
+    - DecimalDigits
+
+NonDecimalIntegerLiteral ::
+    0x HexDigits
+    0X HexDigits
+    0o OctalDigits
+    0O OctalDigits
+    0b BinaryDigits
+    0B BinaryDigits
+
+HexDigits ::
+    HexDigit
+    HexDigits HexDigit
+    HexDigits NumericLiteralSeparator HexDigit
+
+HexDigit :: one of
+    0 1 2 3 4 5 6 7 8 9 a b c d e f A B C D E F
+
+OctalDigits ::
+    OctalDigit
+    OctalDigits OctalDigit
+    OctalDigits NumericLiteralSeparator OctalDigit
+
+OctalDigit :: one of
+    0 1 2 3 4 5 6 7
+
+BinaryDigits ::
+    BinaryDigit
+    BinaryDigits BinaryDigit
+    BinaryDigits NumericLiteralSeparator BinaryDigit
+
+BinaryDigit :: one of
+    0 1
+
+
+# =============================================================================
+# 8. Строковые литералы
+# =============================================================================
+
+StringLiteral ::
+    " DoubleStringCharacters_opt "
+    ' SingleStringCharacters_opt '
+
+DoubleStringCharacters ::
+    DoubleStringCharacter DoubleStringCharacters_opt
+
+SingleStringCharacters ::
+    SingleStringCharacter SingleStringCharacters_opt
+
+DoubleStringCharacter ::
+    SourceCharacter but not one of " or \ or LineTerminator
+    <LS>
+    <PS>
+    \ EscapeSequence
+    LineContinuation
+
+SingleStringCharacter ::
+    SourceCharacter but not one of ' or \ or LineTerminator
+    <LS>
+    <PS>
+    \ EscapeSequence
+    LineContinuation
+
+LineContinuation ::
+    \ LineTerminatorSequence
+
+EscapeSequence ::
+    CharacterEscapeSequence
+    0 [lookahead !<- DecimalDigit]
+    HexEscapeSequence
+    UnicodeEscapeSequence
+
+CharacterEscapeSequence ::
+    SingleEscapeCharacter
+    NonEscapeCharacter
+
+SingleEscapeCharacter :: one of
+    ' " \ b f n r t v
+
+NonEscapeCharacter ::
+    SourceCharacter but not one of EscapeCharacter or LineTerminator
+
+EscapeCharacter ::
+    SingleEscapeCharacter
+    DecimalDigit
+    x
+    u
+
+# Из этого следует, что \8 и \9, а также восьмеричные последовательности вида
+# \101 отвергаются: в строгом режиме JavaScript они также запрещены.
+
+HexEscapeSequence ::
+    x HexDigit HexDigit
+
+UnicodeEscapeSequence ::
+    u Hex4Digits
+    u{ CodePoint }
+
+Hex4Digits ::
+    HexDigit HexDigit HexDigit HexDigit
+
+CodePoint ::
+    HexDigits
+
+# Ограничение: значение CodePoint не должно превышать 0x10FFFF.
+# Разделитель _ внутри CodePoint не допускается.
+
+
+# =============================================================================
+# 9. Шаблонные строки
+# =============================================================================
+
+# Теговые шаблоны (`tag` перед шаблоном) в языке отсутствуют, поэтому
+# некорректная escape-последовательность в шаблоне — всегда ошибка.
+
+Template ::
+    NoSubstitutionTemplate
+    TemplateHead
+
+TemplateSubstitutionTail ::
+    TemplateMiddle
+    TemplateTail
+
+NoSubstitutionTemplate ::
+    ` TemplateCharacters_opt `
+
+TemplateHead ::
+    ` TemplateCharacters_opt ${
+
+TemplateMiddle ::
+    } TemplateCharacters_opt ${
+
+TemplateTail ::
+    } TemplateCharacters_opt `
+
+TemplateCharacters ::
+    TemplateCharacter TemplateCharacters_opt
+
+TemplateCharacter ::
+    $ [lookahead != {]
+    \ EscapeSequence
+    LineContinuation
+    LineTerminatorSequence
+    SourceCharacter but not one of ` or \ or $ or LineTerminator

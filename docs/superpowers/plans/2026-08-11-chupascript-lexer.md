@@ -947,23 +947,53 @@ add_executable(chupascript_benchmarks
 
     python3 tools/bench-compare.py baseline.json current.json [--threshold 10]
 
-Возвращает 1, если cpu_time хотя бы одного бенчмарка вырос больше порога.
-Сравнивать имеет смысл только прогоны на одной машине: абсолютные числа
-между машинами несопоставимы.
+Возвращает 1, если cpu_time хотя бы одного бенчмарка вырос больше порога
+либо если бенчмарк из базы пропал из текущего прогона.
+
+Прогон с --benchmark_repetitions даёт несколько строк на бенчмарк; берётся
+медиана — она не съезжает от одного выброса. Сравнивать имеет смысл только
+прогоны на одной машине: абсолютные числа между машинами несопоставимы.
 """
 import argparse
 import json
+import statistics
 import sys
 
 
 def load(path):
+    """Возвращает отображение «имя бенчмарка → cpu_time».
+
+    Google Benchmark выдаёт либо строки отдельных повторов
+    (run_type "iteration"), либо только агрегаты (run_type "aggregate",
+    имена с суффиксом _mean, _median, _stddev, _cv), если задан
+    --benchmark_report_aggregates_only. Учитываются оба вида: медиана,
+    посчитанная самим Google Benchmark, имеет приоритет над медианой,
+    посчитанной здесь.
+    """
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
-    return {
-        entry["name"]: float(entry["cpu_time"])
-        for entry in data["benchmarks"]
-        if entry.get("run_type", "iteration") == "iteration"
-    }
+
+    entries = data.get("benchmarks")
+    if entries is None:
+        raise SystemExit(f'{path}: нет ключа "benchmarks" — это не отчёт Google Benchmark')
+
+    samples = {}
+    medians = {}
+    for entry in entries:
+        name = entry["name"]
+        if entry.get("run_type", "iteration") == "aggregate":
+            aggregate = entry.get("aggregate_name", "")
+            if aggregate != "median":
+                continue
+            suffix = "_" + aggregate
+            base = name[: -len(suffix)] if name.endswith(suffix) else name
+            medians[base] = float(entry["cpu_time"])
+            continue
+        samples.setdefault(name, []).append(float(entry["cpu_time"]))
+
+    result = {name: statistics.median(values) for name, values in samples.items()}
+    result.update(medians)
+    return result
 
 
 def main():
@@ -987,20 +1017,30 @@ def main():
         if name not in base:
             print(f"{name:<24}{'—':>12}{current[name]:>12.1f}{'новый':>10}")
             continue
+        if base[name] == 0.0:
+            # Нулевая база непригодна для сравнения: делить не на что.
+            print(f"{name:<24}{base[name]:>12.1f}{current[name]:>12.1f}{'база 0':>10}")
+            continue
         change = (current[name] - base[name]) / base[name] * 100.0
         print(f"{name:<24}{base[name]:>12.1f}{current[name]:>12.1f}{change:>9.1f}%")
         if change > args.threshold:
             regressed.append((name, change))
 
-    for name in sorted(set(base) - set(current)):
+    missing = sorted(set(base) - set(current))
+    for name in missing:
         print(f"{name:<24}{base[name]:>12.1f}{'—':>12}{'исчез':>10}")
 
     if regressed:
         print("\nДеградация:")
         for name, change in regressed:
             print(f"  {name}: +{change:.1f}%")
-        return 1
-    return 0
+
+    if missing:
+        print("\nПропали из прогона:")
+        for name in missing:
+            print(f"  {name}")
+
+    return 1 if regressed or missing else 0
 
 
 if __name__ == "__main__":
@@ -1704,7 +1744,7 @@ python3 tools/bench-compare.py benchmarks/baseline.json /tmp/bench-check.json
 echo "exit=$?"
 ```
 
-Expected: `exit=0`. Если база снималась с агрегатами, а проверка без них, имена не совпадут и все бенчмарки будут показаны как «новые» — в этом случае снять базу без `--benchmark_repetitions`.
+Expected: `exit=0`. База снимается с повторами и агрегатами, проверочный прогон — без них; скрипт приводит оба вида к медиане и сравнивает по общему имени бенчмарка.
 
 - [ ] **Step 6: Коммит**
 

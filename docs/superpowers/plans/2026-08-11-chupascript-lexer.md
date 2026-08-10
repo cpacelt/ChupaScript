@@ -31,9 +31,16 @@
 
 ## Решение по расхождению в спецификации
 
-`docs/grammar.md` §4.3 задаёт для `3.foo` токены `3` `.` `foo`, то есть лексер на последовательности `3.` не ошибается. §4.9 перечисляет «числовой литерал с точкой без дробной части (`3.`)» среди ранних ошибок лексера. Это один и тот же префикс, и два правила противоречат друг другу.
+`docs/grammar.md` §4.3 задаёт для `3.foo` токены `3` `.` `foo`, то есть лексер на последовательности `3.` не ошибается. Против этого говорят **четыре** места того же документа:
 
-**Реализуется §4.3:** лексер выдаёт `Number` и `Dot`, не сообщая об ошибке. Текст `3.` в конце исходника отвергнет парсер (после `.` требуется `Identifier`). §4.9 подлежит правке в отдельном коммите к спецификации — в этом плане она не делается.
+- таблица §4.6 — строки `.5 | ошибка — нет целой части` и `3. | ошибка — нет дробной части`;
+- ранние ошибки лексера §4.9 — «числовой литерал с точкой без дробной части (`3.`)» в перечне;
+- аргумент о независимости от контекста в §7 — «формы `.5` и `3.` запрещены» приведено как одно из трёх решений, обеспечивающих лексер без отката;
+- таблица умышленных отсутствий §8 — строка «Формы `.5` и `3.`» с обоснованием «заставили бы лексер решать по контексту, начинается ли с `.` число или доступ к полю».
+
+Все четыре описывают одну и ту же пару префиксов и противоречат §4.3.
+
+**Реализуется §4.3:** лексер выдаёт `Number` и `Dot`, не сообщая об ошибке. Текст `3.` в конце исходника отвергнет парсер (после `.` требуется `Identifier`). Исправление всех четырёх мест в `docs/grammar.md` — отдельный коммит к спецификации; в этом плане она не делается.
 
 ## Структура файлов
 
@@ -303,6 +310,7 @@ git commit -m "Add lexer interfaces"
 // Тесты лексера по docs/grammar.md §4.
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -467,6 +475,8 @@ TEST(LexerPunctuator, ForbiddenBytesAreErrors) {
     for (const std::string source : {"@", "#", "$", "^", "~", "\\"}) {
         const Lexed lexed = lexAll(source);
         EXPECT_FALSE(lexed.ok) << "должно быть ошибкой: " << source;
+        EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax) << source;
+        EXPECT_EQ(lexed.diag.offset, 0u) << source;
     }
 }
 
@@ -509,7 +519,9 @@ TEST(LexerIdentifier, IdentifierCannotStartWithDigit) {
 
 TEST(LexerIdentifier, NonAsciiIsNotAnIdentifier) {
     const Lexed lexed = lexAll("привет");
-    EXPECT_FALSE(lexed.ok);
+    ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 0u);
 }
 
 TEST(LexerIdentifier, ActiveKeywords) {
@@ -640,12 +652,23 @@ TEST(LexerNumber, FractionIsExact) {
     EXPECT_DOUBLE_EQ(lexed.tokens[0].number, 0.1);
 }
 
-TEST(LexerNumber, OutOfRangeLiteralIsError) {
+TEST(LexerNumber, OverflowYieldsInfinity) {
     const std::string source(400, '9');
     const Lexed lexed = lexAll(source);
-    ASSERT_FALSE(lexed.ok);
-    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
-    EXPECT_EQ(lexed.diag.offset, 0u);
+    ASSERT_TRUE(lexed.ok);
+    ASSERT_EQ(lexed.tokens.size(), 2u);
+    EXPECT_EQ(lexed.tokens[0].kind, TokenKind::Number);
+    EXPECT_TRUE(std::isinf(lexed.tokens[0].number));
+    EXPECT_GT(lexed.tokens[0].number, 0.0);
+}
+
+TEST(LexerNumber, UnderflowYieldsZero) {
+    const std::string source = "0." + std::string(400, '0') + "1";
+    const Lexed lexed = lexAll(source);
+    ASSERT_TRUE(lexed.ok);
+    ASSERT_EQ(lexed.tokens.size(), 2u);
+    EXPECT_EQ(lexed.tokens[0].kind, TokenKind::Number);
+    EXPECT_DOUBLE_EQ(lexed.tokens[0].number, 0.0);
 }
 
 // ─── §4.7: строковые литералы ────────────────────────────────────────
@@ -721,6 +744,8 @@ TEST(LexerString, UnknownEscapeIsError) {
 TEST(LexerString, UnicodeEscapeIsUnknown) {
     const Lexed lexed = lexAll("'\\u0041'");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 1u);
 }
 
 TEST(LexerString, UnterminatedLiteralIsError) {
@@ -738,11 +763,15 @@ TEST(LexerString, LineBreakInsideLiteralIsError) {
 TEST(LexerString, CarriageReturnInsideLiteralIsError) {
     const Lexed lexed = lexAll("'abc\rdef'");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 4u);
 }
 
 TEST(LexerString, TrailingBackslashIsError) {
     const Lexed lexed = lexAll("'abc\\");
     ASSERT_FALSE(lexed.ok);
+    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(lexed.diag.offset, 0u);
 }
 
 // ─── Совместный разбор ───────────────────────────────────────────────
@@ -937,23 +966,69 @@ add_executable(chupascript_benchmarks
 
     python3 tools/bench-compare.py baseline.json current.json [--threshold 10]
 
-Возвращает 1, если cpu_time хотя бы одного бенчмарка вырос больше порога.
-Сравнивать имеет смысл только прогоны на одной машине: абсолютные числа
-между машинами несопоставимы.
+Прогон с --benchmark_repetitions даёт несколько строк на бенчмарк; берётся
+медиана — она не съезжает от одного выброса. Сравнивать имеет смысл только
+прогоны на одной машине: абсолютные числа между машинами несопоставимы.
+
+Коды возврата:
+    0 — деградации нет, оба прогона с одной машины (либо машина неизвестна);
+    1 — cpu_time хотя бы одного бенчмарка вырос больше порога, либо бенчмарк
+        из базы пропал из текущего прогона;
+    2 — база и текущий прогон сделаны на разных машинах, сравнение не
+        проводилось.
 """
 import argparse
 import json
+import statistics
 import sys
 
 
 def load(path):
+    """Возвращает отображение «имя бенчмарка → cpu_time».
+
+    Google Benchmark выдаёт либо строки отдельных повторов
+    (run_type "iteration"), либо только агрегаты (run_type "aggregate",
+    имена с суффиксом _mean, _median, _stddev, _cv), если задан
+    --benchmark_report_aggregates_only. Учитываются оба вида: медиана,
+    посчитанная самим Google Benchmark, имеет приоритет над медианой,
+    посчитанной здесь.
+    """
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
-    return {
-        entry["name"]: float(entry["cpu_time"])
-        for entry in data["benchmarks"]
-        if entry.get("run_type", "iteration") == "iteration"
-    }
+
+    entries = data.get("benchmarks")
+    if entries is None:
+        raise SystemExit(f'{path}: нет ключа "benchmarks" — это не отчёт Google Benchmark')
+
+    samples = {}
+    medians = {}
+    for entry in entries:
+        name = entry["name"]
+        if entry.get("run_type", "iteration") == "aggregate":
+            aggregate = entry.get("aggregate_name", "")
+            if aggregate != "median":
+                continue
+            suffix = "_" + aggregate
+            base = name[: -len(suffix)] if name.endswith(suffix) else name
+            medians[base] = float(entry["cpu_time"])
+            continue
+        samples.setdefault(name, []).append(float(entry["cpu_time"]))
+
+    result = {name: statistics.median(values) for name, values in samples.items()}
+    result.update(medians)
+    return result
+
+
+def host(path):
+    """Возвращает (имя машины, число ядер) из отчёта.
+
+    Google Benchmark пишет эти поля в каждый прогон, поэтому по ним можно
+    сверять происхождение базы и текущего замера. Абсолютные числа между
+    машинами несопоставимы.
+    """
+    with open(path, encoding="utf-8") as handle:
+        context = json.load(handle).get("context", {})
+    return context.get("host_name"), context.get("num_cpus")
 
 
 def main():
@@ -971,26 +1046,48 @@ def main():
     base = load(args.baseline)
     current = load(args.current)
 
+    base_host, current_host = host(args.baseline), host(args.current)
+    if all(base_host) and all(current_host) and base_host != current_host:
+        print(
+            f"база снята на {base_host[0]} ({base_host[1]} ядер), "
+            f"текущий прогон — на {current_host[0]} ({current_host[1]} ядер): "
+            "сравнение между разными машинами бессмысленно"
+        )
+        return 2
+    if not all(base_host) or not all(current_host):
+        print("предупреждение: host_name/num_cpus неизвестны в одном из отчётов, "
+              "происхождение прогонов не проверено")
+
     print(f"{'benchmark':<24}{'base':>12}{'current':>12}{'change':>10}")
     regressed = []
     for name in sorted(current):
         if name not in base:
             print(f"{name:<24}{'—':>12}{current[name]:>12.1f}{'новый':>10}")
             continue
+        if base[name] == 0.0:
+            # Нулевая база непригодна для сравнения: делить не на что.
+            print(f"{name:<24}{base[name]:>12.1f}{current[name]:>12.1f}{'база 0':>10}")
+            continue
         change = (current[name] - base[name]) / base[name] * 100.0
         print(f"{name:<24}{base[name]:>12.1f}{current[name]:>12.1f}{change:>9.1f}%")
         if change > args.threshold:
             regressed.append((name, change))
 
-    for name in sorted(set(base) - set(current)):
+    missing = sorted(set(base) - set(current))
+    for name in missing:
         print(f"{name:<24}{base[name]:>12.1f}{'—':>12}{'исчез':>10}")
 
     if regressed:
         print("\nДеградация:")
         for name, change in regressed:
             print(f"  {name}: +{change:.1f}%")
-        return 1
-    return 0
+
+    if missing:
+        print("\nПропали из прогона:")
+        for name in missing:
+            print(f"  {name}")
+
+    return 1 if regressed or missing else 0
 
 
 if __name__ == "__main__":
@@ -1153,7 +1250,7 @@ git commit -m "Implement whitespace and comment skipping"
 
 **Interfaces:**
 - Consumes: `Lexer::skipTrivia` из задачи 4.
-- Produces: распознавание всех токенов `Punctuator` из `docs/grammar.md` §4.8 с правилом максимального жевания.
+- Produces: распознавание всех токенов `Punctuator` из `docs/grammar.md` §4.8 (31 альтернатива в его грамматике) с правилом максимального жевания.
 
 - [ ] **Step 1: Снять прогон до изменений**
 
@@ -1247,7 +1344,7 @@ git commit -m "Implement whitespace and comment skipping"
 - [ ] **Step 3: Прогнать тесты**
 
 Run: `cmake --build build -j && ./build/core/tests/chupascript_tests --gtest_filter='LexerTrivia.*:LexerPunctuator.*'`
-Expected: все восемь `LexerTrivia.*` (включая три, ждавшие `;`) и все семь `LexerPunctuator.*` проходят.
+Expected: все восемь `LexerTrivia.*` (включая три, ждавшие `;`) и все восемь `LexerPunctuator.*` проходят.
 
 - [ ] **Step 4: Сравнить производительность**
 
@@ -1439,11 +1536,12 @@ git commit -m "Implement identifiers and keyword recognition"
     --benchmark_out=/tmp/bench-before.json --benchmark_out_format=json
 ```
 
-- [ ] **Step 2: Добавить `<charconv>` и `<system_error>` к включениям `core/src/lexer.cpp`**
+- [ ] **Step 2: Добавить `<charconv>`, `<limits>` и `<system_error>` к включениям `core/src/lexer.cpp`**
 
 ```cpp
 #include <charconv>
 #include <cstring>
+#include <limits>
 #include <system_error>
 
 #include "lexer.hpp"
@@ -1471,9 +1569,26 @@ bool Lexer::lexNumber(Token &out, Diagnostic &diag) noexcept {
 
     const std::from_chars_result parsed = std::from_chars(
         src_ + start, src_ + end, out.number, std::chars_format::fixed);
-    if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
-        diag = Diagnostic{ErrorCode::Syntax, start, "numeric literal out of range"};
-        return false;
+    if (parsed.ec == std::errc::result_out_of_range) {
+        // Литерал вне диапазона double даёт значение IEEE, а не ошибку:
+        // Number включает ±Infinity (docs/semantics.md §2.1), и язык
+        // последовательно предпочитает значение IEEE отказу (§5.2).
+        // Переполнение вверх от переполнения вниз отличает ненулевая
+        // цифра в целой части. from_chars в этом случае out.number не
+        // трогает, поэтому значение выставляется здесь явно.
+        bool overflow = false;
+        for (std::uint32_t i = start; i < end && src_[i] != '.'; ++i) {
+            if (src_[i] != '0') {
+                overflow = true;
+                break;
+            }
+        }
+        out.number = overflow ? std::numeric_limits<double>::infinity() : 0.0;
+    } else if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
+        // Защитная проверка: для пролётов, которые строит этот сканер (только
+        // цифры, либо цифры '.' цифры), недостижима, но остаётся единственной
+        // структурной защитой разбора.
+        return fail(diag, start, "malformed numeric literal");
     }
 
     out.kind = TokenKind::Number;
@@ -1694,7 +1809,7 @@ python3 tools/bench-compare.py benchmarks/baseline.json /tmp/bench-check.json
 echo "exit=$?"
 ```
 
-Expected: `exit=0`. Если база снималась с агрегатами, а проверка без них, имена не совпадут и все бенчмарки будут показаны как «новые» — в этом случае снять базу без `--benchmark_repetitions`.
+Expected: `exit=0`. База снимается с повторами и агрегатами, проверочный прогон — без них; скрипт приводит оба вида к медиане и сравнивает по общему имени бенчмарка.
 
 - [ ] **Step 6: Коммит**
 

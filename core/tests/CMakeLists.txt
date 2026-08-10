@@ -1,4 +1,5 @@
 add_executable(chupascript_tests
+    lexer_test.cpp
     smoke_test.cpp
 )
 

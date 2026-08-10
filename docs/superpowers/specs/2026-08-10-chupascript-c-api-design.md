@@ -1,7 +1,8 @@
 # ChupaScript: публичный C API
 
 Дата: 2026-08-10
-Статус: скелет зафиксирован; форма `Value` и модель ошибок открыты
+Статус: состав заголовка зафиксирован; открыты содержание диагностики и
+освобождение памяти внутри живого контекста
 
 ## 1. Область документа
 
@@ -150,6 +151,12 @@ JSON выбран потому, что бэкенд отдаёт именно е
 
 #define CHUPA_API __attribute__((visibility("default")))
 
+#if defined(__GNUC__) || defined(__clang__)
+#  define CHUPA_MUST_USE __attribute__((warn_unused_result))
+#else
+#  define CHUPA_MUST_USE
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -159,7 +166,26 @@ CHUPA_NONNULL_BEGIN
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
+typedef struct ChupaValue      ChupaValue;
+
+typedef enum ChupaKind {
+    CHUPA_KIND_NULL   = 0,
+    CHUPA_KIND_BOOL   = 1,
+    CHUPA_KIND_NUMBER = 2,
+    CHUPA_KIND_STRING = 3,
+    CHUPA_KIND_ARRAY  = 4,
+    CHUPA_KIND_OBJECT = 5
+} ChupaKind;
+
+typedef enum ChupaStatus {
+    CHUPA_OK    = 0,  /* значение получено          */
+    CHUPA_NULL  = 1,  /* выражение дало null        */
+    CHUPA_ERROR = 2   /* ошибка либо не тот тип     */
+} ChupaStatus;
 ```
+
+`CHUPA_MUST_USE` ставится на функции, чей возврат несёт признак успеха: без
+него `chupa_value_number(v, &w);` без проверки компилируется молча.
 
 **Ограничение импортёра Swift.** Все три непрозрачных типа Swift покажет одним и
 тем же `OpaquePointer` — различать их он не умеет. Обёртка на Swift обязана
@@ -208,8 +234,71 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 
 /* Выполняет скрипт: мутирует данные контекста, значения не возвращает.
  * false — ошибка выполнения, часть изменений могла быть применена. */
-CHUPA_API bool chupa_run(ChupaContext *ctx, ChupaScript *script);
+CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
+
+/* ─── Вычисление: скаляры ──────────────────────────────────────────── */
+
+/* Быстрый путь. Хост заявляет ожидаемый тип выбором функции, поэтому
+ * вычисление и проверка типа — один вызов. CHUPA_NULL означает, что
+ * выражение дало null: для вьюхи это «возьми значение по умолчанию».
+ * Число и логическое возвращаются копией и живут сколько угодно;
+ * строка указывает в память контекста (см. правило ниже). */
+CHUPA_API CHUPA_MUST_USE ChupaStatus
+chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
+
+CHUPA_API CHUPA_MUST_USE ChupaStatus
+chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
+
+CHUPA_API CHUPA_MUST_USE ChupaStatus
+chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
+                  const char **out, size_t *len);
+
+/* ─── Вычисление: любой тип ────────────────────────────────────────── */
+
+/* Общий путь: агрегаты и случай, когда тип заранее неизвестен.
+ * NULL — ошибка; значение null приезжает как CHUPA_KIND_NULL. */
+CHUPA_API const ChupaValue *CHUPA_NULLABLE
+chupa_eval(ChupaContext *ctx, ChupaExpression *e);
+
+/* ─── Доступ к значению ────────────────────────────────────────────── */
+
+CHUPA_API ChupaKind chupa_value_kind(const ChupaValue *v);
+
+CHUPA_API CHUPA_MUST_USE bool chupa_value_bool  (const ChupaValue *v, bool   *out);
+CHUPA_API CHUPA_MUST_USE bool chupa_value_number(const ChupaValue *v, double *out);
+
+CHUPA_API const char *CHUPA_NULLABLE
+chupa_value_string(const ChupaValue *v, size_t *len);
+
+CHUPA_API CHUPA_MUST_USE bool chupa_array_count(const ChupaValue *v, size_t *out);
+CHUPA_API const ChupaValue *CHUPA_NULLABLE
+chupa_array_at(const ChupaValue *v, size_t i);
+
+CHUPA_API CHUPA_MUST_USE bool chupa_object_count(const ChupaValue *v, size_t *out);
+CHUPA_API const char *CHUPA_NULLABLE
+chupa_object_key_at(const ChupaValue *v, size_t i, size_t *len);
+CHUPA_API const ChupaValue *CHUPA_NULLABLE
+chupa_object_value_at(const ChupaValue *v, size_t i);
+CHUPA_API const ChupaValue *CHUPA_NULLABLE
+chupa_object_get(const ChupaValue *v, const char *key, size_t len);
 ```
+
+**Время жизни результата.**
+
+> Указатель, отданный `chupa_eval_string` или `chupa_eval`, и всё достижимое
+> из него действительны до следующего вычисления на этом контексте.
+
+Правило строже реальности — хендл в граф данных живёт до смерти контекста, —
+но различить эти случаи хост не может, а держать результат дольше ему незачем:
+строку он копирует в свой тип при первом касании. Взамен правило разрешает
+переиспользовать память под временные значения вместо того, чтобы копить их до
+закрытия экрана.
+
+Числа и логические значения правилу не подчиняются: они возвращаются копией.
+
+**Порядок перечисления ключей объекта не определён.** В языке он не определён
+тоже (`docs/semantics.md` §2.1), а хранение отсортировано — обещание связало бы
+руки.
 
 **Копирование исходника закрывает вопрос о времени жизни буфера.** Требование
 `docs/grammar.md` §7 — чтобы буфер пережил скомпилированную программу — снято:
@@ -250,14 +339,23 @@ CHUPA_API bool chupa_run(ChupaContext *ctx, ChupaScript *script);
 | Канал ошибок — признак плюс аксессор | Расширяется без изменения сигнатур |
 | Без внутренней синхронизации | Один экран — один поток; контексты независимы, глобального состояния нет |
 | `Value` — тег-юнион, без NaN-boxing | Решение пользователя: используем то, что уже есть в `core/src/value.hpp` |
+| Наружу — непрозрачный `ChupaValue *` с функциями доступа | Раскладка не видна, через границу едут только примитивы и указатели. Обёртки Swift и Kotlin строят поверх этого свои типы |
+| Не сериализация агрегата в JSON | Разбор на стороне хоста дороже обхода на два порядка: `JSONDecoder` боксит каждое число и строит промежуточные объекты, тогда как обход — прямые вызовы без аллокаций |
+| Скаляры возвращаются копией, а не хендлом | У числа наверху нет дома в арене: пришлось бы материализовать ячейку ради каждого пересчёта props |
+| Трёхзначный `ChupaStatus` у скалярных вычислений | `null` в props — норма, а не исключение: данные с бэкенда неполные, чтение у `null` даёт `null`. Отличать его от ошибки обязательно |
+| Функции доступа проверяют, а не полагаются на предусловие | Несовпадение типа приходит из данных, а не только из ошибки программиста: макет вправе сказать `"width": "@{ user.name }"`. UB от данных недопустимо |
+| Два соглашения о провале: `NULL` у указателей, признак плюс выходной параметр у остальных | Если у типа есть невозможное значение, признак избыточен. Выходной параметр остаётся у четырёх функций вместо десяти, а в Swift указатель приезжает готовым опционалом |
 
 ## 10. Открытые вопросы
 
-1. **Форма `Value` на границе** — структура по значению или непрозрачный хендл с
-   аксессорами. Блокируется выбором обвязки Kotlin: Kotlin/Native cinterop
-   читает заголовок сам, JNI не видит его вовсе и пропускает через границу
-   только примитивы и хендлы. Блокирует `chupa_eval` и все аксессоры к
-   значениям.
+1. **Освобождение памяти внутри живого контекста.** Правило времени жизни (§7)
+   разрешает переиспользовать память под временные значения, но не требует
+   этого. Пока арена одна и не сбрасывается, `format(…)` в props копит строки до
+   закрытия экрана: расход растёт с числом пересчётов, а не с объёмом данных.
+   Разделение на постоянную и временную память обходится дёшево — выражения не
+   имеют побочных эффектов (`docs/semantics.md` §3.2), поэтому созданное при
+   вычислении props не может попасть в граф данных, и анализ побегов не нужен.
+   Решение зависит от того, как часто хост пересчитывает props.
 2. **Содержание диагностики** — позиции, коды, одна ошибка или список (§8).
 3. **Корневые ключи, не являющиеся идентификаторами.** `{"user-name": …}` в
    программу не попадёт: обратиться к корню можно только голым идентификатором.

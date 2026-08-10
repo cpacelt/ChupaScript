@@ -15,7 +15,6 @@ namespace CS {
 struct Value {
     /// Identifies the type of the stored value.
     enum class Kind : std::uint8_t {
-        Undefined,
         Null,
         Boolean,
         Number,
@@ -23,11 +22,6 @@ struct Value {
         Object,
         Array
     };
-    /// Creates an undefined value.
-    [[nodiscard]]
-    static Value undefined() noexcept {
-        return Value(Kind::Undefined);
-    }
     /// Creates a null value.
     [[nodiscard]]
     static Value null() noexcept {

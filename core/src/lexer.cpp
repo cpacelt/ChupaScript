@@ -1,4 +1,6 @@
+#include <charconv>
 #include <cstring>
+#include <system_error>
 
 #include "lexer.hpp"
 
@@ -136,6 +138,10 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
         return true;
     }
 
+    if (c >= '0' && c <= '9') {
+        return lexNumber(out, diag);
+    }
+
     // Двухбайтовые токены выигрывают у однобайтовых: правило максимального
     // жевания, docs/grammar.md §4.3.
     const bool hasNext = pos_ + 1 < len_;
@@ -203,7 +209,36 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
 }
 
 bool Lexer::lexString(Token &, Diagnostic &) noexcept { return false; }
-bool Lexer::lexNumber(Token &, Diagnostic &) noexcept { return false; }
+
+bool Lexer::lexNumber(Token &out, Diagnostic &diag) noexcept {
+    const std::uint32_t start = pos_;
+    std::uint32_t end = pos_;
+    while (end < len_ && src_[end] >= '0' && src_[end] <= '9') {
+        ++end;
+    }
+
+    // Дробная часть берётся, только если за точкой стоит цифра: '3.' числом не
+    // является и распадается на Number и Dot (docs/grammar.md §4.3).
+    if (end + 1 < len_ && src_[end] == '.' && src_[end + 1] >= '0' &&
+        src_[end + 1] <= '9') {
+        end += 2;
+        while (end < len_ && src_[end] >= '0' && src_[end] <= '9') {
+            ++end;
+        }
+    }
+
+    const std::from_chars_result parsed = std::from_chars(
+        src_ + start, src_ + end, out.number, std::chars_format::fixed);
+    if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
+        diag = Diagnostic{ErrorCode::Syntax, start, "numeric literal out of range"};
+        return false;
+    }
+
+    out.kind = TokenKind::Number;
+    out.length = end - start;
+    pos_ = end;
+    return true;
+}
 
 void Lexer::lexIdentifier(Token &out) noexcept {
     std::uint32_t end = pos_ + 1;

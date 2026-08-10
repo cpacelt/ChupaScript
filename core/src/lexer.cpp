@@ -1,5 +1,6 @@
 #include <charconv>
 #include <cstring>
+#include <limits>
 #include <system_error>
 
 #include "lexer.hpp"
@@ -13,6 +14,12 @@ bool sameAs(const char *text, const char *word, std::uint32_t length) noexcept {
 }
 
 }  // namespace
+
+bool Lexer::fail(Diagnostic &diag, std::uint32_t offset, const char *message) noexcept {
+    failure_ = Diagnostic{ErrorCode::Syntax, offset, message};
+    diag = failure_;
+    return false;
+}
 
 TokenKind keywordKind(const char *text, std::uint32_t length) noexcept {
     // Переключатель по длине отсекает почти всё до единого memcmp.
@@ -100,10 +107,7 @@ bool Lexer::skipTrivia(Diagnostic &diag) noexcept {
             pos_ += 2;
             for (;;) {
                 if (pos_ + 1 >= len_) {
-                    pos_ = len_;
-                    diag = Diagnostic{ErrorCode::Syntax, start,
-                                      "unterminated block comment"};
-                    return false;
+                    return fail(diag, start, "unterminated block comment");
                 }
                 if (src_[pos_] == '*' && src_[pos_ + 1] == '/') {
                     pos_ += 2;
@@ -119,6 +123,11 @@ bool Lexer::skipTrivia(Diagnostic &diag) noexcept {
 }
 
 bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
+    if (failure_.code != ErrorCode::None) {
+        diag = failure_;
+        return false;
+    }
+
     if (!skipTrivia(diag)) {
         return false;
     }
@@ -208,8 +217,7 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
             break;
     }
 
-    diag = Diagnostic{ErrorCode::Syntax, pos_, "unexpected byte"};
-    return false;
+    return fail(diag, pos_, "unexpected byte");
 }
 
 bool Lexer::lexString(Token &out, Diagnostic &diag) noexcept {
@@ -220,9 +228,7 @@ bool Lexer::lexString(Token &out, Diagnostic &diag) noexcept {
 
     for (;;) {
         if (end >= len_) {
-            diag = Diagnostic{ErrorCode::Syntax, start,
-                              "unterminated string literal"};
-            return false;
+            return fail(diag, start, "unterminated string literal");
         }
 
         const char c = src_[end];
@@ -235,23 +241,17 @@ bool Lexer::lexString(Token &out, Diagnostic &diag) noexcept {
         // Сырой перевод строки обрывает литерал, чтобы забытая кавычка не
         // поглотила остаток программы (docs/grammar.md §4.9).
         if (c == '\n' || c == '\r') {
-            diag = Diagnostic{ErrorCode::Syntax, end,
-                              "line break in string literal"};
-            return false;
+            return fail(diag, end, "line break in string literal");
         }
 
         if (c == '\\') {
             if (end + 1 >= len_) {
-                diag = Diagnostic{ErrorCode::Syntax, start,
-                                  "unterminated string literal"};
-                return false;
+                return fail(diag, start, "unterminated string literal");
             }
             const char escaped = src_[end + 1];
             if (escaped != '\\' && escaped != '\'' && escaped != '"' &&
                 escaped != 'n' && escaped != 't') {
-                diag = Diagnostic{ErrorCode::Syntax, end,
-                                  "unknown escape sequence"};
-                return false;
+                return fail(diag, end, "unknown escape sequence");
             }
             hasEscape = true;
             end += 2;
@@ -288,9 +288,26 @@ bool Lexer::lexNumber(Token &out, Diagnostic &diag) noexcept {
 
     const std::from_chars_result parsed = std::from_chars(
         src_ + start, src_ + end, out.number, std::chars_format::fixed);
-    if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
-        diag = Diagnostic{ErrorCode::Syntax, start, "numeric literal out of range"};
-        return false;
+    if (parsed.ec == std::errc::result_out_of_range) {
+        // Литерал вне диапазона double даёт значение IEEE, а не ошибку:
+        // Number включает ±Infinity (docs/semantics.md §2.1), и язык
+        // последовательно предпочитает значение IEEE отказу (§5.2).
+        // Переполнение вверх от переполнения вниз отличает ненулевая
+        // цифра в целой части. from_chars в этом случае out.number не
+        // трогает, поэтому значение выставляется здесь явно.
+        bool overflow = false;
+        for (std::uint32_t i = start; i < end && src_[i] != '.'; ++i) {
+            if (src_[i] != '0') {
+                overflow = true;
+                break;
+            }
+        }
+        out.number = overflow ? std::numeric_limits<double>::infinity() : 0.0;
+    } else if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
+        // Защитная проверка: для пролётов, которые строит этот сканер (только
+        // цифры, либо цифры '.' цифры), недостижима, но остаётся единственной
+        // структурной защитой разбора.
+        return fail(diag, start, "malformed numeric literal");
     }
 
     out.kind = TokenKind::Number;

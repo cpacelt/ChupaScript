@@ -1,6 +1,7 @@
 // Тесты лексера по docs/grammar.md §4.
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -342,12 +343,23 @@ TEST(LexerNumber, FractionIsExact) {
     EXPECT_DOUBLE_EQ(lexed.tokens[0].number, 0.1);
 }
 
-TEST(LexerNumber, OutOfRangeLiteralIsError) {
+TEST(LexerNumber, OverflowYieldsInfinity) {
     const std::string source(400, '9');
     const Lexed lexed = lexAll(source);
-    ASSERT_FALSE(lexed.ok);
-    EXPECT_EQ(lexed.diag.code, CS::ErrorCode::Syntax);
-    EXPECT_EQ(lexed.diag.offset, 0u);
+    ASSERT_TRUE(lexed.ok);
+    ASSERT_EQ(lexed.tokens.size(), 2u);
+    EXPECT_EQ(lexed.tokens[0].kind, TokenKind::Number);
+    EXPECT_TRUE(std::isinf(lexed.tokens[0].number));
+    EXPECT_GT(lexed.tokens[0].number, 0.0);
+}
+
+TEST(LexerNumber, UnderflowYieldsZero) {
+    const std::string source = "0." + std::string(400, '0') + "1";
+    const Lexed lexed = lexAll(source);
+    ASSERT_TRUE(lexed.ok);
+    ASSERT_EQ(lexed.tokens.size(), 2u);
+    EXPECT_EQ(lexed.tokens[0].kind, TokenKind::Number);
+    EXPECT_DOUBLE_EQ(lexed.tokens[0].number, 0.0);
 }
 
 // ─── §4.7: строковые литералы ────────────────────────────────────────
@@ -488,6 +500,35 @@ TEST(LexerProgram, OffsetsPointAtSource) {
     EXPECT_EQ(lexed.tokens[1].offset, 6u);
     EXPECT_EQ(lexed.tokens[2].offset, 7u);
     EXPECT_EQ(lexed.tokens[3].offset, 11u);
+}
+
+// ─── Состояние после ошибки ──────────────────────────────────────────
+
+TEST(LexerFailure, ErrorIsLatchedAndRepeats) {
+    const std::string source = "@;";
+    CS::Lexer lexer(source.data(), static_cast<std::uint32_t>(source.size()));
+    CS::Token token;
+    CS::Diagnostic first;
+    ASSERT_FALSE(lexer.next(token, first));
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        CS::Diagnostic again;
+        ASSERT_FALSE(lexer.next(token, again)) << "попытка " << attempt;
+        EXPECT_EQ(again.code, first.code);
+        EXPECT_EQ(again.offset, first.offset);
+    }
+}
+
+TEST(LexerFailure, UnterminatedBlockCommentDoesNotResumeAsEnd) {
+    // Раньше этот путь двигал pos_ в конец, и следующий вызов возвращал End.
+    const std::string source = "/* abc";
+    CS::Lexer lexer(source.data(), static_cast<std::uint32_t>(source.size()));
+    CS::Token token;
+    CS::Diagnostic diag;
+    ASSERT_FALSE(lexer.next(token, diag));
+    CS::Diagnostic again;
+    ASSERT_FALSE(lexer.next(token, again));
+    EXPECT_EQ(again.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(again.offset, 0u);
 }
 
 }  // namespace

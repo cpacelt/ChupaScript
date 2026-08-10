@@ -21,9 +21,12 @@ class Lexer {
 
     /// Читает очередной токен.
     ///
-    /// Возвращает false при ошибке и заполняет diag. В конце текста возвращает
-    /// true и out.kind == TokenKind::End; повторные вызовы после этого дают
-    /// End снова.
+    /// В конце текста возвращает true и out.kind == TokenKind::End, и делает
+    /// это идемпотентно: повторные вызовы после конца текста снова дают End.
+    ///
+    /// Возвращает false при ошибке и заполняет diag. С этого момента лексер
+    /// необратимо неисправен: pos_ больше не двигается, и каждый следующий
+    /// вызов заново возвращает тот же diag, не читая исходник.
     bool next(Token &out, Diagnostic &diag) noexcept;
 
    private:
@@ -32,9 +35,13 @@ class Lexer {
     bool lexNumber(Token &out, Diagnostic &diag) noexcept;
     void lexIdentifier(Token &out) noexcept;
 
+    /// Записывает отказ, копирует его вызывающему и запоминает навсегда.
+    bool fail(Diagnostic &diag, std::uint32_t offset, const char *message) noexcept;
+
     const char *src_;
     std::uint32_t len_;
     std::uint32_t pos_;
+    Diagnostic failure_{};
 };
 
 }  // namespace CS

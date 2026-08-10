@@ -3,12 +3,16 @@
 
     python3 tools/bench-compare.py baseline.json current.json [--threshold 10]
 
-Возвращает 1, если cpu_time хотя бы одного бенчмарка вырос больше порога
-либо если бенчмарк из базы пропал из текущего прогона.
-
 Прогон с --benchmark_repetitions даёт несколько строк на бенчмарк; берётся
 медиана — она не съезжает от одного выброса. Сравнивать имеет смысл только
 прогоны на одной машине: абсолютные числа между машинами несопоставимы.
+
+Коды возврата:
+    0 — деградации нет, оба прогона с одной машины (либо машина неизвестна);
+    1 — cpu_time хотя бы одного бенчмарка вырос больше порога, либо бенчмарк
+        из базы пропал из текущего прогона;
+    2 — база и текущий прогон сделаны на разных машинах, сравнение не
+        проводилось.
 """
 import argparse
 import json
@@ -52,6 +56,18 @@ def load(path):
     return result
 
 
+def host(path):
+    """Возвращает (имя машины, число ядер) из отчёта.
+
+    Google Benchmark пишет эти поля в каждый прогон, поэтому по ним можно
+    сверять происхождение базы и текущего замера. Абсолютные числа между
+    машинами несопоставимы.
+    """
+    with open(path, encoding="utf-8") as handle:
+        context = json.load(handle).get("context", {})
+    return context.get("host_name"), context.get("num_cpus")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("baseline")
@@ -66,6 +82,18 @@ def main():
 
     base = load(args.baseline)
     current = load(args.current)
+
+    base_host, current_host = host(args.baseline), host(args.current)
+    if all(base_host) and all(current_host) and base_host != current_host:
+        print(
+            f"база снята на {base_host[0]} ({base_host[1]} ядер), "
+            f"текущий прогон — на {current_host[0]} ({current_host[1]} ядер): "
+            "сравнение между разными машинами бессмысленно"
+        )
+        return 2
+    if not all(base_host) or not all(current_host):
+        print("предупреждение: host_name/num_cpus неизвестны в одном из отчётов, "
+              "происхождение прогонов не проверено")
 
     print(f"{'benchmark':<24}{'base':>12}{'current':>12}{'change':>10}")
     regressed = []

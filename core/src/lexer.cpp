@@ -142,6 +142,10 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
         return lexNumber(out, diag);
     }
 
+    if (c == '\'' || c == '"') {
+        return lexString(out, diag);
+    }
+
     // Двухбайтовые токены выигрывают у однобайтовых: правило максимального
     // жевания, docs/grammar.md §4.3.
     const bool hasNext = pos_ + 1 < len_;
@@ -208,7 +212,62 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
     return false;
 }
 
-bool Lexer::lexString(Token &, Diagnostic &) noexcept { return false; }
+bool Lexer::lexString(Token &out, Diagnostic &diag) noexcept {
+    const char quote = src_[pos_];
+    const std::uint32_t start = pos_;
+    std::uint32_t end = pos_ + 1;
+    bool hasEscape = false;
+
+    for (;;) {
+        if (end >= len_) {
+            diag = Diagnostic{ErrorCode::Syntax, start,
+                              "unterminated string literal"};
+            return false;
+        }
+
+        const char c = src_[end];
+
+        if (c == quote) {
+            ++end;
+            break;
+        }
+
+        // Сырой перевод строки обрывает литерал, чтобы забытая кавычка не
+        // поглотила остаток программы (docs/grammar.md §4.9).
+        if (c == '\n' || c == '\r') {
+            diag = Diagnostic{ErrorCode::Syntax, end,
+                              "line break in string literal"};
+            return false;
+        }
+
+        if (c == '\\') {
+            if (end + 1 >= len_) {
+                diag = Diagnostic{ErrorCode::Syntax, start,
+                                  "unterminated string literal"};
+                return false;
+            }
+            const char escaped = src_[end + 1];
+            if (escaped != '\\' && escaped != '\'' && escaped != '"' &&
+                escaped != 'n' && escaped != 't') {
+                diag = Diagnostic{ErrorCode::Syntax, end,
+                                  "unknown escape sequence"};
+                return false;
+            }
+            hasEscape = true;
+            end += 2;
+            continue;
+        }
+
+        // Байты >= 0x80 переносятся без интерпретации: UTF-8 не декодируется.
+        ++end;
+    }
+
+    out.kind = TokenKind::String;
+    out.length = end - start;
+    out.hasEscape = hasEscape;
+    pos_ = end;
+    return true;
+}
 
 bool Lexer::lexNumber(Token &out, Diagnostic &diag) noexcept {
     const std::uint32_t start = pos_;

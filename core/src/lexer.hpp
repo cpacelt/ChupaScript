@@ -32,9 +32,9 @@ class Lexer {
     bool lexNumber(Token &out, Diagnostic &diag) noexcept;
     void lexIdentifier(Token &out) noexcept;
 
-    [[maybe_unused]] const char *src_;
-    [[maybe_unused]] std::uint32_t len_;
-    [[maybe_unused]] std::uint32_t pos_;
+    const char *src_;
+    std::uint32_t len_;
+    std::uint32_t pos_;
 };
 
 }  // namespace CS

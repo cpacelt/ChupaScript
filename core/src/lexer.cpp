@@ -1,8 +1,76 @@
+#include <cstring>
+
 #include "lexer.hpp"
 
 namespace CS {
 
-TokenKind keywordKind(const char *, std::uint32_t) noexcept {
+namespace {
+
+bool sameAs(const char *text, const char *word, std::uint32_t length) noexcept {
+    return std::memcmp(text, word, length) == 0;
+}
+
+}  // namespace
+
+TokenKind keywordKind(const char *text, std::uint32_t length) noexcept {
+    // Переключатель по длине отсекает почти всё до единого memcmp.
+    switch (length) {
+        case 2:
+            if (sameAs(text, "if", 2) || sameAs(text, "do", 2) ||
+                sameAs(text, "in", 2)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 3:
+            if (sameAs(text, "let", 3) || sameAs(text, "var", 3) ||
+                sameAs(text, "val", 3) || sameAs(text, "for", 3) ||
+                sameAs(text, "new", 3) || sameAs(text, "try", 3)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 4:
+            if (sameAs(text, "true", 4)) {
+                return TokenKind::True;
+            }
+            if (sameAs(text, "null", 4)) {
+                return TokenKind::Null;
+            }
+            if (sameAs(text, "else", 4) || sameAs(text, "func", 4) ||
+                sameAs(text, "this", 4) || sameAs(text, "self", 4) ||
+                sameAs(text, "case", 4) || sameAs(text, "void", 4)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 5:
+            if (sameAs(text, "false", 5)) {
+                return TokenKind::False;
+            }
+            if (sameAs(text, "while", 5) || sameAs(text, "break", 5) ||
+                sameAs(text, "const", 5) || sameAs(text, "catch", 5) ||
+                sameAs(text, "throw", 5) || sameAs(text, "class", 5)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 6:
+            if (sameAs(text, "return", 6) || sameAs(text, "typeof", 6) ||
+                sameAs(text, "delete", 6) || sameAs(text, "switch", 6) ||
+                sameAs(text, "import", 6) || sameAs(text, "export", 6)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 7:
+            if (sameAs(text, "default", 7)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        case 8:
+            if (sameAs(text, "continue", 8) || sameAs(text, "function", 8)) {
+                return TokenKind::Reserved;
+            }
+            break;
+        default:
+            break;
+    }
     return TokenKind::Identifier;
 }
 
@@ -62,6 +130,11 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
     }
 
     const char c = src_[pos_];
+
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+        lexIdentifier(out);
+        return true;
+    }
 
     // Двухбайтовые токены выигрывают у однобайтовых: правило максимального
     // жевания, docs/grammar.md §4.3.
@@ -131,6 +204,21 @@ bool Lexer::next(Token &out, Diagnostic &diag) noexcept {
 
 bool Lexer::lexString(Token &, Diagnostic &) noexcept { return false; }
 bool Lexer::lexNumber(Token &, Diagnostic &) noexcept { return false; }
-void Lexer::lexIdentifier(Token &) noexcept {}
+
+void Lexer::lexIdentifier(Token &out) noexcept {
+    std::uint32_t end = pos_ + 1;
+    while (end < len_) {
+        const char c = src_[end];
+        const bool isPart = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == '_';
+        if (!isPart) {
+            break;
+        }
+        ++end;
+    }
+    out.length = end - pos_;
+    out.kind = keywordKind(src_ + pos_, out.length);
+    pos_ = end;
+}
 
 }  // namespace CS

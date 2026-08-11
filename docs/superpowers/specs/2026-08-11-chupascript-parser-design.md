@@ -22,7 +22,7 @@
 
 | Файл | Ответственность |
 |---|---|
-| `core/src/ast.hpp` | `NodeKind`, `Node`, `NodeId`, класс `Ast` — хранение, строитель, аксессоры |
+| `core/src/ast.hpp` | `NodeKind`, `NodeId`, `kNoNode`, класс `Ast` — хранение, строитель, аксессоры. Раскладка узла спрятана внутри `Ast` |
 | `core/src/ast.cpp` | тела строителя и аксессоров |
 | `core/src/parser.hpp` | две функции разбора — вся публичная поверхность слоя |
 | `core/src/parser.cpp` | рекурсивный спуск; класс парсера наружу не виден |
@@ -89,16 +89,26 @@
 
 ### 4.2 Узел
 
+Раскладка узла — приватный вложенный тип `Ast`, а не самостоятельная структура в
+пространстве имён. Это и есть шов из §3, доведённый до принуждения языком:
+«тест написал `nodes[i].textOffset`» не компилируется, а не порицается в ревью.
+Наружу выходят только `NodeKind`, `NodeId` и `kNoNode` — то, без чего нельзя
+пользоваться аксессорами.
+
 ```cpp
-struct Node {
-    NodeKind kind;
-    TokenKind op;                          // Binary, Unary, Assign; иначе End
-    std::uint32_t offset;                  // смещение в исходнике для диагностики
-    std::uint32_t childStart, childCount;  // диапазон в боковом пуле
-    std::uint32_t textOffset, textLength;  // Identifier, имя поля, имя функции, String
-    double number;                         // Number
-    bool boolean;                          // Boolean
-    bool hasEscape;                        // String
+class Ast {
+    // ...
+   private:
+    struct Node {
+        NodeKind kind;
+        TokenKind op;                      // Binary, Unary, Assign; иначе End
+        std::uint32_t offset;              // смещение в исходнике для диагностики
+        std::uint32_t childStart, childCount;   // диапазон в боковом пуле
+        std::uint32_t textOffset, textLength;   // имя либо содержимое литерала
+        double number;                     // Number
+        bool boolean;                      // Boolean
+        bool hasEscape;                    // String
+    };
 };
 ```
 

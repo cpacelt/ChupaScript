@@ -80,6 +80,16 @@ class Parser {
     NodeId postfix();
     NodeId primary();
 
+    NodeId callArguments(const Token &name);
+
+    /// Общий буфер списков детей: аргументы вызова, элементы литералов,
+    /// стейтменты программы. Правило помечает вершину, толкает свои узлы и
+    /// откатывает буфер, забрав их.
+    ///
+    /// Откат делается только на успешном пути: после отказа разбор
+    /// прекращается навсегда, и остатки в буфере никого не касаются.
+    std::vector<NodeId> scratch_;   // TODO(B10): вместе с боковым пулом детей
+
     Lexer lexer_;
     Ast &ast_;
     Token cur_{};
@@ -288,8 +298,79 @@ NodeId Parser::unary() {
 }
 
 NodeId Parser::postfix() {
-    // Постфиксные операции садятся в задаче 6.
-    return primary();
+    NodeId base = primary();
+    if (base == kNoNode) {
+        return kNoNode;
+    }
+    for (;;) {
+        if (at(TokenKind::Dot)) {
+            if (!advance()) {
+                return kNoNode;
+            }
+            if (!at(TokenKind::Identifier)) {
+                return fail(cur_.offset, "expected a field name after '.'");
+            }
+            const Token name = cur_;
+            if (!advance()) {
+                return kNoNode;
+            }
+            base = ast_.member(base, name);
+        } else if (at(TokenKind::LBracket)) {
+            const std::uint32_t offset = cur_.offset;
+            if (!advance()) {
+                return kNoNode;
+            }
+            const NodeId subscript = ternary();
+            if (subscript == kNoNode) {
+                return kNoNode;
+            }
+            if (!at(TokenKind::RBracket)) {
+                return fail(cur_.offset, "expected ']'");
+            }
+            if (!advance()) {
+                return kNoNode;
+            }
+            base = ast_.index(base, subscript, offset);
+        } else {
+            return base;
+        }
+    }
+}
+
+NodeId Parser::callArguments(const Token &name) {
+    // Вход: cur_ — открывающая скобка вызова.
+    if (!advance()) {
+        return kNoNode;
+    }
+    const std::size_t mark = scratch_.size();
+    if (!at(TokenKind::RParen)) {
+        for (;;) {
+            const NodeId arg = ternary();
+            if (arg == kNoNode) {
+                return kNoNode;
+            }
+            scratch_.push_back(arg);
+            if (!at(TokenKind::Comma)) {
+                break;
+            }
+            if (!advance()) {
+                return kNoNode;
+            }
+            if (at(TokenKind::RParen)) {
+                return fail(cur_.offset, "trailing comma");
+            }
+        }
+    }
+    if (!at(TokenKind::RParen)) {
+        return fail(cur_.offset, "expected ')'");
+    }
+    if (!advance()) {
+        return kNoNode;
+    }
+    const auto count = static_cast<std::uint32_t>(scratch_.size() - mark);
+    const NodeId node = ast_.call(name, scratch_.data() + mark, count);
+    scratch_.resize(mark);
+    return node;
 }
 
 NodeId Parser::primary() {
@@ -327,6 +408,11 @@ NodeId Parser::primary() {
             const Token token = cur_;
             if (!advance()) {
                 return kNoNode;
+            }
+            // §5.3: Call — альтернатива Primary, а не постфиксная операция.
+            // Поэтому f(a)(b) не разбирается, а keys(o)[0] — да.
+            if (at(TokenKind::LParen)) {
+                return callArguments(token);
             }
             return ast_.identifier(token);
         }

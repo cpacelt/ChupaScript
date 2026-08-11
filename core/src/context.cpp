@@ -136,6 +136,115 @@ bool Context::arrayPop(Value a, Value *out) noexcept {
     return true;
 }
 
+void Context::growObject(detail::ObjectRep &rep, std::uint32_t needed) {
+    if (needed <= rep.capacity) { return; }
+
+    std::uint32_t capacity = rep.capacity == 0 ? 4 : rep.capacity;
+    while (capacity < needed) {
+        assert(capacity <= 0x7fffffffu && "объект перерос uint32");
+        capacity *= 2;
+    }
+
+    const std::uint32_t start = static_cast<std::uint32_t>(entries_.size());
+    entries_.insert(entries_.end(), capacity, detail::Entry{0, 0, Value::null()});
+    for (std::uint32_t i = 0; i < rep.count; ++i) {
+        entries_[start + i] = entries_[rep.start + i];
+    }
+
+    rep.start = start;
+    rep.capacity = capacity;
+}
+
+std::uint32_t Context::findKey(const detail::ObjectRep &rep, std::string_view key,
+                               bool *found) const noexcept {
+    // Пары отсортированы по ключу, поиск двоичный: на типичных 3–20 ключах
+    // это дешевле хеш-таблицы и не выделяет ничего сверх самого массива.
+    std::uint32_t low = 0;
+    std::uint32_t high = rep.count;
+    while (low < high) {
+        const std::uint32_t mid = low + (high - low) / 2;
+        const detail::Entry &entry = entries_[rep.start + mid];
+        const std::string_view candidate = textAt(entry.keyOffset, entry.keyLength);
+        if (candidate < key) {
+            low = mid + 1;
+        } else if (key < candidate) {
+            high = mid;
+        } else {
+            *found = true;
+            return mid;
+        }
+    }
+    *found = false;
+    return low;
+}
+
+Value Context::makeObject(std::uint32_t capacity) {
+    const std::uint32_t index = static_cast<std::uint32_t>(objects_.size());
+    objects_.push_back(detail::ObjectRep{0, 0, 0});
+    if (capacity > 0) { growObject(objects_[index], capacity); }
+    return Value::object(index);
+}
+
+std::uint32_t Context::objectCount(Value o) const noexcept {
+    assert(o.kind() == Value::Kind::Object);
+    return objects_[o.index()].count;
+}
+
+Value Context::objectGet(Value o, std::string_view key) const noexcept {
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectRep &rep = objects_[o.index()];
+    bool found = false;
+    const std::uint32_t at = findKey(rep, key, &found);
+    if (!found) { return Value::null(); }
+    return entries_[rep.start + at].value;
+}
+
+bool Context::objectHas(Value o, std::string_view key) const noexcept {
+    assert(o.kind() == Value::Kind::Object);
+    bool found = false;
+    findKey(objects_[o.index()], key, &found);
+    return found;
+}
+
+std::string_view Context::objectKeyAt(Value o, std::uint32_t i) const noexcept {
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectRep &rep = objects_[o.index()];
+    if (i >= rep.count) { return {}; }
+    const detail::Entry &entry = entries_[rep.start + i];
+    return textAt(entry.keyOffset, entry.keyLength);
+}
+
+Value Context::objectValueAt(Value o, std::uint32_t i) const noexcept {
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectRep &rep = objects_[o.index()];
+    if (i >= rep.count) { return Value::null(); }
+    return entries_[rep.start + i].value;
+}
+
+void Context::objectSet(Value o, std::string_view key, Value v) {
+    assert(o.kind() == Value::Kind::Object);
+    detail::ObjectRep &rep = objects_[o.index()];
+
+    bool found = false;
+    const std::uint32_t at = findKey(rep, key, &found);
+    if (found) {
+        entries_[rep.start + at].value = v;
+        return;
+    }
+
+    // appendText вправе переселить text_, поэтому смещение берётся до роста
+    // entries_, а срез key после этой строки уже не трогаем.
+    const std::uint32_t keyOffset = appendText(key);
+    const std::uint32_t keyLength = static_cast<std::uint32_t>(key.size());
+
+    growObject(rep, rep.count + 1);
+    for (std::uint32_t i = rep.count; i > at; --i) {
+        entries_[rep.start + i] = entries_[rep.start + i - 1];
+    }
+    entries_[rep.start + at] = detail::Entry{keyOffset, keyLength, v};
+    rep.count += 1;
+}
+
 std::size_t Context::bytesUsed() const noexcept {
     return pool_.size() * sizeof(Value) +
            arrays_.size() * sizeof(detail::ArrayRep) +

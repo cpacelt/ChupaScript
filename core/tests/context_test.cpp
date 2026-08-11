@@ -219,4 +219,104 @@ TEST(ContextArrayMutation, GrowthLeavesGarbageBehind) {
     EXPECT_EQ(ctx.bytesUsed() - afterHeader, 124u * sizeof(Value));
 }
 
+TEST(ContextObject, EmptyObjectHasNoKeys) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    EXPECT_EQ(o.kind(), Value::Kind::Object);
+    EXPECT_EQ(ctx.objectCount(o), 0u);
+}
+
+TEST(ContextObject, MissingKeyReadsAsNull) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    // semantics.md §6.2: отсутствующий ключ читается как null.
+    EXPECT_EQ(ctx.objectGet(o, "нет").kind(), Value::Kind::Null);
+    EXPECT_FALSE(ctx.objectHas(o, "нет"));
+}
+
+TEST(ContextObject, StoredValueIsFound) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "count", Value::number(3.0));
+    EXPECT_TRUE(ctx.objectHas(o, "count"));
+    EXPECT_EQ(ctx.objectGet(o, "count").numberValue(), 3.0);
+    EXPECT_EQ(ctx.objectCount(o), 1u);
+}
+
+TEST(ContextObject, NullValueIsDistinctFromAbsence) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "key", Value::null());
+    // semantics.md §6.2: отличить одно от другого можно только через has.
+    EXPECT_EQ(ctx.objectGet(o, "key").kind(), Value::Kind::Null);
+    EXPECT_TRUE(ctx.objectHas(o, "key"));
+}
+
+TEST(ContextObject, FindsKeyAmongMany) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const char *keys[] = {"zeta", "alpha", "mu", "beta", "omega", "kappa", "iota"};
+    for (int i = 0; i < 7; ++i) {
+        ctx.objectSet(o, keys[i], Value::number(static_cast<double>(i)));
+    }
+    for (int i = 0; i < 7; ++i) {
+        EXPECT_EQ(ctx.objectGet(o, keys[i]).numberValue(), static_cast<double>(i));
+    }
+    EXPECT_EQ(ctx.objectCount(o), 7u);
+}
+
+TEST(ContextObject, PrefixKeyIsNotConfusedWithLongerOne) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "item", Value::number(1.0));
+    ctx.objectSet(o, "items", Value::number(2.0));
+    EXPECT_EQ(ctx.objectGet(o, "item").numberValue(), 1.0);
+    EXPECT_EQ(ctx.objectGet(o, "items").numberValue(), 2.0);
+}
+
+TEST(ContextObject, NonAsciiKeyIsFound) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "имя", ctx.makeString("Вася"));
+    EXPECT_EQ(ctx.string(ctx.objectGet(o, "имя")), "Вася");
+}
+
+TEST(ContextObject, EmptyKeyIsAKeyLikeAnyOther) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "", Value::number(1.0));
+    EXPECT_TRUE(ctx.objectHas(o, ""));
+    EXPECT_EQ(ctx.objectGet(o, "").numberValue(), 1.0);
+}
+
+TEST(ContextObject, EnumerationYieldsEveryKey) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "b", Value::number(2.0));
+    ctx.objectSet(o, "a", Value::number(1.0));
+
+    ASSERT_EQ(ctx.objectCount(o), 2u);
+    std::string seen;
+    for (std::uint32_t i = 0; i < ctx.objectCount(o); ++i) {
+        seen += ctx.objectKeyAt(o, i);
+        seen += '=';
+        seen += std::to_string(static_cast<int>(ctx.objectValueAt(o, i).numberValue()));
+        seen += ';';
+    }
+    // Порядок наружу не обещан (semantics.md §2.1), но хранение отсортировано.
+    EXPECT_EQ(seen, "a=1;b=2;");
+}
+
+TEST(ContextObject, EnumerationBeyondEndIsEmpty) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    EXPECT_TRUE(ctx.objectKeyAt(o, 0).empty());
+    EXPECT_EQ(ctx.objectValueAt(o, 0).kind(), Value::Kind::Null);
+}
+
+TEST(ContextObject, TwoEmptyObjectsAreDistinct) {
+    Context ctx;
+    EXPECT_FALSE(ctx.makeObject().sameAggregate(ctx.makeObject()));
+}
+
 }  // namespace

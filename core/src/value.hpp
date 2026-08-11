@@ -21,36 +21,36 @@ class Value {
     /// Вид значения. Закрытый список из docs/semantics.md §2.1.
     enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
 
-    static Value null() noexcept {
+    [[nodiscard]] static Value null() noexcept {
         Value v;
         v.kind_ = Kind::Null;
         return v;
     }
 
-    static Value boolean(bool value) noexcept {
+    [[nodiscard]] static Value boolean(bool value) noexcept {
         Value v;
         v.kind_ = Kind::Boolean;
         v.boolean_ = value;
         return v;
     }
 
-    static Value number(double value) noexcept {
+    [[nodiscard]] static Value number(double value) noexcept {
         Value v;
         v.kind_ = Kind::Number;
         v.number_ = value;
         return v;
     }
 
-    Kind kind() const noexcept { return kind_; }
+    [[nodiscard]] Kind kind() const noexcept { return kind_; }
 
     /// Предусловие: kind() == Kind::Boolean.
-    bool booleanValue() const noexcept {
+    [[nodiscard]] bool booleanValue() const noexcept {
         assert(kind_ == Kind::Boolean);
         return boolean_;
     }
 
     /// Предусловие: kind() == Kind::Number.
-    double numberValue() const noexcept {
+    [[nodiscard]] double numberValue() const noexcept {
         assert(kind_ == Kind::Number);
         return number_;
     }
@@ -59,7 +59,7 @@ class Value {
     ///
     /// У скаляров идентичности нет (docs/semantics.md §5.4), для них всегда
     /// false, в том числе при сравнении значения с самим собой.
-    bool sameAggregate(Value other) const noexcept {
+    [[nodiscard]] bool sameAggregate(Value other) const noexcept {
         if (kind_ != other.kind_) { return false; }
         if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
         return index_ == other.index_;
@@ -70,7 +70,7 @@ class Value {
 
     /// Индексы полны как тип, поэтому без закрытых фабрик любой код собрал бы
     /// значение-агрегат с произвольным номером заголовка. Закрываем доступом.
-    static Value string(std::uint32_t offset, std::uint32_t length) noexcept {
+    [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length) noexcept {
         Value v;
         v.kind_ = Kind::String;
         v.length_ = length;
@@ -78,22 +78,29 @@ class Value {
         return v;
     }
 
-    static Value array(std::uint32_t index) noexcept {
+    [[nodiscard]] static Value array(std::uint32_t index) noexcept {
         Value v;
         v.kind_ = Kind::Array;
         v.index_ = index;
         return v;
     }
 
-    static Value object(std::uint32_t index) noexcept {
+    [[nodiscard]] static Value object(std::uint32_t index) noexcept {
         Value v;
         v.kind_ = Kind::Object;
         v.index_ = index;
         return v;
     }
 
-    std::uint32_t index() const noexcept { return index_; }
-    std::uint32_t length() const noexcept { return length_; }
+    [[nodiscard]] std::uint32_t index() const noexcept {
+        assert(kind_ == Kind::String || kind_ == Kind::Array || kind_ == Kind::Object);
+        return index_;
+    }
+
+    [[nodiscard]] std::uint32_t length() const noexcept {
+        assert(kind_ == Kind::String);
+        return length_;
+    }
 
     Value() noexcept : kind_(Kind::Null), length_(0), number_(0.0) {}
 

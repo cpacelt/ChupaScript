@@ -319,4 +319,115 @@ TEST(ContextObject, TwoEmptyObjectsAreDistinct) {
     EXPECT_FALSE(ctx.makeObject().sameAggregate(ctx.makeObject()));
 }
 
+TEST(ContextObjectMutation, RepeatedKeyReplacesValue) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "k", Value::number(1.0));
+    ctx.objectSet(o, "k", Value::number(2.0));
+    EXPECT_EQ(ctx.objectCount(o), 1u);
+    EXPECT_EQ(ctx.objectGet(o, "k").numberValue(), 2.0);
+}
+
+TEST(ContextObjectMutation, ReplacementCopiesNoKeyBytes) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "k", Value::number(1.0));
+    const std::size_t before = ctx.bytesUsed();
+    ctx.objectSet(o, "k", Value::number(2.0));
+    EXPECT_EQ(ctx.bytesUsed(), before);
+}
+
+TEST(ContextObjectMutation, InsertionKeepsSortedOrder) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const char *keys[] = {"delta", "alpha", "charlie", "bravo", "echo"};
+    for (const char *key : keys) { ctx.objectSet(o, key, Value::null()); }
+
+    std::string seen;
+    for (std::uint32_t i = 0; i < ctx.objectCount(o); ++i) {
+        seen += ctx.objectKeyAt(o, i);
+        seen += ' ';
+    }
+    EXPECT_EQ(seen, "alpha bravo charlie delta echo ");
+}
+
+TEST(ContextObjectMutation, EveryKeySurvivesGrowth) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    // Тридцать ключей — рост через 4, 8, 16, 32: пары переезжают четырежды.
+    for (int i = 0; i < 30; ++i) {
+        ctx.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+    }
+    ASSERT_EQ(ctx.objectCount(o), 30u);
+    for (int i = 0; i < 30; ++i) {
+        EXPECT_EQ(ctx.objectGet(o, "key" + std::to_string(i)).numberValue(),
+                  static_cast<double>(i));
+    }
+}
+
+TEST(ContextObjectMutation, AliasSeesNewKey) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const Value alias = o;
+    for (int i = 0; i < 30; ++i) {
+        ctx.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+    }
+    // semantics.md §2.3: изменение через одно имя видно через второе.
+    EXPECT_EQ(ctx.objectCount(alias), 30u);
+    EXPECT_EQ(ctx.objectGet(alias, "key29").numberValue(), 29.0);
+    EXPECT_TRUE(o.sameAggregate(alias));
+}
+
+TEST(ContextObjectMutation, KeyTakenFromTheSameContextWorks) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const Value keyValue = ctx.makeString("динамический");
+    // Ключ — срез собственного пула текста: приём, которым пользуется obj[k].
+    ctx.objectSet(o, ctx.string(keyValue), Value::number(5.0));
+    EXPECT_EQ(ctx.objectGet(o, "динамический").numberValue(), 5.0);
+}
+
+TEST(ContextObjectMutation, ObjectMayContainItself) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "self", o);
+    // semantics.md §2.3: obj['self'] = obj — корректная программа.
+    EXPECT_TRUE(ctx.objectGet(o, "self").sameAggregate(o));
+    EXPECT_EQ(ctx.objectCount(o), 1u);
+}
+
+TEST(ContextObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const Value a = ctx.makeArray();
+    ctx.objectSet(o, "items", a);
+    ctx.arrayPush(a, o);
+
+    EXPECT_TRUE(ctx.objectGet(o, "items").sameAggregate(a));
+    EXPECT_TRUE(ctx.arrayAt(a, 0).sameAggregate(o));
+}
+
+TEST(ContextObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    const Value a = ctx.makeArray();
+    ctx.objectSet(o, "items", a);
+
+    for (int i = 0; i < 20; ++i) {
+        ctx.arrayPush(ctx.objectGet(o, "items"), Value::number(static_cast<double>(i)));
+    }
+    EXPECT_EQ(ctx.arrayCount(a), 20u);
+}
+
+TEST(ContextObjectMutation, PreallocatedCapacityGrowsNothing) {
+    Context ctx;
+    const Value o = ctx.makeObject(8);
+    const std::size_t afterReserve = ctx.bytesUsed();
+    for (int i = 0; i < 8; ++i) {
+        ctx.objectSet(o, "k" + std::to_string(i), Value::null());
+    }
+    // Пары не переезжали; выросло ровно на байты восьми двухсимвольных ключей.
+    EXPECT_EQ(ctx.bytesUsed(), afterReserve + 16u);
+}
+
 }  // namespace

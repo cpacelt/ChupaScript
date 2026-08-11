@@ -35,6 +35,19 @@ bool isComparisonOp(TokenKind kind) noexcept {
     }
 }
 
+bool isAssignOp(TokenKind kind) noexcept {
+    switch (kind) {
+        case TokenKind::Assign:
+        case TokenKind::PlusAssign:
+        case TokenKind::MinusAssign:
+        case TokenKind::StarAssign:
+        case TokenKind::SlashAssign:
+            return true;
+        default:
+            return false;
+    }
+}
+
 class Parser {
    public:
     Parser(const char *source, std::uint32_t length, Ast &ast)
@@ -42,6 +55,9 @@ class Parser {
 
     /// Стартовый символ Expression, docs/grammar.md §5.1.
     bool runExpression(Diagnostic &diag);
+
+    /// Стартовый символ Program, docs/grammar.md §5.1.
+    bool runProgram(Diagnostic &diag);
 
    private:
     /// Считает глубину вложенности; уменьшает её на любом выходе из правила.
@@ -83,6 +99,16 @@ class Parser {
     NodeId callArguments(const Token &name);
     NodeId arrayLiteral();
     NodeId objectLiteral();
+
+    /// Разбирает один стейтмент.
+    ///
+    /// Возвращает false при отказе. Пустой стейтмент — успех с out == kNoNode:
+    /// ';' узла не порождает.
+    bool statement(NodeId &out);
+
+    /// Проверяет, что поддерево — LeftHandSide из §5.2: имя, к которому
+    /// применены только '.' и '[]'. Вызов в цепочке делает цель недопустимой.
+    [[nodiscard]] bool isLeftHandSide(NodeId node) const noexcept;
 
     /// Общий буфер списков детей: аргументы вызова, элементы литералов,
     /// стейтменты программы. Правило помечает вершину, толкает свои узлы и
@@ -557,6 +583,100 @@ bool Parser::runExpression(Diagnostic &diag) {
     return true;
 }
 
+bool Parser::isLeftHandSide(NodeId node) const noexcept {
+    NodeId current = node;
+    for (;;) {
+        switch (ast_.kind(current)) {
+            case NodeKind::Identifier:
+                return true;
+            case NodeKind::Member:
+            case NodeKind::Index:
+                // Индексное выражение вправе содержать вызовы: ограничение
+                // §5.2 касается только основания цепочки.
+                current = ast_.child(current, 0);
+                break;
+            default:
+                return false;
+        }
+    }
+}
+
+bool Parser::statement(NodeId &out) {
+    out = kNoNode;
+    if (at(TokenKind::Semicolon)) {
+        return advance();  // EmptyStatement узла не порождает
+    }
+    if (!at(TokenKind::Identifier)) {
+        fail(cur_.offset,
+             "statement must be an assignment or a call");
+        return false;
+    }
+    const std::uint32_t start = cur_.offset;
+    const NodeId chain = postfix();
+    if (chain == kNoNode) {
+        return false;
+    }
+
+    if (isAssignOp(cur_.kind)) {
+        const TokenKind op = cur_.kind;
+        const std::uint32_t opOffset = cur_.offset;
+        if (!isLeftHandSide(chain)) {
+            fail(start,
+                 "assignment target must be a name with '.' and '[]' access");
+            return false;
+        }
+        if (!advance()) {
+            return false;
+        }
+        const NodeId value = ternary();
+        if (value == kNoNode) {
+            return false;
+        }
+        if (!at(TokenKind::Semicolon)) {
+            fail(cur_.offset, "expected ';'");
+            return false;
+        }
+        if (!advance()) {
+            return false;
+        }
+        out = ast_.assign(op, chain, value, opOffset);
+        return true;
+    }
+
+    if (at(TokenKind::Semicolon) && ast_.kind(chain) == NodeKind::Call) {
+        if (!advance()) {
+            return false;
+        }
+        out = ast_.callStatement(chain, start);
+        return true;
+    }
+
+    fail(start, "statement must be an assignment or a call");
+    return false;
+}
+
+bool Parser::runProgram(Diagnostic &diag) {
+    if (!advance()) {
+        diag = diag_;
+        return false;
+    }
+    const std::size_t mark = scratch_.size();
+    while (!at(TokenKind::End)) {
+        NodeId node = kNoNode;
+        if (!statement(node)) {
+            diag = diag_;
+            return false;
+        }
+        if (node != kNoNode) {
+            scratch_.push_back(node);
+        }
+    }
+    const auto count = static_cast<std::uint32_t>(scratch_.size() - mark);
+    ast_.setRoot(ast_.program(scratch_.data() + mark, count));
+    scratch_.resize(mark);
+    return true;
+}
+
 }  // namespace
 
 bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
@@ -569,9 +689,8 @@ bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
 bool parseProgram(const char *source, std::uint32_t length, Ast &ast,
                   Diagnostic &diag) {
     ast.setSource(source);
-    static_cast<void>(length);
-    diag = Diagnostic{ErrorCode::Syntax, 0, "program parsing not implemented"};
-    return false;
+    Parser parser(source, length, ast);
+    return parser.runProgram(diag);
 }
 
 }  // namespace CS

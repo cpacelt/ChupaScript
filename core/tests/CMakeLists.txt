@@ -3,6 +3,7 @@ add_executable(chupascript_tests
     lexer_test.cpp
     parser_test.cpp
     smoke_test.cpp
+    value_test.cpp
 )
 
 # Tests reach into the internal layer as well as the public header.

@@ -20,8 +20,9 @@ struct Entry;
 ///
 /// Владеет всем, что породил; поштучного освобождения нет, вся память уходит
 /// разом в деструкторе. Значения адресуют пулы индексами, поэтому пулы вправе
-/// переезжать при росте — а вот указатель на элемент пула переживает лишь до
-/// ближайшей мутации, и наружу такие указатели этот класс не отдаёт.
+/// переезжать при росте. Указатель или срез внутрь пула, который этот класс
+/// всё же отдаёт наружу — `string()`, `objectKeyAt()` — переживает лишь до
+/// ближайшей мутации того же контекста; дольше их хранить нельзя.
 ///
 /// Обоснование раскладки:
 /// docs/superpowers/specs/2026-08-11-chupascript-values-design.md §5–§7.
@@ -111,9 +112,13 @@ class Context {
    private:
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
-    void growArray(detail::ArrayRep &rep, std::uint32_t needed);
+    /// exact — выделить ровно needed, а не ближайшую степень двойки. Так
+    /// зовут makeArray, у которого длина известна заранее и удваивать нечего;
+    /// arrayPush растит без exact, чтобы не переезжать на каждом элементе.
+    void growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact = false);
 
-    void growObject(detail::ObjectRep &rep, std::uint32_t needed);
+    /// exact — тот же смысл, что и у growArray.
+    void growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact = false);
 
     /// Номер ключа, а если ключа нет — место, куда его вставить, чтобы
     /// сортировка сохранилась. found получает признак находки.

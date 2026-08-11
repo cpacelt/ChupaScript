@@ -69,6 +69,16 @@ TEST(ContextMetrics, StringAddsItsBytes) {
     EXPECT_EQ(ctx.bytesUsed(), before + 5u);
 }
 
+TEST(ContextMetrics, ReservedCoversUsed) {
+    Context ctx;
+    const Value a = ctx.makeArray();
+    for (int i = 0; i < 100; ++i) {
+        ctx.arrayPush(a, Value::number(static_cast<double>(i)));
+    }
+    ctx.makeString("строка");
+    EXPECT_GE(ctx.bytesReserved(), ctx.bytesUsed());
+}
+
 TEST(ContextArray, EmptyArrayHasNoElements) {
     Context ctx;
     const Value a = ctx.makeArray();
@@ -219,6 +229,17 @@ TEST(ContextArrayMutation, GrowthLeavesGarbageBehind) {
     EXPECT_EQ(ctx.bytesUsed() - afterHeader, 124u * sizeof(Value));
 }
 
+TEST(ContextArrayMutation, RequestedCapacityIsAllocatedExactly) {
+    Context ctx;
+    const Value a = ctx.makeArray(100);
+    const std::size_t afterReserve = ctx.bytesUsed();
+    for (int i = 0; i < 100; ++i) {
+        ctx.arrayPush(a, Value::number(static_cast<double>(i)));
+    }
+    // Сто элементов занимают сто слотов, а не ближайшую степень двойки.
+    EXPECT_EQ(ctx.bytesUsed(), afterReserve);
+}
+
 TEST(ContextObject, EmptyObjectHasNoKeys) {
     Context ctx;
     const Value o = ctx.makeObject();
@@ -287,6 +308,20 @@ TEST(ContextObject, EmptyKeyIsAKeyLikeAnyOther) {
     ctx.objectSet(o, "", Value::number(1.0));
     EXPECT_TRUE(ctx.objectHas(o, ""));
     EXPECT_EQ(ctx.objectGet(o, "").numberValue(), 1.0);
+}
+
+TEST(ContextObject, EmptyKeyIsDistinguishableFromAbsentOne) {
+    Context ctx;
+    const Value o = ctx.makeObject();
+    ctx.objectSet(o, "", Value::number(1.0));
+    ctx.objectSet(o, "другой", Value::number(2.0));
+
+    // Пустой ключ существует: срез пустой, но не нулевой.
+    ASSERT_EQ(ctx.objectCount(o), 2u);
+    EXPECT_TRUE(ctx.objectKeyAt(o, 0).empty());
+    EXPECT_NE(ctx.objectKeyAt(o, 0).data(), nullptr);
+    // За границей — нулевой срез.
+    EXPECT_EQ(ctx.objectKeyAt(o, 99).data(), nullptr);
 }
 
 TEST(ContextObject, EnumerationYieldsEveryKey) {

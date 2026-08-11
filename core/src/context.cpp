@@ -42,7 +42,10 @@ std::uint32_t Context::appendText(std::string_view bytes) {
     const char *first = text_.data();
     const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(first);
     const std::uintptr_t from = reinterpret_cast<std::uintptr_t>(bytes.data());
-    const bool aliases = first != nullptr && from >= base && from <= base + text_.size();
+    // Граница строгая: непустой срез пула начинается строго внутри него, а пустой
+    // источник уходит раньше, чем понадобится адрес. Включающая граница приняла бы
+    // за алиас чужой буфер, оказавшийся вплотную за пулом, и скопировала бы нули.
+    const bool aliases = first != nullptr && from >= base && from < base + text_.size();
     const std::size_t inner = aliases ? static_cast<std::size_t>(from - base) : 0;
 
     text_.resize(text_.size() + bytes.size());
@@ -55,7 +58,10 @@ std::uint32_t Context::appendText(std::string_view bytes) {
 
 std::string_view Context::textAt(std::uint32_t offset,
                                  std::uint32_t length) const noexcept {
-    if (length == 0) { return {}; }
+    // Проверяется пустота пула, а не длина: пустой ключ обязан отличаться от
+    // отсутствующего, иначе chupa_object_key_at не сможет вернуть NULL только
+    // за границей.
+    if (text_.empty()) { return {}; }
     return std::string_view(text_.data() + offset, length);
 }
 
@@ -69,18 +75,26 @@ std::string_view Context::string(Value v) const noexcept {
     return textAt(v.index(), v.length());
 }
 
-void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed) {
+// Парная функция — growObject: правку в одной надо повторять в другой.
+void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }
 
-    std::uint32_t capacity = rep.capacity == 0 ? 4 : rep.capacity;
-    while (capacity < needed) {
-        assert(capacity <= 0x7fffffffu && "массив перерос uint32");
-        capacity *= 2;
+    // Точный размер — для вызывающего, который знает длину заранее: удвоение
+    // ему только тратит память. Рост от push, наоборот, удваивает, чтобы не
+    // переезжать на каждом элементе.
+    std::uint32_t capacity = needed;
+    if (!exact) {
+        capacity = rep.capacity == 0 ? 4 : rep.capacity;
+        while (capacity < needed) {
+            assert(capacity <= 0x7fffffffu && "массив перерос uint32");
+            capacity *= 2;
+        }
     }
 
     // Новый диапазон дописывается в хвост, старый бросается мусором:
     // освобождения по одному нет (спека §5). Индекс заголовка при этом не
     // меняется — на нём стоит идентичность и все алиасы.
+    assert(pool_.size() + capacity <= 0xffffffffu && "пул массивов перерос uint32");
     const std::uint32_t start = static_cast<std::uint32_t>(pool_.size());
     pool_.insert(pool_.end(), capacity, Value::null());
     for (std::uint32_t i = 0; i < rep.count; ++i) {
@@ -94,7 +108,7 @@ void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed) {
 Value Context::makeArray(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(arrays_.size());
     arrays_.push_back(detail::ArrayRep{0, 0, 0});
-    if (capacity > 0) { growArray(arrays_[index], capacity); }
+    if (capacity > 0) { growArray(arrays_[index], capacity, /*exact=*/true); }
     return Value::array(index);
 }
 
@@ -120,9 +134,12 @@ bool Context::arraySet(Value a, std::uint32_t index, Value v) noexcept {
 
 void Context::arrayPush(Value a, Value v) {
     assert(a.kind() == Value::Kind::Array);
-    detail::ArrayRep &rep = arrays_[a.index()];
     // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
-    growArray(rep, rep.count + 1);
+    // Заголовок перечитывается после роста: под единой ареной (docs/backlog.md
+    // B1) заголовки будут жить в той же памяти, что и данные, и ссылка,
+    // взятая до роста, повиснет.
+    growArray(arrays_[a.index()], arrays_[a.index()].count + 1);
+    detail::ArrayRep &rep = arrays_[a.index()];
     pool_[rep.start + rep.count] = v;
     rep.count += 1;
 }
@@ -136,15 +153,23 @@ bool Context::arrayPop(Value a, Value *out) noexcept {
     return true;
 }
 
-void Context::growObject(detail::ObjectRep &rep, std::uint32_t needed) {
+// Парная функция — growArray: правку в одной надо повторять в другой.
+void Context::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }
 
-    std::uint32_t capacity = rep.capacity == 0 ? 4 : rep.capacity;
-    while (capacity < needed) {
-        assert(capacity <= 0x7fffffffu && "объект перерос uint32");
-        capacity *= 2;
+    // Точный размер — для вызывающего, который знает длину заранее: удвоение
+    // ему только тратит память. Рост от вставки, наоборот, удваивает, чтобы
+    // не переезжать на каждой паре.
+    std::uint32_t capacity = needed;
+    if (!exact) {
+        capacity = rep.capacity == 0 ? 4 : rep.capacity;
+        while (capacity < needed) {
+            assert(capacity <= 0x7fffffffu && "объект перерос uint32");
+            capacity *= 2;
+        }
     }
 
+    assert(entries_.size() + capacity <= 0xffffffffu && "пул пар перерос uint32");
     const std::uint32_t start = static_cast<std::uint32_t>(entries_.size());
     entries_.insert(entries_.end(), capacity, detail::Entry{0, 0, Value::null()});
     for (std::uint32_t i = 0; i < rep.count; ++i) {
@@ -181,7 +206,7 @@ std::uint32_t Context::findKey(const detail::ObjectRep &rep, std::string_view ke
 Value Context::makeObject(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(objects_.size());
     objects_.push_back(detail::ObjectRep{0, 0, 0});
-    if (capacity > 0) { growObject(objects_[index], capacity); }
+    if (capacity > 0) { growObject(objects_[index], capacity, /*exact=*/true); }
     return Value::object(index);
 }
 
@@ -223,11 +248,11 @@ Value Context::objectValueAt(Value o, std::uint32_t i) const noexcept {
 
 void Context::objectSet(Value o, std::string_view key, Value v) {
     assert(o.kind() == Value::Kind::Object);
-    detail::ObjectRep &rep = objects_[o.index()];
 
     bool found = false;
-    const std::uint32_t at = findKey(rep, key, &found);
+    const std::uint32_t at = findKey(objects_[o.index()], key, &found);
     if (found) {
+        const detail::ObjectRep &rep = objects_[o.index()];
         entries_[rep.start + at].value = v;
         return;
     }
@@ -237,7 +262,11 @@ void Context::objectSet(Value o, std::string_view key, Value v) {
     const std::uint32_t keyOffset = appendText(key);
     const std::uint32_t keyLength = static_cast<std::uint32_t>(key.size());
 
-    growObject(rep, rep.count + 1);
+    // Заголовок перечитывается после appendText и growObject: под единой
+    // ареной (docs/backlog.md B1) заголовки будут жить в той же памяти, что
+    // и данные, и ссылка, взятая до роста, повиснет.
+    growObject(objects_[o.index()], objects_[o.index()].count + 1);
+    detail::ObjectRep &rep = objects_[o.index()];
     for (std::uint32_t i = rep.count; i > at; --i) {
         entries_[rep.start + i] = entries_[rep.start + i - 1];
     }

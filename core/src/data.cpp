@@ -40,9 +40,7 @@ bool isRootName(std::string_view name) noexcept {
     return tail.kind == TokenKind::End;
 }
 
-// ctx пока не используется: агрегаты, которым нужен контекст для создания
-// значений, появятся в задачах 3–5.
-bool materialize(const Ast &ast, NodeId node, [[maybe_unused]] Context &ctx,
+bool materialize(const Ast &ast, NodeId node, Context &ctx,
                  Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
@@ -56,6 +54,26 @@ bool materialize(const Ast &ast, NodeId node, [[maybe_unused]] Context &ctx,
         case NodeKind::Null:
             *out = Value::null();
             return true;
+
+        case NodeKind::String:
+            // Экранирование раскодируется в задаче про escape; пока литерал
+            // без него кладётся срезом исходника.
+            *out = ctx.makeString(ast.text(node));
+            return true;
+
+        case NodeKind::Unary: {
+            // Минус над числом — это запись отрицательного значения, а не
+            // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.4),
+            // и без этой ветки первое же отрицательное поле с бэкенда упёрлось
+            // бы в «выражения в данных запрещены».
+            if (ast.op(node) != TokenKind::Minus) { return rejectNode(ast, node, diag); }
+            const NodeId operand = ast.child(node, 0);
+            if (ast.kind(operand) != NodeKind::Number) {
+                return rejectNode(ast, node, diag);
+            }
+            *out = Value::number(-ast.numberValue(operand));
+            return true;
+        }
 
         default:
             return rejectNode(ast, node, diag);

@@ -164,4 +164,82 @@ TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
+TEST(DataAggregates, ArrayKeepsOrder) {
+    Context ctx;
+    const Value a = put(ctx, "items", "[1, 2, 3]");
+    ASSERT_EQ(ctx.arrayCount(a), 3u);
+    EXPECT_EQ(ctx.arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(ctx.arrayAt(a, 2).numberValue(), 3.0);
+}
+
+TEST(DataAggregates, EmptyArrayAndObject) {
+    Context ctx;
+    EXPECT_EQ(ctx.arrayCount(put(ctx, "a", "[]")), 0u);
+    EXPECT_EQ(ctx.objectCount(put(ctx, "o", "{}")), 0u);
+}
+
+TEST(DataAggregates, ObjectStoresKeys) {
+    Context ctx;
+    const Value o = put(ctx, "user", "{\"name\": \"Вася\", \"age\": 30}");
+    ASSERT_EQ(ctx.objectCount(o), 2u);
+    EXPECT_EQ(ctx.string(ctx.objectGet(o, "name")), "Вася");
+    EXPECT_EQ(ctx.objectGet(o, "age").numberValue(), 30.0);
+}
+
+TEST(DataAggregates, KeyWithEscapeIsDecoded) {
+    Context ctx;
+    const Value o = put(ctx, "o", "{'a\\nb': 1}");
+    EXPECT_TRUE(ctx.objectHas(o, "a\nb"));
+}
+
+TEST(DataAggregates, LastDuplicateKeyWins) {
+    Context ctx;
+    // Бэкенд отсутствия дубликатов не гарантирует; поведение определено.
+    const Value o = put(ctx, "o", "{'k': 1, 'k': 2}");
+    EXPECT_EQ(ctx.objectCount(o), 1u);
+    EXPECT_EQ(ctx.objectGet(o, "k").numberValue(), 2.0);
+}
+
+TEST(DataAggregates, NestingWorks) {
+    Context ctx;
+    const Value o = put(ctx, "state", "{'items': [{'id': 1}, {'id': 2}]}");
+    const Value items = ctx.objectGet(o, "items");
+    ASSERT_EQ(ctx.arrayCount(items), 2u);
+    EXPECT_EQ(ctx.objectGet(ctx.arrayAt(items, 1), "id").numberValue(), 2.0);
+}
+
+TEST(DataAggregates, NegativeNumbersInsideAggregates) {
+    Context ctx;
+    const Value a = put(ctx, "a", "[-1, -2.5]");
+    EXPECT_EQ(ctx.arrayAt(a, 0).numberValue(), -1.0);
+    EXPECT_EQ(ctx.arrayAt(a, 1).numberValue(), -2.5);
+}
+
+TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
+    Context ctx;
+    std::string text = "[";
+    for (int i = 0; i < 100; ++i) {
+        if (i > 0) { text += ", "; }
+        text += std::to_string(i);
+    }
+    text += "]";
+
+    const std::size_t before = ctx.bytesUsed();
+    const Value a = put(ctx, "hundred", text);
+    ASSERT_EQ(ctx.arrayCount(a), 100u);
+    // Прирост — сто слотов плюс заголовок массива, пара корня и байты его
+    // имени; запас до ста десяти слотов это покрывает. При удвоении вместо
+    // точного размера ушло бы сто двадцать восемь слотов, и порог не прошёл бы:
+    // размер известен заранее, поэтому переездов при построении нет.
+    EXPECT_LT(ctx.bytesUsed() - before, 110u * sizeof(Value));
+}
+
+TEST(DataAggregates, ExpressionInsideAggregateIsRejected) {
+    Context ctx;
+    Diagnostic diag;
+    EXPECT_FALSE(CS::setVariable(ctx, "a", "[1, count(x), 3]", diag));
+    EXPECT_EQ(diag.code, ErrorCode::Data);
+    EXPECT_FALSE(ctx.hasRoot("a"));
+}
+
 }  // namespace

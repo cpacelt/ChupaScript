@@ -113,6 +113,40 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
             return true;
         }
 
+        case NodeKind::Array: {
+            const std::uint32_t count = ast.childCount(node);
+            // Размер известен заранее, поэтому ёмкость выделяется точно и
+            // построение не оставляет мусора.
+            const Value array = ctx.makeArray(count);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                Value element = Value::null();
+                if (!materialize(ast, ast.child(node, i), ctx, &element, diag)) {
+                    return false;
+                }
+                ctx.arrayPush(array, element);
+            }
+            *out = array;
+            return true;
+        }
+
+        case NodeKind::Object: {
+            // Дети чередуются: ключ, значение, ключ, значение.
+            const std::uint32_t count = ast.childCount(node);
+            const Value object = ctx.makeObject(count / 2);
+            std::string scratch;
+            for (std::uint32_t i = 0; i + 1 < count; i += 2) {
+                Value value = Value::null();
+                if (!materialize(ast, ast.child(node, i + 1), ctx, &value, diag)) {
+                    return false;
+                }
+                // Повторный ключ заменяет значение: последний выигрывает.
+                ctx.objectSet(object, literalText(ast, ast.child(node, i), scratch),
+                              value);
+            }
+            *out = object;
+            return true;
+        }
+
         default:
             return rejectNode(ast, node, diag);
     }

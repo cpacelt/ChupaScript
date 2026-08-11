@@ -1,6 +1,6 @@
 {
   "context": {
-    "date": "2026-08-11T02:12:54+03:00",
+    "date": "2026-08-11T18:34:12+03:00",
     "host_name": "MacBook-Pro-cpacelts.local",
     "executable": "./build-rel/benchmarks/chupascript_benchmarks",
     "num_cpus": 12,
@@ -27,9 +27,9 @@
       }
     ],
     "load_avg": [
-      2.96533,
-      2.86865,
-      2.83496
+      2.32666,
+      2.47705,
+      2.43945
     ],
     "library_version": "v1.9.1",
     "library_build_type": "release",
@@ -48,8 +48,8 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 0.6720266140906849,
-      "cpu_time": 0.671950157845236,
+      "real_time": 0.6722735485541558,
+      "cpu_time": 0.6722155676969782,
       "time_unit": "ns"
     },
     {
@@ -63,8 +63,8 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 0.6723266785229693,
-      "cpu_time": 0.6722640451452104,
+      "real_time": 0.6718787446378534,
+      "cpu_time": 0.6718322961570029,
       "time_unit": "ns"
     },
     {
@@ -78,8 +78,8 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 0.000731121789550404,
-      "cpu_time": 0.0007034374201774906,
+      "real_time": 0.0011214670957500517,
+      "cpu_time": 0.0011197973337521221,
       "time_unit": "ns"
     },
     {
@@ -93,8 +93,8 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.001087935766561389,
-      "cpu_time": 0.0010468595207019905,
+      "real_time": 0.0016681707887540225,
+      "cpu_time": 0.0016658307060465239,
       "time_unit": "ns"
     },
     {
@@ -108,10 +108,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 2810.464357281763,
-      "cpu_time": 2810.026170304568,
+      "real_time": 2784.819061874981,
+      "cpu_time": 2784.453783205542,
       "time_unit": "ns",
-      "bytes_per_second": 3416398207.15485
+      "bytes_per_second": 3447757394.4287243
     },
     {
       "name": "BM_Lex_Trivia_median",
@@ -124,10 +124,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 2808.363340669547,
-      "cpu_time": 2807.69463407946,
+      "real_time": 2784.586205902133,
+      "cpu_time": 2784.2329837341713,
       "time_unit": "ns",
-      "bytes_per_second": 3419175249.1443887
+      "bytes_per_second": 3447987311.437071
     },
     {
       "name": "BM_Lex_Trivia_stddev",
@@ -140,10 +140,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 13.225444475059646,
-      "cpu_time": 13.158761357712882,
+      "real_time": 11.066596451127928,
+      "cpu_time": 11.065091535649021,
       "time_unit": "ns",
-      "bytes_per_second": 15994276.296225471
+      "bytes_per_second": 13682784.48087523
     },
     {
       "name": "BM_Lex_Trivia_cv",
@@ -156,10 +156,10 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.004705786230945511,
-      "cpu_time": 0.00468278961127492,
+      "real_time": 0.003973901429587651,
+      "cpu_time": 0.003973882275363384,
       "time_unit": "ns",
-      "bytes_per_second": 0.0046816194501944144
+      "bytes_per_second": 0.003968604201381866
     },
     {
       "name": "BM_Lex_Punctuators_mean",
@@ -172,10 +172,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 17439.4456787873,
-      "cpu_time": 17437.251741836317,
+      "real_time": 17944.240960948573,
+      "cpu_time": 17941.580948977768,
       "time_unit": "ns",
-      "bytes_per_second": 562019576.7634985
+      "bytes_per_second": 546218040.9017982
     },
     {
       "name": "BM_Lex_Punctuators_median",
@@ -188,10 +188,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 17428.95767751288,
-      "cpu_time": 17426.867670030533,
+      "real_time": 17940.870748227182,
+      "cpu_time": 17938.793741545203,
       "time_unit": "ns",
-      "bytes_per_second": 562350055.4177806
+      "bytes_per_second": 546302061.3980174
     },
     {
       "name": "BM_Lex_Punctuators_stddev",
@@ -204,10 +204,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 54.57474053250684,
-      "cpu_time": 54.5938234673353,
+      "real_time": 25.21221524106235,
+      "cpu_time": 24.99213455495292,
       "time_unit": "ns",
-      "bytes_per_second": 1759452.580753457
+      "bytes_per_second": 760071.2256098109
     },
     {
       "name": "BM_Lex_Punctuators_cv",
@@ -220,10 +220,10 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.0031293850468475356,
-      "cpu_time": 0.0031308731602670563,
+      "real_time": 0.0014050310233757347,
+      "cpu_time": 0.00139297281694548,
       "time_unit": "ns",
-      "bytes_per_second": 0.0031305894910024566
+      "bytes_per_second": 0.0013915161505008954
     },
     {
       "name": "BM_Lex_Identifiers_mean",
@@ -236,10 +236,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 10485.069433046292,
-      "cpu_time": 10483.845893883072,
+      "real_time": 10758.111450893763,
+      "cpu_time": 10756.780660377364,
       "time_unit": "ns",
-      "bytes_per_second": 1011100071.1863917
+      "bytes_per_second": 985440138.9450762
     },
     {
       "name": "BM_Lex_Identifiers_median",
@@ -252,10 +252,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 10481.06508718475,
-      "cpu_time": 10479.722879351137,
+      "real_time": 10750.025216050266,
+      "cpu_time": 10748.72765640516,
       "time_unit": "ns",
-      "bytes_per_second": 1011477127.9769099
+      "bytes_per_second": 986163231.4856789
     },
     {
       "name": "BM_Lex_Identifiers_stddev",
@@ -268,10 +268,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 52.78371146602238,
-      "cpu_time": 53.01534648662421,
+      "real_time": 47.18712891785005,
+      "cpu_time": 47.24486444201515,
       "time_unit": "ns",
-      "bytes_per_second": 5124272.19242694
+      "bytes_per_second": 4324005.745528097
     },
     {
       "name": "BM_Lex_Identifiers_cv",
@@ -284,10 +284,10 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.00503417853387422,
-      "cpu_time": 0.005056860528401762,
+      "real_time": 0.004386190748556508,
+      "cpu_time": 0.004392100753345446,
       "time_unit": "ns",
-      "bytes_per_second": 0.005068016844677191
+      "bytes_per_second": 0.0043878928558329176
     },
     {
       "name": "BM_Lex_Numbers_mean",
@@ -300,10 +300,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 20255.52456345074,
-      "cpu_time": 20253.365008546498,
+      "real_time": 20270.192924233743,
+      "cpu_time": 20267.548967707793,
       "time_unit": "ns",
-      "bytes_per_second": 286401590.88848704
+      "bytes_per_second": 286191769.92639387
     },
     {
       "name": "BM_Lex_Numbers_median",
@@ -316,10 +316,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 20201.375402984395,
-      "cpu_time": 20198.04733899235,
+      "real_time": 20236.225073871054,
+      "cpu_time": 20234.397976589567,
       "time_unit": "ns",
-      "bytes_per_second": 287156471.2497279
+      "bytes_per_second": 286640601.1540536
     },
     {
       "name": "BM_Lex_Numbers_stddev",
@@ -332,10 +332,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 230.06529066460536,
-      "cpu_time": 229.74252448065045,
+      "real_time": 190.2119655206406,
+      "cpu_time": 190.25744860166228,
       "time_unit": "ns",
-      "bytes_per_second": 3242573.585114145
+      "bytes_per_second": 2665619.553559735
     },
     {
       "name": "BM_Lex_Numbers_cv",
@@ -348,10 +348,10 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.01135815021447222,
-      "cpu_time": 0.011343424876987298,
+      "real_time": 0.009383826105238267,
+      "cpu_time": 0.009387294383982923,
       "time_unit": "ns",
-      "bytes_per_second": 0.01132177225362086
+      "bytes_per_second": 0.009314102757900096
     },
     {
       "name": "BM_Lex_Strings_mean",
@@ -364,10 +364,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 6977.7849425152845,
-      "cpu_time": 6976.837509096562,
+      "real_time": 6839.742195124175,
+      "cpu_time": 6838.6622128409535,
       "time_unit": "ns",
-      "bytes_per_second": 2121926281.0628133
+      "bytes_per_second": 2165402514.5614557
     },
     {
       "name": "BM_Lex_Strings_median",
@@ -380,10 +380,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 6967.291735230402,
-      "cpu_time": 6966.285476660725,
+      "real_time": 6797.106296994689,
+      "cpu_time": 6796.216980552092,
       "time_unit": "ns",
-      "bytes_per_second": 2124518159.5822785
+      "bytes_per_second": 2177682090.2498207
     },
     {
       "name": "BM_Lex_Strings_stddev",
@@ -396,10 +396,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 133.72642614815933,
-      "cpu_time": 133.80104066573557,
+      "real_time": 184.81347731377804,
+      "cpu_time": 185.18565009771186,
       "time_unit": "ns",
-      "bytes_per_second": 40505891.74447786
+      "bytes_per_second": 57090167.100784704
     },
     {
       "name": "BM_Lex_Strings_cv",
@@ -412,10 +412,10 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.019164595534231946,
-      "cpu_time": 0.019177892632769884,
+      "real_time": 0.027020532651877645,
+      "cpu_time": 0.0270792216860761,
       "time_unit": "ns",
-      "bytes_per_second": 0.01908920781366146
+      "bytes_per_second": 0.026364690498360665
     },
     {
       "name": "BM_Lex_Realistic_mean",
@@ -428,10 +428,10 @@
       "aggregate_name": "mean",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 11852.53408290544,
-      "cpu_time": 11851.310170475916,
+      "real_time": 12065.768488964364,
+      "cpu_time": 12063.736933945487,
       "time_unit": "ns",
-      "bytes_per_second": 734144464.8581088
+      "bytes_per_second": 721186800.1146274
     },
     {
       "name": "BM_Lex_Realistic_median",
@@ -444,10 +444,10 @@
       "aggregate_name": "median",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 11869.61569738977,
-      "cpu_time": 11868.316764032646,
+      "real_time": 12046.55425202136,
+      "cpu_time": 12045.0471817982,
       "time_unit": "ns",
-      "bytes_per_second": 733044135.3204911
+      "bytes_per_second": 722288577.9266146
     },
     {
       "name": "BM_Lex_Realistic_stddev",
@@ -460,10 +460,10 @@
       "aggregate_name": "stddev",
       "aggregate_unit": "time",
       "iterations": 5,
-      "real_time": 107.28535541464001,
-      "cpu_time": 107.54998079152772,
+      "real_time": 65.71314469651573,
+      "cpu_time": 65.93150212452068,
       "time_unit": "ns",
-      "bytes_per_second": 6668661.109416192
+      "bytes_per_second": 3940412.4944376065
     },
     {
       "name": "BM_Lex_Realistic_cv",
@@ -476,10 +476,394 @@
       "aggregate_name": "cv",
       "aggregate_unit": "percentage",
       "iterations": 5,
-      "real_time": 0.009051680818988281,
-      "cpu_time": 0.009074944393866018,
+      "real_time": 0.005446246109944719,
+      "cpu_time": 0.005465263581718168,
       "time_unit": "ns",
-      "bytes_per_second": 0.00908358154100511
+      "bytes_per_second": 0.0054637889847835635
+    },
+    {
+      "name": "BM_Parse_Chain_mean",
+      "family_index": 7,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Chain",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 7297.44704094695,
+      "cpu_time": 7296.590752535487,
+      "time_unit": "ns",
+      "bytes_per_second": 218871297.5433618
+    },
+    {
+      "name": "BM_Parse_Chain_median",
+      "family_index": 7,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Chain",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 7289.029630738305,
+      "cpu_time": 7287.926155933092,
+      "time_unit": "ns",
+      "bytes_per_second": 219129552.8838316
+    },
+    {
+      "name": "BM_Parse_Chain_stddev",
+      "family_index": 7,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Chain",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 24.464528664046046,
+      "cpu_time": 24.415820234291104,
+      "time_unit": "ns",
+      "bytes_per_second": 731375.5392409565
+    },
+    {
+      "name": "BM_Parse_Chain_cv",
+      "family_index": 7,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Chain",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.003352477726357219,
+      "cpu_time": 0.0033461956497706645,
+      "time_unit": "ns",
+      "bytes_per_second": 0.003341578121252101
+    },
+    {
+      "name": "BM_Parse_Precedence_mean",
+      "family_index": 8,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Precedence",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 15561.401455302306,
+      "cpu_time": 15558.899977822099,
+      "time_unit": "ns",
+      "bytes_per_second": 218269500.1710517
+    },
+    {
+      "name": "BM_Parse_Precedence_median",
+      "family_index": 8,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Precedence",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 15561.545445745074,
+      "cpu_time": 15558.172543801129,
+      "time_unit": "ns",
+      "bytes_per_second": 218277563.79736733
+    },
+    {
+      "name": "BM_Parse_Precedence_stddev",
+      "family_index": 8,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Precedence",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 55.125717530109206,
+      "cpu_time": 54.41750114167273,
+      "time_unit": "ns",
+      "bytes_per_second": 765412.9681681647
+    },
+    {
+      "name": "BM_Parse_Precedence_cv",
+      "family_index": 8,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Precedence",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.0035424648408724124,
+      "cpu_time": 0.003497515969589129,
+      "time_unit": "ns",
+      "bytes_per_second": 0.0035067334994964114
+    },
+    {
+      "name": "BM_Parse_Postfix_mean",
+      "family_index": 9,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Postfix",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 8782.059211058613,
+      "cpu_time": 8780.66322845519,
+      "time_unit": "ns",
+      "bytes_per_second": 512047467.5171505
+    },
+    {
+      "name": "BM_Parse_Postfix_median",
+      "family_index": 9,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Postfix",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 8804.6956543026,
+      "cpu_time": 8804.085304814003,
+      "time_unit": "ns",
+      "bytes_per_second": 510672016.94895244
+    },
+    {
+      "name": "BM_Parse_Postfix_stddev",
+      "family_index": 9,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Postfix",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 49.642615571908195,
+      "cpu_time": 49.894031804435585,
+      "time_unit": "ns",
+      "bytes_per_second": 2915429.024037457
+    },
+    {
+      "name": "BM_Parse_Postfix_cv",
+      "family_index": 9,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Postfix",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.005652730684097056,
+      "cpu_time": 0.005682262319632728,
+      "time_unit": "ns",
+      "bytes_per_second": 0.005693669452509904
+    },
+    {
+      "name": "BM_Parse_Aggregates_mean",
+      "family_index": 10,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Aggregates",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 15456.640201440803,
+      "cpu_time": 15455.101555233477,
+      "time_unit": "ns",
+      "bytes_per_second": 290930876.3742699
+    },
+    {
+      "name": "BM_Parse_Aggregates_median",
+      "family_index": 10,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Aggregates",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 15498.116346399784,
+      "cpu_time": 15496.874391642006,
+      "time_unit": "ns",
+      "bytes_per_second": 290123020.0604095
+    },
+    {
+      "name": "BM_Parse_Aggregates_stddev",
+      "family_index": 10,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Aggregates",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 155.48904440909774,
+      "cpu_time": 155.3334041720892,
+      "time_unit": "ns",
+      "bytes_per_second": 2947280.8500514505
+    },
+    {
+      "name": "BM_Parse_Aggregates_cv",
+      "family_index": 10,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Aggregates",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.01005969229940435,
+      "cpu_time": 0.01005062332440575,
+      "time_unit": "ns",
+      "bytes_per_second": 0.01013051927241955
+    },
+    {
+      "name": "BM_Parse_Props_mean",
+      "family_index": 11,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Props",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 18952.940556346344,
+      "cpu_time": 18950.354997269224,
+      "time_unit": "ns",
+      "bytes_per_second": 448334550.58089495
+    },
+    {
+      "name": "BM_Parse_Props_median",
+      "family_index": 11,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Props",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 18970.057342083463,
+      "cpu_time": 18965.838339704962,
+      "time_unit": "ns",
+      "bytes_per_second": 447963324.7855769
+    },
+    {
+      "name": "BM_Parse_Props_stddev",
+      "family_index": 11,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Props",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 72.6015836418928,
+      "cpu_time": 72.19186020344735,
+      "time_unit": "ns",
+      "bytes_per_second": 1712303.095529527
+    },
+    {
+      "name": "BM_Parse_Props_cv",
+      "family_index": 11,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Props",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.0038306237191031737,
+      "cpu_time": 0.0038095254792773173,
+      "time_unit": "ns",
+      "bytes_per_second": 0.003819253040638831
+    },
+    {
+      "name": "BM_Parse_Handler_mean",
+      "family_index": 12,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Handler",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "mean",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 20957.222643749345,
+      "cpu_time": 20953.954614220907,
+      "time_unit": "ns",
+      "bytes_per_second": 415198177.22261083
+    },
+    {
+      "name": "BM_Parse_Handler_median",
+      "family_index": 12,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Handler",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "median",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 20961.725898368815,
+      "cpu_time": 20959.243570348008,
+      "time_unit": "ns",
+      "bytes_per_second": 415091316.1917868
+    },
+    {
+      "name": "BM_Parse_Handler_stddev",
+      "family_index": 12,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Handler",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "stddev",
+      "aggregate_unit": "time",
+      "iterations": 5,
+      "real_time": 53.47298188791757,
+      "cpu_time": 52.57437231998047,
+      "time_unit": "ns",
+      "bytes_per_second": 1040466.9566305313
+    },
+    {
+      "name": "BM_Parse_Handler_cv",
+      "family_index": 12,
+      "per_family_instance_index": 0,
+      "run_name": "BM_Parse_Handler",
+      "run_type": "aggregate",
+      "repetitions": 5,
+      "threads": 1,
+      "aggregate_name": "cv",
+      "aggregate_unit": "percentage",
+      "iterations": 5,
+      "real_time": 0.002551529980708885,
+      "cpu_time": 0.0025090429605254374,
+      "time_unit": "ns",
+      "bytes_per_second": 0.002505952611811875
     }
   ]
 }

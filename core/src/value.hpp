@@ -1,108 +1,122 @@
 #pragma once
-#include <cstddef>
+#include <cassert>
 #include <cstdint>
+#include <type_traits>
+
 namespace CS {
 
-/// A dynamically typed value used by the ChupaScript runtime.
-///
-/// Values are non-owning. String, Object, and Array values reference storage
-/// owned by the Context from which they were created.
-///
-/// Using a Value after its owning Context has been destroyed is undefined
-/// behavior if the Value references String, Object, or Array storage.
-///
+class Context;
 
-struct Value {
-    /// Identifies the type of the stored value.
-    enum class Kind : std::uint8_t {
-        Null,
-        Boolean,
-        Number,
-        String,
-        Object,
-        Array
-    };
-    /// Creates a null value.
-    [[nodiscard]]
-    static Value null() noexcept {
-        return Value(Kind::Null);
+/// Значение ChupaScript. Шесть типов из docs/semantics.md §2.1.
+///
+/// Строки и агрегаты адресуются индексами в пулы Context: значение без своего
+/// контекста бессмысленно, разрешить индекс может только тот контекст, который
+/// его выдал. Поэтому создать строку, массив или объект способен лишь Context —
+/// соответствующие фабрики закрыты.
+///
+/// Раскладка и обоснование:
+/// docs/superpowers/specs/2026-08-11-chupascript-values-design.md §4.
+class Value {
+   public:
+    /// Вид значения. Закрытый список из docs/semantics.md §2.1.
+    enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
+
+    [[nodiscard]] static Value null() noexcept {
+        Value v;
+        v.kind_ = Kind::Null;
+        return v;
     }
-    /// Creates a boolean value.
-    [[nodiscard]]
-    static Value boolean(bool value) noexcept {
-        return Value(Kind::Boolean, value);
+
+    [[nodiscard]] static Value boolean(bool value) noexcept {
+        Value v;
+        v.kind_ = Kind::Boolean;
+        v.boolean_ = value;
+        return v;
     }
-    /// Creates a numeric value.
-    [[nodiscard]]
-    static Value number(double value) noexcept {
-        return Value(Kind::Number, value);
+
+    [[nodiscard]] static Value number(double value) noexcept {
+        Value v;
+        v.kind_ = Kind::Number;
+        v.number_ = value;
+        return v;
     }
-    /// Creates a non-owning reference to String storage.
-    [[nodiscard]]
-    static Value string(std::size_t* value) noexcept {
-        return Value(Kind::String, value);
+
+    [[nodiscard]] Kind kind() const noexcept { return kind_; }
+
+    /// Предусловие: kind() == Kind::Boolean.
+    [[nodiscard]] bool booleanValue() const noexcept {
+        assert(kind_ == Kind::Boolean);
+        return boolean_;
     }
-    /// Creates a non-owning reference to Object storage.
-    [[nodiscard]]
-    static Value object(std::size_t* value) noexcept {
-        return Value(Kind::Object, value);
+
+    /// Предусловие: kind() == Kind::Number.
+    [[nodiscard]] double numberValue() const noexcept {
+        assert(kind_ == Kind::Number);
+        return number_;
     }
-    /// Creates a non-owning reference to Array storage.
-    [[nodiscard]]
-    static Value array(std::size_t* value) noexcept {
-        return Value(Kind::Array, value);
+
+    /// Один ли это агрегат — сравнивает вид и индекс заголовка.
+    ///
+    /// У скаляров идентичности нет (docs/semantics.md §5.4), для них всегда
+    /// false, в том числе при сравнении значения с самим собой.
+    [[nodiscard]] bool sameAggregate(Value other) const noexcept {
+        if (kind_ != other.kind_) { return false; }
+        if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
+        return index_ == other.index_;
     }
-    /// Returns the kind of the stored value.
-    [[nodiscard]]
-    Kind kind() const noexcept {
-        return kind_;
+
+   private:
+    friend class Context;
+
+    /// Индексы полны как тип, поэтому без закрытых фабрик любой код собрал бы
+    /// значение-агрегат с произвольным номером заголовка. Закрываем доступом.
+    [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length) noexcept {
+        Value v;
+        v.kind_ = Kind::String;
+        v.length_ = length;
+        v.index_ = offset;
+        return v;
     }
-private:
-    explicit Value(Kind kind) noexcept
-        : kind_(kind) {}
-    Value(Kind kind, bool value) noexcept
-        : kind_(kind), boolean_(value) {}
-    Value(Kind kind, double value) noexcept
-        : kind_(kind), number_(value) {}
-    Value(Kind kind, std::size_t* value) noexcept
-        : kind_(kind) {
-        switch (kind) {
-            case Kind::String:
-                string_ = value;
-                break;
-            case Kind::Object:
-                object_ = value;
-                break;
-            case Kind::Array:
-                array_ = value;
-                break;
-            default:
-                break;
-        }
+
+    [[nodiscard]] static Value array(std::uint32_t index) noexcept {
+        Value v;
+        v.kind_ = Kind::Array;
+        v.index_ = index;
+        return v;
     }
-    Kind kind_;
-    // TODO: Consider NaN-boxing or another compact representation if the
-    //       size of Value becomes a significant constraint.
-    union {
+
+    [[nodiscard]] static Value object(std::uint32_t index) noexcept {
+        Value v;
+        v.kind_ = Kind::Object;
+        v.index_ = index;
+        return v;
+    }
+
+    [[nodiscard]] std::uint32_t index() const noexcept {
+        assert(kind_ == Kind::String || kind_ == Kind::Array || kind_ == Kind::Object);
+        return index_;
+    }
+
+    [[nodiscard]] std::uint32_t length() const noexcept {
+        assert(kind_ == Kind::String);
+        return length_;
+    }
+
+    Value() noexcept : kind_(Kind::Null), length_(0), number_(0.0) {}
+
+    Kind kind_;             // смещение 0
+    std::uint32_t length_;  // смещение 4 — длина строки в байтах
+    // TODO(B2): восемь байт вместо шестнадцати достижимы только через
+    // NaN-boxing: double в объединении задаёт и размер, и выравнивание.
+    union {  // смещение 8
         bool boolean_;
         double number_;
-        std::size_t* string_;
-        std::size_t* object_;
-        std::size_t* array_;
+        std::uint32_t index_;
     };
 };
 
-/// Compares two values using ChupaScript strict equality semantics.
-///
-/// This corresponds to the `===` operator.
-[[nodiscard]]
-bool strictEqual(const Value& lhs, const Value& rhs) noexcept;
+static_assert(sizeof(Value) == 16, "Value должен оставаться в 16 байтах");
+static_assert(std::is_trivially_copyable_v<Value>,
+              "диапазоны значений копируются в пулах целиком");
 
-/// Compares two values using ChupaScript loose equality semantics.
-///
-/// This corresponds to the `==` operator.
-[[nodiscard]]
-bool looseEqual(const Value& lhs, const Value& rhs) noexcept;
-
-
-} // namespace CS
+}  // namespace CS

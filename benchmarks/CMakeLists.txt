@@ -4,6 +4,7 @@ add_executable(chupascript_benchmarks
     eval_benchmark.cpp
     lexer_benchmark.cpp
     parser_benchmark.cpp
+    store_benchmark.cpp
 )
 
 target_include_directories(chupascript_benchmarks PRIVATE

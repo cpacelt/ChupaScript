@@ -28,7 +28,7 @@ struct ObjectRep {
 
 }  // namespace detail
 
-Context::Context() = default;
+Context::Context() { roots_ = makeObject(); }
 Context::~Context() = default;
 
 std::uint32_t Context::appendText(std::string_view bytes) {
@@ -272,6 +272,22 @@ void Context::objectSet(Value o, std::string_view key, Value v) {
     }
     entries_[rep.start + at] = detail::Entry{keyOffset, keyLength, v};
     rep.count += 1;
+}
+
+Value Context::root(std::string_view name) const noexcept {
+    return objectGet(roots_, name);
+}
+
+bool Context::hasRoot(std::string_view name) const noexcept {
+    return objectHas(roots_, name);
+}
+
+void Context::setRoot(std::string_view name, Value v) { objectSet(roots_, name, v); }
+
+std::uint32_t Context::rootCount() const noexcept { return objectCount(roots_); }
+
+std::string_view Context::rootNameAt(std::uint32_t i) const noexcept {
+    return objectKeyAt(roots_, i);
 }
 
 std::size_t Context::bytesUsed() const noexcept {

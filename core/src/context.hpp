@@ -102,6 +102,26 @@ class Context {
     /// Предусловие: o.kind() == Value::Kind::Object.
     void objectSet(Value o, std::string_view key, Value v);
 
+    // ─── корни ───
+    //
+    // Таблица корней — отображение имя → значение, то есть объект. Отдельной
+    // структуры под неё нет: контекст держит один внутренний объект и работает
+    // с ним теми же методами, что и с любым другим.
+
+    /// Значение корня либо null, если имени нет.
+    Value root(std::string_view name) const noexcept;
+
+    /// Есть ли такое имя. Отличает корень со значением null от отсутствующего.
+    bool hasRoot(std::string_view name) const noexcept;
+
+    /// Заводит корень либо заменяет значение существующего.
+    void setRoot(std::string_view name, Value v);
+
+    std::uint32_t rootCount() const noexcept;
+
+    /// Имя корня по порядковому номеру либо пустой срез за границей.
+    std::string_view rootNameAt(std::uint32_t i) const noexcept;
+
     // ─── метрики ───
 
     /// Сколько байт занято выданными данными.
@@ -110,6 +130,10 @@ class Context {
     std::size_t bytesReserved() const noexcept;
 
    private:
+    /// Объект с корнями. Создаётся в конструкторе, поэтому Value::null()
+    /// здесь — только заглушка до его вызова.
+    Value roots_ = Value::null();
+
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
     /// exact — выделить ровно needed, а не ближайшую степень двойки. Так

@@ -292,7 +292,14 @@ TEST(DataRejects, TrailingBytesAreRejected) {
     Context ctx;
     // Текст обязан быть значением целиком.
     EXPECT_EQ(reject(ctx, "1 2").code, ErrorCode::Syntax);
-    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(ctx, "[1] 2").code, ErrorCode::Syntax);
+}
+
+TEST(DataRejects, IndexingALiteralIsNotData) {
+    Context ctx;
+    // [1] [2] разбирается: это массив, проиндексированный двойкой. Выражение,
+    // а не запись значения.
+    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, ExponentIsNotANumber) {

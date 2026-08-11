@@ -14,19 +14,6 @@ namespace {
 
 /// Записывает отказ «в данных выражение недопустимо» с местом узла.
 bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
-    // Особый случай: Index с Array или Object base — это синтаксическая ошибка.
-    // Парсер интерпретирует "[1] [2]" как [1][2], но это не допустимо в data layer.
-    // Это синтаксическая ошибка, а не логическая ошибка в данных.
-    if (ast.kind(node) == NodeKind::Index) {
-        const NodeId base = ast.child(node, 0);
-        const NodeKind baseKind = ast.kind(base);
-        if (baseKind == NodeKind::Array || baseKind == NodeKind::Object) {
-            diag = Diagnostic{ErrorCode::Syntax, ast.offset(node),
-                              "cannot index array or object literals in data"};
-            return false;
-        }
-    }
-
     diag = Diagnostic{ErrorCode::Data, ast.offset(node),
                       "expression is not allowed in data"};
     return false;

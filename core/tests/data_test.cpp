@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <gtest/gtest.h>
+#include <string>
 
 #include "context.hpp"
 #include "diagnostic.hpp"
@@ -120,6 +121,47 @@ TEST(DataMinus, MinusOverNonNumberIsRejected) {
     EXPECT_FALSE(CS::setVariable(ctx, "worse", "!true", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_EQ(ctx.rootCount(), 0u);
+}
+
+TEST(DataEscapes, NewlineIsDecoded) {
+    Context ctx;
+    const std::string_view text = ctx.string(put(ctx, "s", "'a\\nb'"));
+    ASSERT_EQ(text.size(), 3u);
+    EXPECT_EQ(text[1], '\n');
+}
+
+TEST(DataEscapes, TabIsDecoded) {
+    Context ctx;
+    const std::string_view text = ctx.string(put(ctx, "s", "'a\\tb'"));
+    ASSERT_EQ(text.size(), 3u);
+    EXPECT_EQ(text[1], '\t');
+}
+
+TEST(DataEscapes, BackslashIsDecoded) {
+    Context ctx;
+    const std::string_view text = ctx.string(put(ctx, "s", "'a\\\\b'"));
+    ASSERT_EQ(text.size(), 3u);
+    EXPECT_EQ(text[1], '\\');
+}
+
+TEST(DataEscapes, BothQuotesAreDecoded) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(put(ctx, "a", "'a\\'b'")), "a'b");
+    EXPECT_EQ(ctx.string(put(ctx, "b", "\"a\\\"b\"")), "a\"b");
+}
+
+TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(put(ctx, "s", "'\\n\\t'")), "\n\t");
+}
+
+TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
+    Context ctx;
+    Diagnostic diag;
+    // docs/grammar.md §11: юникодных escape в языке нет — внешний уровень
+    // снимает хост, и до нас доезжают готовые байты.
+    EXPECT_FALSE(CS::setVariable(ctx, "s", "'\\u0041'", diag));
+    EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
 }  // namespace

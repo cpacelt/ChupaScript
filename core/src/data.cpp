@@ -19,7 +19,7 @@ bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
     return false;
 }
 
-/// Идентификатор ли это по docs/grammar.md §4.2 и не ключевое ли слово (§4.5).
+/// Идентификатор ли это по docs/grammar.md §4.4 и не ключевое ли слово (§4.5).
 ///
 /// Проверка выполняется лексером, а не своей таблицей: так набор ключевых слов
 /// и ограничение на ASCII заведомо совпадают с языком и не разъедутся с ним.
@@ -101,7 +101,7 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
 
         case NodeKind::Unary: {
             // Минус над числом — это запись отрицательного значения, а не
-            // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.4),
+            // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.6),
             // и без этой ветки первое же отрицательное поле с бэкенда упёрлось
             // бы в «выражения в данных запрещены».
             if (ast.op(node) != TokenKind::Minus) { return rejectNode(ast, node, diag); }
@@ -158,6 +158,14 @@ bool setVariable(Context &ctx, std::string_view name, std::string_view text,
                  Diagnostic &diag) {
     if (!isRootName(name)) {
         diag = Diagnostic{ErrorCode::Name, 0, "root name must be an identifier"};
+        return false;
+    }
+
+    // Та же защита, что в isRootName: длина обязана влезать в std::uint32_t,
+    // иначе приведение ниже молча усечёт text до префикса, а этот префикс
+    // способен успешно разобраться как совсем другое значение.
+    if (text.size() > 0xffffffffu) {
+        diag = Diagnostic{ErrorCode::Data, 0, "value text is too long"};
         return false;
     }
 

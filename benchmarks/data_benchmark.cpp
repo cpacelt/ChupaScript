@@ -3,6 +3,7 @@
 // переменную при сборке экрана.
 #include <benchmark/benchmark.h>
 
+#include <cstdint>
 #include <string>
 
 #include "context.hpp"

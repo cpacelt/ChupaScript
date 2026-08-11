@@ -57,9 +57,13 @@ TEST(ContextString, AcceptsSliceOfItsOwnTextPool) {
     EXPECT_EQ(ctx.string(seed), "исходная строка");
 }
 
-TEST(ContextMetrics, EmptyContextUsesNothing) {
+TEST(ContextMetrics, FreshContextHoldsOnlyTheRootTable) {
     Context ctx;
-    EXPECT_EQ(ctx.bytesUsed(), 0u);
+    // Единственное, что есть у нового контекста, — пустой объект корней:
+    // один заголовок и ни одной пары.
+    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_GT(ctx.bytesUsed(), 0u);
+    EXPECT_LT(ctx.bytesUsed(), 64u);
 }
 
 TEST(ContextMetrics, StringAddsItsBytes) {
@@ -463,6 +467,77 @@ TEST(ContextObjectMutation, PreallocatedCapacityGrowsNothing) {
     }
     // Пары не переезжали; выросло ровно на байты восьми двухсимвольных ключей.
     EXPECT_EQ(ctx.bytesUsed(), afterReserve + 16u);
+}
+
+TEST(ContextRoots, FreshContextHasNoRoots) {
+    Context ctx;
+    EXPECT_EQ(ctx.rootCount(), 0u);
+}
+
+TEST(ContextRoots, MissingRootReadsAsNull) {
+    Context ctx;
+    EXPECT_EQ(ctx.root("state").kind(), Value::Kind::Null);
+    EXPECT_FALSE(ctx.hasRoot("state"));
+}
+
+TEST(ContextRoots, StoredRootIsFound) {
+    Context ctx;
+    ctx.setRoot("count", Value::number(3.0));
+    EXPECT_TRUE(ctx.hasRoot("count"));
+    EXPECT_EQ(ctx.root("count").numberValue(), 3.0);
+    EXPECT_EQ(ctx.rootCount(), 1u);
+}
+
+TEST(ContextRoots, NullRootIsDistinctFromAbsence) {
+    Context ctx;
+    ctx.setRoot("maybe", Value::null());
+    // Тот же довод, что для ключей объекта (docs/semantics.md §6.2).
+    EXPECT_EQ(ctx.root("maybe").kind(), Value::Kind::Null);
+    EXPECT_TRUE(ctx.hasRoot("maybe"));
+}
+
+TEST(ContextRoots, RepeatedSetReplacesValueWithoutAddingName) {
+    Context ctx;
+    ctx.setRoot("state", Value::number(1.0));
+    ctx.setRoot("state", Value::number(2.0));
+    EXPECT_EQ(ctx.rootCount(), 1u);
+    EXPECT_EQ(ctx.root("state").numberValue(), 2.0);
+}
+
+TEST(ContextRoots, RootHoldsAggregate) {
+    Context ctx;
+    const Value items = ctx.makeArray();
+    ctx.arrayPush(items, Value::number(1.0));
+    ctx.setRoot("items", items);
+
+    EXPECT_TRUE(ctx.root("items").sameAggregate(items));
+    EXPECT_EQ(ctx.arrayCount(ctx.root("items")), 1u);
+}
+
+TEST(ContextRoots, MutationThroughRootIsSeenThroughTheOriginal) {
+    Context ctx;
+    const Value items = ctx.makeArray();
+    ctx.setRoot("items", items);
+    for (int i = 0; i < 30; ++i) {
+        ctx.arrayPush(ctx.root("items"), Value::number(static_cast<double>(i)));
+    }
+    // docs/semantics.md §2.3: ссылочность наблюдаема и через корень.
+    EXPECT_EQ(ctx.arrayCount(items), 30u);
+}
+
+TEST(ContextRoots, EnumerationYieldsEveryName) {
+    Context ctx;
+    ctx.setRoot("user", Value::null());
+    ctx.setRoot("state", Value::null());
+
+    ASSERT_EQ(ctx.rootCount(), 2u);
+    std::string seen;
+    for (std::uint32_t i = 0; i < ctx.rootCount(); ++i) {
+        seen += ctx.rootNameAt(i);
+        seen += ' ';
+    }
+    // Хранение отсортировано, как у любого объекта.
+    EXPECT_EQ(seen, "state user ");
 }
 
 }  // namespace

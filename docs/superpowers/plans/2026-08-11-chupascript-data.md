@@ -9,7 +9,7 @@
 **Tech Stack:** C++17, gtest, Google Benchmark, CMake. У самой библиотеки зависимостей нет.
 
 **Спека:** `docs/superpowers/specs/2026-08-11-chupascript-data-design.md` — нормативна для этого плана.
-**Грамматика:** `docs/grammar.md` §4.2 (идентификаторы), §4.5 (зарезервированные слова), §5.4 (литералы), §A.
+**Грамматика:** `docs/grammar.md` §4.4 (идентификаторы), §4.5 (зарезервированные слова), §5.3 (литералы), §A.
 **Семантика:** `docs/semantics.md` §2.1 (типы), §2.3 (ссылочность), §6.2 (ключи).
 
 ## Global Constraints
@@ -19,7 +19,7 @@
 - **Комментарии и документация — по-русски.** Сообщения диагностики — по-английски, как в лексере и парсере.
 - **`core/src/parser.hpp` и `core/src/parser.cpp` не меняются ни одной строкой.** Ограничение «только литералы» не выражается грамматикой и не проверяется при разборе.
 - **Формат значения — литерал ChupaScript, а не JSON.** Обе формы кавычек равноправны; экспоненты нет; юникодных escape нет — внешний уровень снимает хост.
-- **Имя корня обязано быть идентификатором** по `grammar.md` §4.2 и не совпадать с зарезервированным словом (§4.5).
+- **Имя корня обязано быть идентификатором** по `grammar.md` §4.4 и не совпадать с зарезервированным словом (§4.5).
 - **Унарный минус над числом принимается** и сворачивается в отрицательное число; `!` и минус над не-числом — нет.
 - **Дубликаты ключей: последний выигрывает.** Следствие того, что `objectSet` заменяет значение.
 - **Смещение в диагностике считается от начала текста значения,** а не от начала макета.
@@ -412,7 +412,7 @@ namespace CS {
 /// (docs/superpowers/specs/2026-08-11-chupascript-data-design.md §3).
 /// Выражение литералом не является и отвергается: данные не вычисляются.
 ///
-/// name обязано быть идентификатором (docs/grammar.md §4.2) и не совпадать с
+/// name обязано быть идентификатором (docs/grammar.md §4.4) и не совпадать с
 /// зарезервированным словом (§4.5) — иначе программа не сможет к нему
 /// обратиться.
 ///
@@ -447,7 +447,7 @@ bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
     return false;
 }
 
-/// Идентификатор ли это по docs/grammar.md §4.2 и не ключевое ли слово (§4.5).
+/// Идентификатор ли это по docs/grammar.md §4.4 и не ключевое ли слово (§4.5).
 ///
 /// Проверка выполняется лексером, а не своей таблицей: так набор ключевых слов
 /// и ограничение на ASCII заведомо совпадают с языком и не разъедутся с ним.
@@ -615,7 +615,7 @@ Expected: FAIL — `materialize` отвергает `String` и `Unary` как �
 
         case NodeKind::Unary: {
             // Минус над числом — это запись отрицательного значения, а не
-            // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.4),
+            // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.6),
             // и без этой ветки первое же отрицательное поле с бэкенда упёрлось
             // бы в «выражения в данных запрещены».
             if (ast.op(node) != TokenKind::Minus) { return rejectNode(ast, node, diag); }
@@ -697,8 +697,8 @@ TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
 TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
     Context ctx;
     Diagnostic diag;
-    // docs/grammar.md §11: юникодных escape в языке нет — внешний уровень
-    // снимает хост, и до нас доезжают готовые байты.
+    // docs/grammar.md §8 и §4.7: юникодных escape в языке нет — внешний
+    // уровень снимает хост, и до нас доезжают готовые байты.
     EXPECT_FALSE(CS::setVariable(ctx, "s", "'\\u0041'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
@@ -1010,22 +1010,33 @@ TEST(DataRejects, ConditionalIsNotData) {
 TEST(DataRejects, OffsetPointsAtTheOffendingNode) {
     Context ctx;
     // Ошибка внутри массива обязана указывать на место выражения, а не на
-    // начало текста: иначе хост не покажет, где именно чинить.
+    // начало текста и не на соседний элемент: иначе хост не покажет, где
+    // именно чинить. В "[1, user.name, 3]" выражение занимает байты с 4 по 12,
+    // а последний элемент стоит на 15 — верхняя граница отсекает его.
     const Diagnostic diag = reject(ctx, "[1, user.name, 3]");
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_GT(diag.offset, 3u);
+    EXPECT_GE(diag.offset, 4u);
+    EXPECT_LT(diag.offset, 13u);
 }
 
 TEST(DataRejects, TrailingBytesAreRejected) {
     Context ctx;
     // Текст обязан быть значением целиком.
     EXPECT_EQ(reject(ctx, "1 2").code, ErrorCode::Syntax);
-    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(ctx, "[1] 2").code, ErrorCode::Syntax);
+}
+
+TEST(DataRejects, IndexingALiteralIsNotData) {
+    Context ctx;
+    // [1] [2] разбирается: это массив, проиндексированный двойкой. Индексация —
+    // постфиксная операция над любым Primary, включая литерал агрегата, поэтому
+    // синтаксической ошибки здесь нет. Это выражение, а не запись значения.
+    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, ExponentIsNotANumber) {
     Context ctx;
-    // docs/grammar.md §11: экспоненты в языке нет, 1e3 — два токена.
+    // docs/grammar.md §8 и §4.6: экспоненты в языке нет, 1e3 — два токена.
     // Единственное расхождение с JSON, переживающее границу.
     EXPECT_EQ(reject(ctx, "1e3").code, ErrorCode::Syntax);
 }
@@ -1044,12 +1055,12 @@ TEST(DataRejects, FailedSetLeavesPreviousValueIntact) {
 - [ ] **Шаг 2: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure -R DataRejects`
-Expected: 10 тестов PASS. Если какой-то падает — правится `core/src/data.cpp`, тест не трогается: он выражает требование спеки §6.
+Expected: 11 тестов PASS. Если какой-то падает — правится `core/src/data.cpp`, тест не трогается: он выражает требование спеки §6. Если тест требует невозможного — остановись и спроси, а не подгоняй под него реализацию.
 
 - [ ] **Шаг 3: Прогнать весь набор**
 
 Run: `ctest --test-dir build --output-on-failure`
-Expected: 249 тестов PASS.
+Expected: 250 тестов PASS.
 
 - [ ] **Шаг 4: Прогнать под санитайзерами и с `-Werror`**
 
@@ -1058,7 +1069,7 @@ cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure
 cmake --build build-werror -j && ctest --test-dir build-werror --output-on-failure
 ```
 
-Expected: 249 PASS в обеих, ни одного отчёта санитайзера, ни одного предупреждения.
+Expected: 250 PASS в обеих, ни одного отчёта санитайзера, ни одного предупреждения.
 
 - [ ] **Шаг 5: Коммит**
 
@@ -1359,7 +1370,7 @@ Expected: каждый упомянутый номер имеет заголов
 - [ ] **Шаг 6: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure`
-Expected: 249 тестов PASS — правка комментария сборку не меняет, но убедиться стоит.
+Expected: 250 тестов PASS — правка комментария сборку не меняет, но убедиться стоит.
 
 - [ ] **Шаг 7: Коммит**
 
@@ -1377,11 +1388,11 @@ git commit -m "Close B3 and B9 for data, record the freeze rule"
 | Задач | 8 |
 | Новых файлов | 4 (`data.hpp`, `data.cpp`, `data_test.cpp`, `data_benchmark.cpp`) |
 | Изменённых | `context.hpp`, `context.cpp`, `context_test.cpp`, `diagnostic.hpp`, два CMakeLists, backlog |
-| Тестов добавлено | 46 |
-| Тестов всего | 249 |
+| Тестов добавлено | 47 |
+| Тестов всего | 250 |
 | Бенчмарков добавлено | 7 строк из 5 функций |
 | Строк изменено в парсере | 0 |
 
-Слой закончен, когда: `ctest` даёт 249 из 249 в обычной сборке, под ASan+UBSan и с `-Werror`; `benchmarks/baseline.json` содержит строки `BM_Data_*`, а прежние `BM_Lex_*`, `BM_Parse_*` и `BM_Store_*` не деградировали; `docs/backlog.md` закрывает B3 и сужает B9.
+Слой закончен, когда: `ctest` даёт 250 из 250 в обычной сборке, под ASan+UBSan и с `-Werror`; `benchmarks/baseline.json` содержит строки `BM_Data_*`, а прежние `BM_Lex_*` и `BM_Parse_*` не деградировали. Три строки `BM_Store_*` сдвинулись, и это принятая цена двух ранее отревьюенных решений: `021acf1` (перечитывание заголовка по индексу вместо удержания ссылки через рост пула, ради того чтобы замена пулов ареной осталась подменой приватных полей; около 0.28 нс на операцию) и `e960581` (конструктор `Context` строит объект корней, за что платит всякий бенчмарк, создающий контекст внутри измеряемого цикла). `docs/backlog.md` закрывает B3 и сужает B9.
 
 Следующий этап — вычислитель: главы 3–6 `docs/semantics.md`, вход — дерево от парсера и данные из контекста, выход — `Value`.

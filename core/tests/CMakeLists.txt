@@ -1,6 +1,7 @@
 add_executable(chupascript_tests
     ast_test.cpp
     context_test.cpp
+    data_test.cpp
     lexer_test.cpp
     parser_test.cpp
     smoke_test.cpp

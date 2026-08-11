@@ -1010,10 +1010,13 @@ TEST(DataRejects, ConditionalIsNotData) {
 TEST(DataRejects, OffsetPointsAtTheOffendingNode) {
     Context ctx;
     // Ошибка внутри массива обязана указывать на место выражения, а не на
-    // начало текста: иначе хост не покажет, где именно чинить.
+    // начало текста и не на соседний элемент: иначе хост не покажет, где
+    // именно чинить. В "[1, user.name, 3]" выражение занимает байты с 4 по 12,
+    // а последний элемент стоит на 15 — верхняя граница отсекает его.
     const Diagnostic diag = reject(ctx, "[1, user.name, 3]");
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_GT(diag.offset, 3u);
+    EXPECT_GE(diag.offset, 4u);
+    EXPECT_LT(diag.offset, 13u);
 }
 
 TEST(DataRejects, TrailingBytesAreRejected) {

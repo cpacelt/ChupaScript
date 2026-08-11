@@ -1,6 +1,7 @@
 # Benchmarks link the core lib and reach into src/ for isolated-stage timing
 # (internal headers are not part of the public API).
 add_executable(chupascript_benchmarks
+    data_benchmark.cpp
     eval_benchmark.cpp
     lexer_benchmark.cpp
     parser_benchmark.cpp

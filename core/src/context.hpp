@@ -62,6 +62,16 @@ class Context {
     /// Предусловие: a.kind() == Value::Kind::Array.
     bool arraySet(Value a, std::uint32_t index, Value v) noexcept;
 
+    /// Добавляет элемент в конец. Единственный способ расширить массив
+    /// (docs/semantics.md §6.1).
+    /// Предусловие: a.kind() == Value::Kind::Array.
+    void arrayPush(Value a, Value v);
+
+    /// Снимает последний элемент в *out. false на пустом массиве; выходной
+    /// параметр при отказе не меняется. out допускает nullptr.
+    /// Предусловие: a.kind() == Value::Kind::Array.
+    bool arrayPop(Value a, Value *out) noexcept;
+
     // ─── метрики ───
 
     /// Сколько байт занято выданными данными.

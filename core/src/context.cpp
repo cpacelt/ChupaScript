@@ -118,6 +118,24 @@ bool Context::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     return true;
 }
 
+void Context::arrayPush(Value a, Value v) {
+    assert(a.kind() == Value::Kind::Array);
+    detail::ArrayRep &rep = arrays_[a.index()];
+    // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
+    growArray(rep, rep.count + 1);
+    pool_[rep.start + rep.count] = v;
+    rep.count += 1;
+}
+
+bool Context::arrayPop(Value a, Value *out) noexcept {
+    assert(a.kind() == Value::Kind::Array);
+    detail::ArrayRep &rep = arrays_[a.index()];
+    if (rep.count == 0) { return false; }
+    rep.count -= 1;
+    if (out != nullptr) { *out = pool_[rep.start + rep.count]; }
+    return true;
+}
+
 std::size_t Context::bytesUsed() const noexcept {
     return pool_.size() * sizeof(Value) +
            arrays_.size() * sizeof(detail::ArrayRep) +

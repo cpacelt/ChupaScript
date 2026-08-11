@@ -29,7 +29,8 @@
     "load_avg": [2.22412,2.79834,2.62109],
     "library_version": "v1.9.1",
     "library_build_type": "release",
-    "json_schema_version": 1
+    "json_schema_version": 1,
+    "chupascript_machine": "arm64 macOS-26.5.2-arm64-arm-64bit"
   },
   "benchmarks": [
     {

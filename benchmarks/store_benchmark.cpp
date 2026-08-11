@@ -4,7 +4,6 @@
 #include <benchmark/benchmark.h>
 
 #include <string>
-#include <vector>
 
 #include "context.hpp"
 
@@ -89,7 +88,9 @@ void BM_Store_ObjectGet(benchmark::State &state) {
 }
 BENCHMARK(BM_Store_ObjectGet)->Arg(3)->Arg(8)->Arg(20);
 
-/// Вставка нового ключа: цена сдвига хвоста и роста.
+/// Вставка keys ключей в объект с заранее выделенной ёмкостью — роста нет,
+/// сдвиг хвоста при каждой вставке есть; в измеряемое время входит и
+/// создание/уничтожение самого Context.
 void BM_Store_ObjectInsert(benchmark::State &state) {
     const int keys = static_cast<int>(state.range(0));
     for (auto _ : state) {

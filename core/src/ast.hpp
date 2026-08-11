@@ -36,26 +36,6 @@ using NodeId = std::uint32_t;
 /// Отсутствие узла. Индекс 0 занят узлом-пустышкой вида Invalid.
 inline constexpr NodeId kNoNode = 0;
 
-/// Узел дерева.
-///
-/// Черновик: поля не пересекаются, узел заведомо толстый.
-/// Упаковка отложена — см. docs/backlog.md B6.
-///
-/// Читать напрямую нельзя нигде, кроме ast.cpp: единственный доступ — через
-/// аксессоры Ast. Это шов, ради которого решения B6–B10 остаются отложенными.
-struct Node {
-    NodeKind kind = NodeKind::Invalid;
-    TokenKind op = TokenKind::End;
-    std::uint32_t offset = 0;
-    std::uint32_t childStart = 0;
-    std::uint32_t childCount = 0;
-    std::uint32_t textOffset = 0;
-    std::uint32_t textLength = 0;
-    double number = 0.0;
-    bool boolean = false;
-    bool hasEscape = false;
-};
-
 /// Дерево разбора: хранение, строитель, аксессоры.
 ///
 /// Ничем не владеет: текст имён и литералов — срезы исходного буфера, который
@@ -64,9 +44,12 @@ class Ast {
    public:
     Ast();
 
-    /// Запоминает буфер, из которого аксессор text() режет имена и литералы.
-    /// Длина не хранится: смещения приходят из токенов того же буфера.
-    void setSource(const char *source) noexcept;
+    /// Начинает новое дерево над этим исходником.
+    ///
+    /// Выбрасывает всё, что было построено раньше: Ast пригоден для повторного
+    /// разбора. Буфер source обязан пережить Ast — имена и литералы хранятся
+    /// срезами (docs/backlog.md B12).
+    void reset(const char *source);
 
     /// Объявляет узел корнем дерева.
     void setRoot(NodeId node) noexcept;
@@ -114,6 +97,28 @@ class Ast {
     [[nodiscard]] std::uint32_t nodeCount() const noexcept;
 
    private:
+    /// Узел дерева.
+    ///
+    /// Черновик: поля не пересекаются, узел заведомо толстый.
+    /// Упаковка отложена — см. docs/backlog.md B6.
+    ///
+    /// Раскладка скрыта языком, а не соглашением: Node — приватный вложенный
+    /// тип Ast, и вне ast.cpp к полям обратиться нельзя. Единственный доступ
+    /// снаружи — через аксессоры Ast. Это шов, ради которого решения B6–B10
+    /// остаются отложенными.
+    struct Node {
+        NodeKind kind = NodeKind::Invalid;
+        TokenKind op = TokenKind::End;
+        std::uint32_t offset = 0;
+        std::uint32_t childStart = 0;
+        std::uint32_t childCount = 0;
+        std::uint32_t textOffset = 0;
+        std::uint32_t textLength = 0;
+        double number = 0.0;
+        bool boolean = false;
+        bool hasEscape = false;
+    };
+
     NodeId add(const Node &node);
     std::uint32_t pushChildren(const NodeId *ids, std::uint32_t count);
 

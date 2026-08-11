@@ -1,5 +1,7 @@
 #include "ast.hpp"
 
+#include <cassert>
+
 namespace CS {
 
 Ast::Ast() {
@@ -8,7 +10,13 @@ Ast::Ast() {
     nodes_.push_back(Node{});
 }
 
-void Ast::setSource(const char *source) noexcept { src_ = source; }
+void Ast::reset(const char *source) {
+    src_ = source;
+    root_ = kNoNode;
+    nodes_.clear();
+    children_.clear();
+    nodes_.push_back(Node{});  // индекс kNoNode
+}
 
 void Ast::setRoot(NodeId node) noexcept { root_ = node; }
 
@@ -187,19 +195,28 @@ NodeId Ast::program(const NodeId *statements, std::uint32_t count) {
 
 NodeId Ast::root() const noexcept { return root_; }
 
-NodeKind Ast::kind(NodeId node) const noexcept { return nodes_[node].kind; }
+NodeKind Ast::kind(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return nodes_[node].kind;
+}
 
-TokenKind Ast::op(NodeId node) const noexcept { return nodes_[node].op; }
+TokenKind Ast::op(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return nodes_[node].op;
+}
 
 std::uint32_t Ast::offset(NodeId node) const noexcept {
+    assert(node < nodes_.size());
     return nodes_[node].offset;
 }
 
 std::uint32_t Ast::childCount(NodeId node) const noexcept {
+    assert(node < nodes_.size());
     return nodes_[node].childCount;
 }
 
 NodeId Ast::child(NodeId node, std::uint32_t index) const noexcept {
+    assert(node < nodes_.size());
     const Node &n = nodes_[node];
     if (index >= n.childCount) {
         return kNoNode;
@@ -208,12 +225,17 @@ NodeId Ast::child(NodeId node, std::uint32_t index) const noexcept {
 }
 
 double Ast::numberValue(NodeId node) const noexcept {
+    assert(node < nodes_.size());
     return nodes_[node].number;
 }
 
-bool Ast::boolValue(NodeId node) const noexcept { return nodes_[node].boolean; }
+bool Ast::boolValue(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return nodes_[node].boolean;
+}
 
 std::string_view Ast::text(NodeId node) const noexcept {
+    assert(node < nodes_.size());
     const Node &n = nodes_[node];
     if (n.textLength == 0 || src_ == nullptr) {
         return {};
@@ -221,7 +243,10 @@ std::string_view Ast::text(NodeId node) const noexcept {
     return std::string_view(src_ + n.textOffset, n.textLength);
 }
 
-bool Ast::hasEscape(NodeId node) const noexcept { return nodes_[node].hasEscape; }
+bool Ast::hasEscape(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return nodes_[node].hasEscape;
+}
 
 std::uint32_t Ast::nodeCount() const noexcept {
     return static_cast<std::uint32_t>(nodes_.size());

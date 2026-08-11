@@ -60,7 +60,7 @@ TEST(AstShape, NumberKeepsValueAndOffset) {
 TEST(AstShape, StringStripsQuotesAndKeepsEscapeFlag) {
     const std::string source = "x = 'абв'";
     CS::Ast ast;
-    ast.setSource(source.data());
+    ast.reset(source.data());
     // 'абв' занимает [4, 12): кавычки плюс шесть байт кириллицы.
     const CS::NodeId node = ast.string(string(4, 8, true));
     EXPECT_EQ(ast.kind(node), NodeKind::String);
@@ -72,7 +72,7 @@ TEST(AstShape, StringStripsQuotesAndKeepsEscapeFlag) {
 TEST(AstShape, EmptyStringYieldsEmptyText) {
     const std::string source = "''";
     CS::Ast ast;
-    ast.setSource(source.data());
+    ast.reset(source.data());
     const CS::NodeId node = ast.string(string(0, 2, false));
     EXPECT_EQ(ast.text(node), "");
     EXPECT_FALSE(ast.hasEscape(node));
@@ -91,7 +91,7 @@ TEST(AstShape, BooleanTakesValueFromTokenKind) {
 TEST(AstShape, IdentifierTextIsSourceSlice) {
     const std::string source = "user.name";
     CS::Ast ast;
-    ast.setSource(source.data());
+    ast.reset(source.data());
     const CS::NodeId node = ast.identifier(ident(0, 4));
     EXPECT_EQ(ast.kind(node), NodeKind::Identifier);
     EXPECT_EQ(ast.text(node), "user");
@@ -113,7 +113,7 @@ TEST(AstShape, BinaryKeepsChildrenInOrder) {
 TEST(AstShape, CallCopiesArgumentsInOrder) {
     const std::string source = "min(1, 2, 3)";
     CS::Ast ast;
-    ast.setSource(source.data());
+    ast.reset(source.data());
     const CS::NodeId args[3] = {ast.number(number(1.0, 4)),
                                 ast.number(number(2.0, 7)),
                                 ast.number(number(3.0, 10))};
@@ -128,7 +128,7 @@ TEST(AstShape, CallCopiesArgumentsInOrder) {
 TEST(AstShape, ObjectKeepsPairsInterleaved) {
     const std::string source = "{ 'a': 1 }";
     CS::Ast ast;
-    ast.setSource(source.data());
+    ast.reset(source.data());
     const CS::NodeId pairs[2] = {ast.string(string(2, 3, false)),
                                  ast.number(number(1.0, 7))};
     const CS::NodeId node = ast.object(pairs, 2, 0);

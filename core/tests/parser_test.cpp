@@ -215,6 +215,14 @@ TEST(ParserPrimary, AggregatesNest) {
     EXPECT_EQ(expr(source), "(object 'xs' (array 1 (array 2)))");
 }
 
+TEST(ParserPrimary, ReservedWordIsNotAnExpression) {
+    const std::string source = "class";
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(parsed.diag.offset, 0u);
+}
+
 // ─── §5.4: приоритет ─────────────────────────────────────────────────
 
 TEST(ParserPrecedence, MultiplicativeBindsTighterThanAdditive) {
@@ -351,6 +359,22 @@ TEST(ParserPostfix, NestedCallInArgument) {
     EXPECT_EQ(expr(source), "(call min (call count a) 1)");
 }
 
+TEST(ParserPostfix, CallResultIsNotCallable) {
+    const std::string source = "f(a)(b)";
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(parsed.diag.offset, 4u);
+}
+
+TEST(ParserPostfix, MethodCallSyntaxIsNotSupported) {
+    const std::string source = "a.f(b)";
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(parsed.diag.offset, 3u);
+}
+
 // ─── §5.2: стейтменты ────────────────────────────────────────────────
 
 TEST(ParserStatement, EmptyProgramHasEmptyRoot) {
@@ -452,6 +476,21 @@ TEST(ParserModes, ProgramModeRejectsBareExpression) {
 TEST(ParserModes, ExpressionModeAcceptsWhatProgramModeRejects) {
     const std::string source = "a + 1";
     EXPECT_EQ(expr(source), "(+ a 1)");
+}
+
+TEST(ParserModes, FailedParseAfterSuccessLeavesNoRoot) {
+    const std::string good = "a + 1";
+    const std::string bad = "1 +";
+    Parsed first;
+    first.ok = CS::parseExpression(good.data(),
+                                   static_cast<std::uint32_t>(good.size()),
+                                   first.ast, first.diag);
+    ASSERT_TRUE(first.ok);
+    first.ok = CS::parseExpression(bad.data(),
+                                   static_cast<std::uint32_t>(bad.size()),
+                                   first.ast, first.diag);
+    EXPECT_FALSE(first.ok);
+    EXPECT_EQ(first.ast.root(), CS::kNoNode);
 }
 
 // ─── §5.5: ранние ошибки парсера ─────────────────────────────────────
@@ -602,15 +641,7 @@ TEST(ParserLexerErrors, UnterminatedStringKeepsLexerDiagnostic) {
     EXPECT_EQ(parsed.diag.offset, 0u);
 }
 
-TEST(ParserLexerErrors, ReservedWordIsNotAnExpression) {
-    const std::string source = "class";
-    const Parsed parsed = parseExpr(source);
-    EXPECT_FALSE(parsed.ok);
-    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
-    EXPECT_EQ(parsed.diag.offset, 0u);
-}
-
-// ─── предел вложенности ──────────────────────────────────────────────
+// ─── предел глубины рекурсии ──────────────────────────────────────────
 
 TEST(ParserLimits, DeepButAcceptableNestingParses) {
     std::string source(20, '(');

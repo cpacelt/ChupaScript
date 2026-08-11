@@ -681,14 +681,14 @@ bool Parser::runProgram(Diagnostic &diag) {
 
 bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
                      Diagnostic &diag) {
-    ast.setSource(source);
+    ast.reset(source);
     Parser parser(source, length, ast);
     return parser.runExpression(diag);
 }
 
 bool parseProgram(const char *source, std::uint32_t length, Ast &ast,
                   Diagnostic &diag) {
-    ast.setSource(source);
+    ast.reset(source);
     Parser parser(source, length, ast);
     return parser.runProgram(diag);
 }

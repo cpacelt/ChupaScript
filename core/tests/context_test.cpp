@@ -69,4 +69,43 @@ TEST(ContextMetrics, StringAddsItsBytes) {
     EXPECT_EQ(ctx.bytesUsed(), before + 5u);
 }
 
+TEST(ContextArray, EmptyArrayHasNoElements) {
+    Context ctx;
+    const Value a = ctx.makeArray();
+    EXPECT_EQ(a.kind(), Value::Kind::Array);
+    EXPECT_EQ(ctx.arrayCount(a), 0u);
+}
+
+TEST(ContextArray, CapacityDoesNotCreateElements) {
+    Context ctx;
+    EXPECT_EQ(ctx.arrayCount(ctx.makeArray(16)), 0u);
+}
+
+TEST(ContextArray, ReadBeyondEndGivesNull) {
+    Context ctx;
+    const Value a = ctx.makeArray();
+    // semantics.md §6.1: чтение за границей — штатная ситуация.
+    EXPECT_EQ(ctx.arrayAt(a, 0).kind(), Value::Kind::Null);
+    EXPECT_EQ(ctx.arrayAt(a, 1000).kind(), Value::Kind::Null);
+}
+
+TEST(ContextArray, WriteBeyondEndIsRefused) {
+    Context ctx;
+    const Value a = ctx.makeArray(8);
+    // semantics.md §7.2: запись за границу — ошибка, ёмкость её не оправдывает.
+    EXPECT_FALSE(ctx.arraySet(a, 0, Value::number(1.0)));
+}
+
+TEST(ContextArray, TwoEmptyArraysAreDistinct) {
+    Context ctx;
+    EXPECT_FALSE(ctx.makeArray().sameAggregate(ctx.makeArray()));
+}
+
+TEST(ContextArray, CopyOfValueIsTheSameArray) {
+    Context ctx;
+    const Value a = ctx.makeArray();
+    const Value b = a;
+    EXPECT_TRUE(a.sameAggregate(b));
+}
+
 }  // namespace

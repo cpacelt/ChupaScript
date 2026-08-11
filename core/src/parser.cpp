@@ -81,6 +81,8 @@ class Parser {
     NodeId primary();
 
     NodeId callArguments(const Token &name);
+    NodeId arrayLiteral();
+    NodeId objectLiteral();
 
     /// Общий буфер списков детей: аргументы вызова, элементы литералов,
     /// стейтменты программы. Правило помечает вершину, толкает свои узлы и
@@ -373,6 +375,95 @@ NodeId Parser::callArguments(const Token &name) {
     return node;
 }
 
+NodeId Parser::arrayLiteral() {
+    const std::uint32_t offset = cur_.offset;  // '['
+    if (!advance()) {
+        return kNoNode;
+    }
+    const std::size_t mark = scratch_.size();
+    if (!at(TokenKind::RBracket)) {
+        for (;;) {
+            const NodeId item = ternary();
+            if (item == kNoNode) {
+                return kNoNode;
+            }
+            scratch_.push_back(item);
+            if (!at(TokenKind::Comma)) {
+                break;
+            }
+            if (!advance()) {
+                return kNoNode;
+            }
+            if (at(TokenKind::RBracket)) {
+                return fail(cur_.offset, "trailing comma");
+            }
+        }
+    }
+    if (!at(TokenKind::RBracket)) {
+        return fail(cur_.offset, "expected ']'");
+    }
+    if (!advance()) {
+        return kNoNode;
+    }
+    const auto count = static_cast<std::uint32_t>(scratch_.size() - mark);
+    const NodeId node = ast_.array(scratch_.data() + mark, count, offset);
+    scratch_.resize(mark);
+    return node;
+}
+
+NodeId Parser::objectLiteral() {
+    const std::uint32_t offset = cur_.offset;  // '{'
+    if (!advance()) {
+        return kNoNode;
+    }
+    const std::size_t mark = scratch_.size();
+    if (!at(TokenKind::RBrace)) {
+        for (;;) {
+            if (!at(TokenKind::String)) {
+                return fail(cur_.offset,
+                            "object key must be a string literal");
+            }
+            const Token key = cur_;
+            if (!advance()) {
+                return kNoNode;
+            }
+            if (!at(TokenKind::Colon)) {
+                return fail(cur_.offset, "expected ':' after object key");
+            }
+            if (!advance()) {
+                return kNoNode;
+            }
+            // Ключ кладётся до разбора значения: вложенный литерал пометит
+            // вершину буфера уже за ним и вернёт её на место сам.
+            scratch_.push_back(ast_.string(key));
+            const NodeId value = ternary();
+            if (value == kNoNode) {
+                return kNoNode;
+            }
+            scratch_.push_back(value);
+            if (!at(TokenKind::Comma)) {
+                break;
+            }
+            if (!advance()) {
+                return kNoNode;
+            }
+            if (at(TokenKind::RBrace)) {
+                return fail(cur_.offset, "trailing comma");
+            }
+        }
+    }
+    if (!at(TokenKind::RBrace)) {
+        return fail(cur_.offset, "expected '}'");
+    }
+    if (!advance()) {
+        return kNoNode;
+    }
+    const auto count = static_cast<std::uint32_t>(scratch_.size() - mark);
+    const NodeId node = ast_.object(scratch_.data() + mark, count, offset);
+    scratch_.resize(mark);
+    return node;
+}
+
 NodeId Parser::primary() {
     switch (cur_.kind) {
         case TokenKind::Number: {
@@ -433,6 +524,10 @@ NodeId Parser::primary() {
             }
             return inner;
         }
+        case TokenKind::LBracket:
+            return arrayLiteral();
+        case TokenKind::LBrace:
+            return objectLiteral();
         default:
             return fail(cur_.offset, "expected an expression");
     }

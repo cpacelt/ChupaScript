@@ -242,4 +242,74 @@ TEST(DataAggregates, ExpressionInsideAggregateIsRejected) {
     EXPECT_FALSE(ctx.hasRoot("a"));
 }
 
+/// Требует отказа и возвращает диагностику.
+Diagnostic reject(Context &ctx, std::string_view text) {
+    Diagnostic diag;
+    EXPECT_FALSE(CS::setVariable(ctx, "v", text, diag));
+    return diag;
+}
+
+TEST(DataRejects, IdentifierIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "user").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, CallIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "count(items)").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, BinaryIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "1 + 1").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, MemberIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "user.name").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, IndexIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "items[0]").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, ConditionalIsNotData) {
+    Context ctx;
+    EXPECT_EQ(reject(ctx, "a ? 1 : 2").code, ErrorCode::Data);
+}
+
+TEST(DataRejects, OffsetPointsAtTheOffendingNode) {
+    Context ctx;
+    // Ошибка внутри массива обязана указывать на место выражения, а не на
+    // начало текста: иначе хост не покажет, где именно чинить.
+    const Diagnostic diag = reject(ctx, "[1, user.name, 3]");
+    EXPECT_EQ(diag.code, ErrorCode::Data);
+    EXPECT_GT(diag.offset, 3u);
+}
+
+TEST(DataRejects, TrailingBytesAreRejected) {
+    Context ctx;
+    // Текст обязан быть значением целиком.
+    EXPECT_EQ(reject(ctx, "1 2").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Syntax);
+}
+
+TEST(DataRejects, ExponentIsNotANumber) {
+    Context ctx;
+    // docs/grammar.md §11: экспоненты в языке нет, 1e3 — два токена.
+    // Единственное расхождение с JSON, переживающее границу.
+    EXPECT_EQ(reject(ctx, "1e3").code, ErrorCode::Syntax);
+}
+
+TEST(DataRejects, FailedSetLeavesPreviousValueIntact) {
+    Context ctx;
+    Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(ctx, "v", "1", diag));
+    EXPECT_FALSE(CS::setVariable(ctx, "v", "user.name", diag));
+    // Отказ не трогает того, что уже лежало.
+    EXPECT_EQ(ctx.root("v").numberValue(), 1.0);
+    EXPECT_EQ(ctx.rootCount(), 1u);
+}
+
 }  // namespace

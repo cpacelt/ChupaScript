@@ -76,8 +76,8 @@ class Value {
 
     Kind kind() const noexcept;
 
-    bool boolean() const noexcept;   // предусловие: kind() == Kind::Boolean
-    double number() const noexcept;  // предусловие: kind() == Kind::Number
+    bool booleanValue() const noexcept;   // предусловие: kind() == Kind::Boolean
+    double numberValue() const noexcept;  // предусловие: kind() == Kind::Number
 
     /// Один ли это агрегат. Для скаляров всегда false.
     bool sameAggregate(Value other) const noexcept;
@@ -114,6 +114,10 @@ static_assert(sizeof(Value) == 16, "Value должен оставаться в 1
 что требует заглянуть в пул, — методы `Context`. Строка в том числе: индекс без
 базы пула байт не разрешается.
 
+**Аксессоры называются `booleanValue()` и `numberValue()`,** а не `boolean()` и
+`number()`: короткие имена заняты статическими фабриками `boolean(bool)` и
+`number(double)`, и совпадение имён столкнуло бы перегрузки.
+
 **Конструкторы агрегатов приватные, `Context` — единственный друг.** С
 указателями внутрь хранилища `friend` был бы лишним: тип заголовка неполон вне
 `context.cpp`, и сфабриковать значение-массив было бы попросту не из чего.
@@ -123,7 +127,7 @@ static_assert(sizeof(Value) == 16, "Value должен оставаться в 1
 
 Заодно `friend` даёт контексту читать `index_`, что нужно ему в каждой
 операции. Цена известна: контекст видит всю приватную часть значения, и если
-внутри `context.cpp` окажется удобно написать `v.number_` вместо `v.number()`,
+внутри `context.cpp` окажется удобно написать `v.number_` вместо `v.numberValue()`,
 компилятор промолчит. Обмен сознательный — без него нет и запрета на фабрикацию
 агрегатов.
 
@@ -360,7 +364,10 @@ const char *chupa_value_string(const ChupaContext *ctx, const ChupaValue *v,
   не-ASCII байтами находится, перечисление отдаёт все ключи;
 - строки: пустая строка, строка с нулевым байтом внутри, длина считается в
   байтах;
-- размер: `static_assert` на 16 байт продублирован тестом на все шесть видов.
+- размер и копируемость: тест проверяет `sizeof(Value) == 16` и
+  `std::is_trivially_copyable_v<Value>` рядом с одноимёнными `static_assert` —
+  свойство от вида значения не зависит, дублировать его на все шесть видов
+  незачем.
 
 ## 11. Бенчмарки
 

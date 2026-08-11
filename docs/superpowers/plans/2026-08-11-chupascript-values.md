@@ -518,7 +518,10 @@ std::uint32_t Context::appendText(std::string_view bytes) {
     const char *first = text_.data();
     const std::uintptr_t base = reinterpret_cast<std::uintptr_t>(first);
     const std::uintptr_t from = reinterpret_cast<std::uintptr_t>(bytes.data());
-    const bool aliases = first != nullptr && from >= base && from <= base + text_.size();
+    // Граница строгая: непустой срез пула начинается строго внутри него, а пустой
+    // источник уходит раньше, чем понадобится адрес. Включающая граница приняла бы
+    // за алиас чужой буфер, оказавшийся вплотную за пулом, и скопировала бы нули.
+    const bool aliases = first != nullptr && from >= base && from < base + text_.size();
     const std::size_t inner = aliases ? static_cast<std::size_t>(from - base) : 0;
 
     text_.resize(text_.size() + bytes.size());
@@ -1599,14 +1602,41 @@ Expected: десять строк, ни одной с `SkipWithError`. Шест�
     --benchmark_repetitions=5 --benchmark_report_aggregates_only=true \
     --benchmark_out=/tmp/store-baseline.json --benchmark_out_format=json
 cp /tmp/store-baseline.json benchmarks/baseline.json
-python3 tools/bench-compare.py benchmarks/baseline.json /tmp/store-baseline.json
+python3 -c "
+import json
+data = json.load(open('benchmarks/baseline.json', encoding='utf-8'))
+names = {b['run_name'] for b in data['benchmarks']}
+expected = {'BM_Store_ArrayPush', 'BM_Store_ArrayPushReserved', 'BM_Store_ArrayTraverse',
+            'BM_Store_ObjectGet', 'BM_Store_ObjectInsert', 'BM_Store_MakeString'}
+missing = expected - names
+assert not missing, f'нет бенчмарков: {missing}'
+print('файл разбирается, все BM_Store_* на месте')
+"
 ```
 
-Expected: код возврата 0 — база сравнивается сама с собой без деградации.
+Сравнение файла с самим собой прошло бы всегда: единственная проверка, которую
+стоит сделать здесь, — что файл разбирается как JSON и что в нём есть все
+ожидаемые имена бенчмарков.
 
 Машина обязана быть незанятой: параллельная сборка во время замера искажает числа на десятки процентов.
 
-- [ ] **Шаг 5: Коммит**
+- [ ] **Шаг 5: Записать в базу пометку о машине**
+
+Добавить в `benchmarks/baseline.json` в объект `context` поле с описанием машины, чтобы сравнение не проводилось вслепую между разными компьютерами:
+
+```bash
+python3 - <<'PY'
+import json, platform
+path = "benchmarks/baseline.json"
+with open(path, encoding="utf-8") as handle:
+    data = json.load(handle)
+data["context"]["chupascript_machine"] = f"{platform.machine()} {platform.platform()}"
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(data, handle, indent=2, ensure_ascii=False)
+PY
+```
+
+- [ ] **Шаг 6: Коммит**
 
 ```bash
 git add benchmarks/store_benchmark.cpp benchmarks/CMakeLists.txt benchmarks/baseline.json

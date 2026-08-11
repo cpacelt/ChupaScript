@@ -203,7 +203,7 @@ typedef enum ChupaErrorCode {
 ```
 
 `CHUPA_MUST_USE` ставится на функции, чей возврат несёт признак успеха: без
-него `chupa_value_number(v, &w);` без проверки компилируется молча.
+него `chupa_value_number(ctx, v, &w);` без проверки компилируется молча.
 
 **Ограничение импортёра Swift.** Все три непрозрачных типа Swift покажет одним и
 тем же `OpaquePointer` — различать их он не умеет. Обёртка на Swift обязана
@@ -289,25 +289,25 @@ chupa_eval(ChupaContext *ctx, ChupaExpression *e);
 
 /* ─── Доступ к значению ────────────────────────────────────────────── */
 
-CHUPA_API ChupaKind chupa_value_kind(const ChupaValue *v);
+CHUPA_API ChupaKind chupa_value_kind(const ChupaContext *ctx, const ChupaValue *v);
 
-CHUPA_API CHUPA_MUST_USE bool chupa_value_bool  (const ChupaValue *v, bool   *out);
-CHUPA_API CHUPA_MUST_USE bool chupa_value_number(const ChupaValue *v, double *out);
+CHUPA_API CHUPA_MUST_USE bool chupa_value_bool  (const ChupaContext *ctx, const ChupaValue *v, bool   *out);
+CHUPA_API CHUPA_MUST_USE bool chupa_value_number(const ChupaContext *ctx, const ChupaValue *v, double *out);
 
 CHUPA_API const char *CHUPA_NULLABLE
-chupa_value_string(const ChupaValue *v, size_t *len);
+chupa_value_string(const ChupaContext *ctx, const ChupaValue *v, size_t *len);
 
-CHUPA_API CHUPA_MUST_USE bool chupa_array_count(const ChupaValue *v, size_t *out);
+CHUPA_API CHUPA_MUST_USE bool chupa_array_count(const ChupaContext *ctx, const ChupaValue *v, size_t *out);
 CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_array_at(const ChupaValue *v, size_t i);
+chupa_array_at(const ChupaContext *ctx, const ChupaValue *v, size_t i);
 
-CHUPA_API CHUPA_MUST_USE bool chupa_object_count(const ChupaValue *v, size_t *out);
+CHUPA_API CHUPA_MUST_USE bool chupa_object_count(const ChupaContext *ctx, const ChupaValue *v, size_t *out);
 CHUPA_API const char *CHUPA_NULLABLE
-chupa_object_key_at(const ChupaValue *v, size_t i, size_t *len);
+chupa_object_key_at(const ChupaContext *ctx, const ChupaValue *v, size_t i, size_t *len);
 CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_object_value_at(const ChupaValue *v, size_t i);
+chupa_object_value_at(const ChupaContext *ctx, const ChupaValue *v, size_t i);
 CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_object_get(const ChupaValue *v, const char *key, size_t len);
+chupa_object_get(const ChupaContext *ctx, const ChupaValue *v, const char *key, size_t len);
 ```
 
 **Время жизни результата.**
@@ -315,11 +315,10 @@ chupa_object_get(const ChupaValue *v, const char *key, size_t len);
 > Указатель, отданный `chupa_eval_string` или `chupa_eval`, и всё достижимое
 > из него действительны до следующего вычисления на этом контексте.
 
-Правило строже реальности — хендл в граф данных живёт до смерти контекста, —
-но различить эти случаи хост не может, а держать результат дольше ему незачем:
-строку он копирует в свой тип при первом касании. Взамен правило разрешает
-переиспользовать память под временные значения вместо того, чтобы копить их до
-закрытия экрана.
+Правило описывает реальность буквально. Пулы значений переезжают при росте
+(`2026-08-11-chupascript-values-design.md` §3), поэтому указатель, выданный до
+ближайшей мутации, после неё повисает. Хост копирует строку в свой тип при
+первом касании, и держать результат дольше ему незачем.
 
 Числа и логические значения правилу не подчиняются: они возвращаются копией.
 
@@ -379,6 +378,7 @@ sqlite и большинство C-библиотек: признак в воз�
 | Без внутренней синхронизации | Один экран — один поток; контексты независимы, глобального состояния нет |
 | `Value` — тег-юнион, без NaN-boxing | Решение пользователя: используем то, что уже есть в `core/src/value.hpp` |
 | Наружу — непрозрачный `ChupaValue *` с функциями доступа | Раскладка не видна, через границу едут только примитивы и указатели. Обёртки Swift и Kotlin строят поверх этого свои типы |
+| Функции доступа принимают контекст первым параметром | Значение адресует пулы индексами, и разрешить их может только выдавший контекст. Подпись перестаёт врать о времени жизни, а в Swift получается `ctx.string(of: v)` |
 | Не сериализация агрегата в JSON | Разбор на стороне хоста дороже обхода на два порядка: `JSONDecoder` боксит каждое число и строит промежуточные объекты, тогда как обход — прямые вызовы без аллокаций |
 | Скаляры возвращаются копией, а не хендлом | У числа наверху нет дома в арене: пришлось бы материализовать ячейку ради каждого пересчёта props |
 | Трёхзначный `ChupaStatus` у скалярных вычислений | `null` в props — норма, а не исключение: данные с бэкенда неполные, чтение у `null` даёт `null`. Отличать его от ошибки обязательно |

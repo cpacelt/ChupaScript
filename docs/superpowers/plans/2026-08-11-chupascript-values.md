@@ -1588,7 +1588,7 @@ cmake --build build-rel -j
 ./build-rel/benchmarks/chupascript_benchmarks --benchmark_filter=Store
 ```
 
-Expected: девять строк, ни одной с `SkipWithError`. Проверить глазами два числа: `BM_Store_ArrayPush/1000` обязан быть заметно дороже `BM_Store_ArrayPushReserved/1000` — это и есть цена удвоений; `BM_Store_ObjectGet` обязан расти от 3 к 20 ключам полого, а не линейно.
+Expected: десять строк, ни одной с `SkipWithError`. Шесть функций, из них две с тремя значениями `Arg` каждая: 1 + 1 + 1 + 3 + 3 + 1. Проверить глазами два числа: `BM_Store_ArrayPush/1000` обязан быть заметно дороже `BM_Store_ArrayPushReserved/1000` — это и есть цена удвоений; `BM_Store_ObjectGet` обязан расти от 3 к 20 ключам полого, а не линейно.
 
 - [ ] **Шаг 4: Записать базу**
 
@@ -1761,7 +1761,7 @@ git commit -m "Record the storage decisions in the backlog and the C API spec"
 | Переписанных | 1 (`value.hpp`) |
 | Тестов добавлено | 53 |
 | Тестов всего | 200 |
-| Бенчмарков добавлено | 9 строк из 6 функций |
+| Бенчмарков добавлено | 10 строк из 6 функций |
 
 Слой закончен, когда: `ctest` даёт 200 из 200 в обычной сборке, под ASan+UBSan и с `-Werror`; `benchmarks/baseline.json` содержит строки `BM_Store_*`; `docs/backlog.md` и спека C API не расходятся с реализацией.
 

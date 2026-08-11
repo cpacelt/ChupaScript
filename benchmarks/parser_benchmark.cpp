@@ -36,8 +36,9 @@ void runExpression(benchmark::State &state, const std::string &source) {
     for (auto _ : state) {
         CS::Ast ast;
         CS::Diagnostic diag;
-        CS::parseExpression(
+        bool ok = CS::parseExpression(
             source.data(), static_cast<std::uint32_t>(source.size()), ast, diag);
+        benchmark::DoNotOptimize(ok);
         benchmark::DoNotOptimize(ast);
     }
     state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *
@@ -48,8 +49,9 @@ void runProgram(benchmark::State &state, const std::string &source) {
     for (auto _ : state) {
         CS::Ast ast;
         CS::Diagnostic diag;
-        CS::parseProgram(
+        bool ok = CS::parseProgram(
             source.data(), static_cast<std::uint32_t>(source.size()), ast, diag);
+        benchmark::DoNotOptimize(ok);
         benchmark::DoNotOptimize(ast);
     }
     state.SetBytesProcessed(static_cast<std::int64_t>(state.iterations()) *

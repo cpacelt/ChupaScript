@@ -9,12 +9,17 @@
 namespace CS {
 namespace {
 
-/// Предел вложенности выражений.
+/// Предел глубины рекурсии парсера.
 ///
-/// Вход недоверенный, а без предела текст вида "((((((…" роняет процесс
-/// переполнением стека. На уровень вложенности приходится десять кадров
-/// цепочки правил, поэтому 64 укладывается примерно в 64 КиБ стека.
-constexpr std::uint32_t kMaxDepth = 64;
+/// Вход недоверенный, а без предела тексты вида "((((((…", "!!!!!!…" и
+/// "1 ?? 1 ?? 1 ?? …" роняют процесс переполнением стека. Счётчик растёт в
+/// трёх самотрекурсивных правилах — ternary, nilCoalesce, unary, — поэтому
+/// один уровень вложенности скобок стоит трёх единиц, а цепочка из '!' или
+/// '??' — одной за звено.
+///
+/// 96 единиц — это около 320 кадров стека в худшем случае, то есть меньше
+/// сотни килобайт. Двадцати уровней вложенности в макете не бывает.
+constexpr std::uint32_t kMaxDepth = 96;
 
 bool isComparisonOp(TokenKind kind) noexcept {
     switch (kind) {
@@ -198,6 +203,10 @@ NodeId Parser::comparison() {
 }
 
 NodeId Parser::nilCoalesce() {
+    const DepthGuard guard(depth_);
+    if (depth_ > kMaxDepth) {
+        return fail(cur_.offset, "expression nesting too deep");
+    }
     const NodeId lhs = additive();
     if (lhs == kNoNode) {
         return kNoNode;
@@ -259,6 +268,10 @@ NodeId Parser::multiplicative() {
 }
 
 NodeId Parser::unary() {
+    const DepthGuard guard(depth_);
+    if (depth_ > kMaxDepth) {
+        return fail(cur_.offset, "expression nesting too deep");
+    }
     if (at(TokenKind::Bang) || at(TokenKind::Minus)) {
         const TokenKind op = cur_.kind;
         const std::uint32_t offset = cur_.offset;

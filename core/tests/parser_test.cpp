@@ -613,9 +613,9 @@ TEST(ParserLexerErrors, ReservedWordIsNotAnExpression) {
 // ─── предел вложенности ──────────────────────────────────────────────
 
 TEST(ParserLimits, DeepButAcceptableNestingParses) {
-    std::string source(60, '(');
+    std::string source(20, '(');
     source += "1";
-    source.append(60, ')');
+    source.append(20, ')');
     const Parsed parsed = parseExpr(source);
     EXPECT_TRUE(parsed.ok);
 }
@@ -624,6 +624,24 @@ TEST(ParserLimits, ExcessiveNestingIsRejectedNotCrashing) {
     std::string source(5000, '(');
     source += "1";
     source.append(5000, ')');
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+}
+
+TEST(ParserLimits, DeepUnaryChainIsRejectedNotCrashing) {
+    std::string source(5000, '!');
+    source += "a";
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+}
+
+TEST(ParserLimits, DeepNilCoalesceChainIsRejectedNotCrashing) {
+    std::string source = "a";
+    for (int i = 0; i < 5000; ++i) {
+        source += " ?? a";
+    }
     const Parsed parsed = parseExpr(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);

@@ -39,6 +39,18 @@ TEST(DataScalars, NullIsStored) {
     EXPECT_TRUE(ctx.hasRoot("nothing"));
 }
 
+TEST(DataScalars, VeryLongIntegerBecomesInfinity) {
+    Context ctx;
+    // Четыреста цифр — не ошибка данных, а следствие поведения лексера и
+    // std::from_chars: величина переполняет double и округляется до
+    // бесконечности. Это осознанное свойство модели значений (double без
+    // отдельной проверки диапазона), а не недосмотр разбора недоверенных
+    // данных, — и оно теперь достижимо напрямую с бэкенда.
+    const std::string text(400, '9');
+    const double value = put(ctx, "huge", text).numberValue();
+    EXPECT_TRUE(std::isinf(value));
+}
+
 TEST(DataNames, IdentifierIsAccepted) {
     Context ctx;
     Diagnostic diag;
@@ -118,7 +130,26 @@ TEST(DataMinus, MinusOverNonNumberIsRejected) {
     Diagnostic diag;
     EXPECT_FALSE(CS::setVariable(ctx, "bad", "-'abc'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
+    EXPECT_EQ(ctx.rootCount(), 0u);
+}
+
+TEST(DataMinus, BangIsRejected) {
+    Context ctx;
+    Diagnostic diag;
     EXPECT_FALSE(CS::setVariable(ctx, "worse", "!true", diag));
+    EXPECT_EQ(diag.code, ErrorCode::Data);
+    EXPECT_EQ(ctx.rootCount(), 0u);
+}
+
+TEST(DataMinus, DoubleMinusIsRejected) {
+    Context ctx;
+    Diagnostic diag;
+    // "--3" — минус над узлом Unary, а не над Number: материализация
+    // принимает минус только непосредственно над числом (§5), поэтому
+    // второй минус упирается в общее правило "выражение — не данные", а не
+    // в частный случай "минус не над числом". Поведение разумное, но нигде
+    // не было зафиксировано тестом.
+    EXPECT_FALSE(CS::setVariable(ctx, "v", "--3", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_EQ(ctx.rootCount(), 0u);
 }
@@ -158,8 +189,8 @@ TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
 TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
     Context ctx;
     Diagnostic diag;
-    // docs/grammar.md §11: юникодных escape в языке нет — внешний уровень
-    // снимает хост, и до нас доезжают готовые байты.
+    // docs/grammar.md §8 и §4.7: юникодных escape в языке нет — внешний
+    // уровень снимает хост, и до нас доезжают готовые байты.
     EXPECT_FALSE(CS::setVariable(ctx, "s", "'\\u0041'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
@@ -234,6 +265,24 @@ TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
     EXPECT_LT(ctx.bytesUsed() - before, 110u * sizeof(Value));
 }
 
+TEST(DataAggregates, NestingLimit) {
+    Context ctx;
+    // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §4:
+    // предел вложенности агрегатов — тот же, что у парсера, 31 уровень.
+    // Текст строится программно, а не руками, чтобы граница была видна.
+    std::string nested31(31, '[');
+    nested31 += "1";
+    nested31 += std::string(31, ']');
+    Diagnostic diag;
+    EXPECT_TRUE(CS::setVariable(ctx, "ok", nested31, diag)) << diag.message;
+
+    std::string nested32(32, '[');
+    nested32 += "1";
+    nested32 += std::string(32, ']');
+    EXPECT_FALSE(CS::setVariable(ctx, "bad", nested32, diag));
+    EXPECT_EQ(diag.code, ErrorCode::Syntax);
+}
+
 TEST(DataAggregates, ExpressionInsideAggregateIsRejected) {
     Context ctx;
     Diagnostic diag;
@@ -291,6 +340,25 @@ TEST(DataRejects, OffsetPointsAtTheOffendingNode) {
     EXPECT_LT(diag.offset, 13u);
 }
 
+TEST(DataRejects, OffsetPointsAtCallInsideObject) {
+    Context ctx;
+    // То же самое, но для другого вида узла (Call, а не Member) и другого
+    // агрегата (Object, а не Array): смещение обязано попадать в границы
+    // "count(x)", а не указывать на начало текста. В "{'k': count(x)}"
+    // вызов занимает байты с 6 по 13.
+    const Diagnostic diag = reject(ctx, "{'k': count(x)}");
+    EXPECT_EQ(diag.code, ErrorCode::Data);
+    EXPECT_GE(diag.offset, 6u);
+    EXPECT_LT(diag.offset, 14u);
+}
+
+TEST(DataRejects, EmptyTextIsRejected) {
+    Context ctx;
+    // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §6:
+    // пустой текст значения назван в таблице ошибок, но не проверялся.
+    EXPECT_EQ(reject(ctx, "").code, ErrorCode::Syntax);
+}
+
 TEST(DataRejects, TrailingBytesAreRejected) {
     Context ctx;
     // Текст обязан быть значением целиком.
@@ -307,7 +375,7 @@ TEST(DataRejects, IndexingALiteralIsNotData) {
 
 TEST(DataRejects, ExponentIsNotANumber) {
     Context ctx;
-    // docs/grammar.md §11: экспоненты в языке нет, 1e3 — два токена.
+    // docs/grammar.md §8 и §4.6: экспоненты в языке нет, 1e3 — два токена.
     // Единственное расхождение с JSON, переживающее границу.
     EXPECT_EQ(reject(ctx, "1e3").code, ErrorCode::Syntax);
 }

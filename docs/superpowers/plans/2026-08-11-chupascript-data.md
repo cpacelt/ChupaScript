@@ -1020,7 +1020,15 @@ TEST(DataRejects, TrailingBytesAreRejected) {
     Context ctx;
     // Текст обязан быть значением целиком.
     EXPECT_EQ(reject(ctx, "1 2").code, ErrorCode::Syntax);
-    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(ctx, "[1] 2").code, ErrorCode::Syntax);
+}
+
+TEST(DataRejects, IndexingALiteralIsNotData) {
+    Context ctx;
+    // [1] [2] разбирается: это массив, проиндексированный двойкой. Индексация —
+    // постфиксная операция над любым Primary, включая литерал агрегата, поэтому
+    // синтаксической ошибки здесь нет. Это выражение, а не запись значения.
+    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, ExponentIsNotANumber) {
@@ -1044,12 +1052,12 @@ TEST(DataRejects, FailedSetLeavesPreviousValueIntact) {
 - [ ] **Шаг 2: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure -R DataRejects`
-Expected: 10 тестов PASS. Если какой-то падает — правится `core/src/data.cpp`, тест не трогается: он выражает требование спеки §6.
+Expected: 11 тестов PASS. Если какой-то падает — правится `core/src/data.cpp`, тест не трогается: он выражает требование спеки §6. Если тест требует невозможного — остановись и спроси, а не подгоняй под него реализацию.
 
 - [ ] **Шаг 3: Прогнать весь набор**
 
 Run: `ctest --test-dir build --output-on-failure`
-Expected: 249 тестов PASS.
+Expected: 250 тестов PASS.
 
 - [ ] **Шаг 4: Прогнать под санитайзерами и с `-Werror`**
 
@@ -1058,7 +1066,7 @@ cmake --build build-asan -j && ctest --test-dir build-asan --output-on-failure
 cmake --build build-werror -j && ctest --test-dir build-werror --output-on-failure
 ```
 
-Expected: 249 PASS в обеих, ни одного отчёта санитайзера, ни одного предупреждения.
+Expected: 250 PASS в обеих, ни одного отчёта санитайзера, ни одного предупреждения.
 
 - [ ] **Шаг 5: Коммит**
 
@@ -1359,7 +1367,7 @@ Expected: каждый упомянутый номер имеет заголов
 - [ ] **Шаг 6: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure`
-Expected: 249 тестов PASS — правка комментария сборку не меняет, но убедиться стоит.
+Expected: 250 тестов PASS — правка комментария сборку не меняет, но убедиться стоит.
 
 - [ ] **Шаг 7: Коммит**
 
@@ -1377,11 +1385,11 @@ git commit -m "Close B3 and B9 for data, record the freeze rule"
 | Задач | 8 |
 | Новых файлов | 4 (`data.hpp`, `data.cpp`, `data_test.cpp`, `data_benchmark.cpp`) |
 | Изменённых | `context.hpp`, `context.cpp`, `context_test.cpp`, `diagnostic.hpp`, два CMakeLists, backlog |
-| Тестов добавлено | 46 |
-| Тестов всего | 249 |
+| Тестов добавлено | 47 |
+| Тестов всего | 250 |
 | Бенчмарков добавлено | 7 строк из 5 функций |
 | Строк изменено в парсере | 0 |
 
-Слой закончен, когда: `ctest` даёт 249 из 249 в обычной сборке, под ASan+UBSan и с `-Werror`; `benchmarks/baseline.json` содержит строки `BM_Data_*`, а прежние `BM_Lex_*`, `BM_Parse_*` и `BM_Store_*` не деградировали; `docs/backlog.md` закрывает B3 и сужает B9.
+Слой закончен, когда: `ctest` даёт 250 из 250 в обычной сборке, под ASan+UBSan и с `-Werror`; `benchmarks/baseline.json` содержит строки `BM_Data_*`, а прежние `BM_Lex_*`, `BM_Parse_*` и `BM_Store_*` не деградировали; `docs/backlog.md` закрывает B3 и сужает B9.
 
 Следующий этап — вычислитель: главы 3–6 `docs/semantics.md`, вход — дерево от парсера и данные из контекста, выход — `Value`.

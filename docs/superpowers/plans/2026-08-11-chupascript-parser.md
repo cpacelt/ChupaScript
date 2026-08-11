@@ -30,15 +30,31 @@
 - **Сборка тестов:** `cmake -B build && cmake --build build -j`, прогон `ctest --test-dir build --output-on-failure`.
 - **Сборка бенчмарков:** только Release — `cmake -B build-rel -DCMAKE_BUILD_TYPE=Release -DCHUPASCRIPT_BUILD_BENCHMARKS=ON`.
 
-## Решение сверх спецификации: предел вложенности
+## Решение сверх спецификации: предел глубины рекурсии
 
-Спецификация о глубине рекурсии молчит, и без предела текст вида `((((((…` роняет процесс переполнением стека. Вход недоверенный: макет приходит с бэкенда.
+Спецификация о глубине рекурсии молчит, и без предела тексты вида `((((((…`,
+`!!!!!!…` и `1 ?? 1 ?? 1 ?? …` роняют процесс переполнением стека. Вход
+недоверенный: макет приходит с бэкенда.
 
-Вводится `kMaxDepth = 64` — предел вложенности выражений. Счётчик увеличивается на входе в `ternary()`; вся рекурсия в подвыражение (скобки, индекс, аргумент, элемент литерала, ветвь тернарного оператора) проходит через него, поэтому счётчик равен глубине вложенности ровно. Превышение — ошибка `ErrorCode::Syntax` «слишком глубокая вложенность выражения».
+Вводится `kMaxDepth = 96`. Счётчик увеличивается на входе в **три** правила —
+`ternary()`, `nilCoalesce()` и `unary()`. Это ровно те правила цепочки §5.3,
+которые рекурсируют сами в себя: `ternary()` — через скобки, индекс, аргумент,
+элемент литерала и ветви `? :`; `nilCoalesce()` — по цепочке `??`;
+`unary()` — по цепочке префиксных `!` и `-`. Остальные правила используют цикл
+и глубину не наращивают.
 
-64 выбрано так, чтобы худший случай укладывался в стек вторичного потока: на уровень вложенности приходится десять кадров цепочки правил, то есть около 64 КиБ при 512 КиБ стека. Осмысленное выражение props глубже пяти не бывает.
+Отсюда цена: один уровень вложенности скобок стоит трёх единиц (проход по
+цепочке задевает все три охраняемых правила), а звено цепочки `??` или `!` —
+одной. 96 единиц — это около 320 кадров стека в худшем случае, то есть меньше
+сотни килобайт при 512 КиБ стека вторичного потока. Двадцати уровней
+вложенности в осмысленном макете не бывает; выражение props глубже пяти не
+встречается.
 
-**Это единственное место, где план выходит за спецификацию.** Если предел не нужен — удаляется вместе с двумя тестами `ParserLimits`, и в §5 спеки правится ничего не надо, потому что там его нет.
+Превышение — ошибка `ErrorCode::Syntax` «expression nesting too deep».
+
+**Это единственное место, где план выходит за спецификацию.** Если предел не
+нужен — удаляется вместе с четырьмя тестами `ParserLimits`, и в §5 спеки
+править ничего не надо, потому что там его нет.
 
 ## Структура файлов
 
@@ -1173,12 +1189,12 @@ TEST(ParserLexerErrors, ReservedWordIsNotAnExpression) {
     EXPECT_EQ(parsed.diag.offset, 0u);
 }
 
-// ─── предел вложенности ──────────────────────────────────────────────
+// ─── предел глубины рекурсии ─────────────────────────────────────────
 
 TEST(ParserLimits, DeepButAcceptableNestingParses) {
-    std::string source(60, '(');
+    std::string source(20, '(');
     source += "1";
-    source.append(60, ')');
+    source.append(20, ')');
     const Parsed parsed = parseExpr(source);
     EXPECT_TRUE(parsed.ok);
 }
@@ -1187,6 +1203,24 @@ TEST(ParserLimits, ExcessiveNestingIsRejectedNotCrashing) {
     std::string source(5000, '(');
     source += "1";
     source.append(5000, ')');
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+}
+
+TEST(ParserLimits, DeepUnaryChainIsRejectedNotCrashing) {
+    std::string source(5000, '!');
+    source += "a";
+    const Parsed parsed = parseExpr(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+}
+
+TEST(ParserLimits, DeepNilCoalesceChainIsRejectedNotCrashing) {
+    std::string source = "a";
+    for (int i = 0; i < 5000; ++i) {
+        source += " ?? a";
+    }
     const Parsed parsed = parseExpr(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
@@ -1209,7 +1243,7 @@ add_executable(chupascript_tests
 - [ ] **Step 8: Собрать и убедиться, что тесты красные**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure`
-Expected: сборка проходит; 53 теста лексера зелёные; 13 тестов `AstShape` и 76 тестов парсера падают.
+Expected: сборка проходит; 53 теста лексера зелёные; 13 тестов `AstShape` и 78 тестов парсера падают.
 
 - [ ] **Step 9: Коммит**
 
@@ -1627,7 +1661,7 @@ Expected: 13 тестов зелёные.
 - [ ] **Step 4: Прогнать всё**
 
 Run: `ctest --test-dir build --output-on-failure`
-Expected: 53 лексера + 13 `AstShape` зелёные; 76 тестов парсера падают.
+Expected: 53 лексера + 13 `AstShape` зелёные; 78 тестов парсера падают.
 
 - [ ] **Step 5: Коммит**
 
@@ -1664,12 +1698,17 @@ git commit -m "Implement the AST builder and accessors"
 namespace CS {
 namespace {
 
-/// Предел вложенности выражений.
+/// Предел глубины рекурсии парсера.
 ///
-/// Вход недоверенный, а без предела текст вида "((((((…" роняет процесс
-/// переполнением стека. На уровень вложенности приходится десять кадров
-/// цепочки правил, поэтому 64 укладывается примерно в 64 КиБ стека.
-constexpr std::uint32_t kMaxDepth = 64;
+/// Вход недоверенный, а без предела тексты вида "((((((…", "!!!!!!…" и
+/// "1 ?? 1 ?? 1 ?? …" роняют процесс переполнением стека. Счётчик растёт в
+/// трёх самотрекурсивных правилах — ternary, nilCoalesce, unary, — поэтому
+/// один уровень вложенности скобок стоит трёх единиц, а цепочка из '!' или
+/// '??' — одной за звено.
+///
+/// 96 единиц — это около 320 кадров стека в худшем случае, то есть меньше
+/// сотни килобайт. Двадцати уровней вложенности в макете не бывает.
+constexpr std::uint32_t kMaxDepth = 96;
 
 bool isComparisonOp(TokenKind kind) noexcept {
     switch (kind) {
@@ -1853,6 +1892,10 @@ NodeId Parser::comparison() {
 }
 
 NodeId Parser::nilCoalesce() {
+    const DepthGuard guard(depth_);
+    if (depth_ > kMaxDepth) {
+        return fail(cur_.offset, "expression nesting too deep");
+    }
     const NodeId lhs = additive();
     if (lhs == kNoNode) {
         return kNoNode;
@@ -1914,6 +1957,10 @@ NodeId Parser::multiplicative() {
 }
 
 NodeId Parser::unary() {
+    const DepthGuard guard(depth_);
+    if (depth_ > kMaxDepth) {
+        return fail(cur_.offset, "expression nesting too deep");
+    }
     if (at(TokenKind::Bang) || at(TokenKind::Minus)) {
         const TokenKind op = cur_.kind;
         const std::uint32_t offset = cur_.offset;
@@ -2046,12 +2093,12 @@ Expected: сборка чистая.
 - [ ] **Step 3: Прогнать зеленеющие группы**
 
 Run: `ctest --test-dir build --output-on-failure -R "ParserPrecedence|ParserAssociativity|ParserLimits"`
-Expected: 9 + 7 + 2 = 18 тестов зелёные.
+Expected: 9 + 7 + 4 = 20 тестов зелёные.
 
 - [ ] **Step 4: Прогнать остальное и сверить ожидания**
 
 Run: `ctest --test-dir build --output-on-failure`
-Expected зелёные: 53 лексера, 13 `AstShape`, 18 из шага 3, 8 из `ParserPrimary` (все, кроме пяти про агрегаты), 5 из `ParserEarlyErrors` (`ChainedComparison`, `TrailingTextAfterExpression`, `MissingOperand`, `UnclosedParenthesis`, `TernaryWithoutColon`), 2 из `ParserLexerErrors`, 3 из `ParserModes` (`ExpressionModeRejectsAssignment`, `ExpressionModeRejectsSemicolon`, `ExpressionModeRejectsEmptySource`).
+Expected зелёные: 53 лексера, 13 `AstShape`, 20 из шага 3, 8 из `ParserPrimary` (все, кроме пяти про агрегаты), 5 из `ParserEarlyErrors` (`ChainedComparison`, `TrailingTextAfterExpression`, `MissingOperand`, `UnclosedParenthesis`, `TernaryWithoutColon`), 2 из `ParserLexerErrors`, 3 из `ParserModes` (`ExpressionModeRejectsAssignment`, `ExpressionModeRejectsSemicolon`, `ExpressionModeRejectsEmptySource`).
 Expected красные: `ParserPostfix` (10), `ParserStatement` (11), оставшиеся `ParserPrimary` (5), `ParserEarlyErrors` (12), `ParserModes` (2).
 
 - [ ] **Step 5: Снять базу своих бенчмарков**
@@ -2560,7 +2607,7 @@ bool parseProgram(const char *source, std::uint32_t length, Ast &ast,
 - [ ] **Step 6: Собрать и прогнать всё**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure`
-Expected: все тесты зелёные — 53 лексера, 13 `AstShape`, 76 парсера.
+Expected: все тесты зелёные — 53 лексера, 13 `AstShape`, 78 парсера.
 
 - [ ] **Step 7: Проверить базы предыдущих задач**
 
@@ -2601,7 +2648,7 @@ cmake --build build-werror -j
 ctest --test-dir build-werror --output-on-failure
 ```
 
-Expected: сборка без единого предупреждения, 142 теста зелёные.
+Expected: сборка без единого предупреждения, 144 теста зелёные.
 
 - [ ] **Step 2: Прогон под ASan и UBSan**
 
@@ -2611,7 +2658,7 @@ cmake --build build-asan -j
 ctest --test-dir build-asan --output-on-failure
 ```
 
-Expected: 142 теста зелёные, ни одного сообщения санитайзера. Особое внимание — `ParserLimits.ExcessiveNestingIsRejectedNotCrashing`: он существует затем, чтобы падение стека проявилось здесь, а не на устройстве.
+Expected: 144 теста зелёные, ни одного сообщения санитайзера. Особое внимание — четырём тестам `ParserLimits`: они существуют затем, чтобы падение стека проявилось здесь, а не на устройстве.
 
 - [ ] **Step 3: Снять полную базу**
 
@@ -2667,9 +2714,9 @@ git commit -m "Record the parser performance baseline"
 
 | Показатель | Значение |
 |---|---|
-| Тестов после задачи 9 | 142: 53 лексера, 13 `AstShape`, 76 парсера |
+| Тестов после задачи 9 | 144: 53 лексера, 13 `AstShape`, 78 парсера |
 | Новых файлов | 6 |
-| Бенчмарков в базе | 12: шесть лексера, шесть парсера |
+| Бенчмарков в базе | 13: шесть лексера, шесть парсера, плюс `BM_Version` из `eval_benchmark.cpp` |
 | Комментариев `TODO(B<N>)` в коде | B7 и B10 в `ast.hpp`, B10 в `parser.cpp` |
 
 Что слой **не** делает и делать не должен: проверок §6.1 и §6.2 (B11), раскодирования экранирования (B9), интернирования имён (B8), любой работы с ареной (B1, B7).

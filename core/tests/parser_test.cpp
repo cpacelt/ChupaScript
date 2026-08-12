@@ -807,4 +807,26 @@ TEST(ParserLimits, ChainsInsideSubscriptsAreCountedToo) {
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
 }
 
+// statement() входит в postfix() напрямую при нулевой глубине, минуя ternary,
+// nilCoalesce и unary, которые в режиме выражения уже забирают по единице
+// бюджета каждый. Поэтому цепочка-цель присваивания получает целиком
+// kMaxDepth и принимается на три звена длиннее, чем цепочка '.' в выражении
+// (docs/grammar.md Приложение C.1).
+
+/// Цепочка из n звеньев вида link в позиции цели присваивания.
+std::string targetChainOf(const char *link, int count) {
+    return chainOf(link, count) + " = 1;";
+}
+
+TEST(ParserLimits, LongAssignmentTargetChainIsAcceptedUpToTheLimit) {
+    EXPECT_TRUE(parseProg(targetChainOf(".b", 512)).ok);
+}
+
+TEST(ParserLimits, AssignmentTargetChainPastTheLimitIsRejected) {
+    const Parsed parsed = parseProg(targetChainOf(".b", 513));
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
 }  // namespace

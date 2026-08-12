@@ -678,4 +678,78 @@ TEST(ParserLimits, DeepNilCoalesceChainIsRejectedNotCrashing) {
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
 }
 
+/// Цепочка из n звеньев вида link, приложенных к имени.
+std::string chainOf(const char *link, int count) {
+    std::string source = "a";
+    for (int i = 0; i < count; ++i) {
+        source += link;
+    }
+    return source;
+}
+
+// Цепочка '.' и '[]' строится циклом, но дерево наращивает так же, как
+// рекурсия, а по этому дереву потом рекурсивно спускается вычислитель. Поэтому
+// звено тратит тот же бюджет, что и вложенность, и границы ниже — измеренные
+// (docs/grammar.md Приложение C.1), а не выведенные из kMaxDepth: до postfix()
+// управление доходит через ternary, nilCoalesce и unary, каждое из которых уже
+// взяло по единице.
+
+TEST(ParserLimits, LongMemberChainIsAcceptedUpToTheLimit) {
+    EXPECT_TRUE(parseExpr(chainOf(".b", 93)).ok);
+}
+
+TEST(ParserLimits, MemberChainPastTheLimitIsRejected) {
+    const Parsed parsed = parseExpr(chainOf(".b", 94));
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
+TEST(ParserLimits, LongIndexChainIsAcceptedUpToTheLimit) {
+    // На три звена короче, чем цепочка '.': подвыражение внутри последнего
+    // '[...]' проходит ternary, nilCoalesce и unary поверх накопленной глубины.
+    EXPECT_TRUE(parseExpr(chainOf("[0]", 90)).ok);
+}
+
+TEST(ParserLimits, IndexChainPastTheLimitIsRejected) {
+    const Parsed parsed = parseExpr(chainOf("[0]", 91));
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
+TEST(ParserLimits, VeryLongMemberChainIsRejectedNotCrashing) {
+    // Ровно тот вход, который раньше разбирался целиком и ронял вычислитель.
+    const Parsed parsed = parseExpr(chainOf(".b", 50000));
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+}
+
+TEST(ParserLimits, NestingAndChainsShareOneBudget) {
+    // Главное свойство правки: цепочки и вложенность не перемножаются. Каждый
+    // уровень скобок стоит трёх единиц, поэтому доступная длина цепочки внутри
+    // убывает на три за уровень, а высота дерева остаётся ограниченной.
+    EXPECT_TRUE(parseExpr("(" + chainOf(".b", 90) + ")").ok);
+    EXPECT_FALSE(parseExpr("(" + chainOf(".b", 91) + ")").ok);
+    EXPECT_TRUE(parseExpr("((((" + chainOf(".b", 81) + "))))").ok);
+    EXPECT_FALSE(parseExpr("((((" + chainOf(".b", 82) + "))))").ok);
+}
+
+TEST(ParserLimits, ChainsInsideSubscriptsAreCountedToo) {
+    // Выражение внутри '[...]' видит глубину, накопленную предыдущими звеньями:
+    // иначе каждый уровень вложенности нёс бы полную цепочку и высота дерева
+    // росла бы произведением.
+    std::string nested;
+    for (int i = 0; i < 40; ++i) {
+        nested += chainOf(".b", 10) + "[";
+    }
+    nested += "0";
+    for (int i = 0; i < 40; ++i) {
+        nested += "]";
+    }
+    const Parsed parsed = parseExpr(nested);
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
 }  // namespace

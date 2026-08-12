@@ -223,4 +223,100 @@ TEST(OperatorOrdering, InfinitiesOrderAsExpected) {
     EXPECT_TRUE(binary(TokenKind::Less, number(1.0), number(inf), ctx).booleanValue());
 }
 
+TEST(OperatorEquality, NullEqualsOnlyNull) {
+    Context ctx;
+    // Правило 1 применяется раньше правила 2, поэтому null == 5 даёт false,
+    // а не ошибку (docs/semantics.md §5.4).
+    EXPECT_TRUE(binary(TokenKind::Equal, Value::null(), Value::null(), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, Value::null(), number(5.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, number(5.0), Value::null(), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, Value::null(), ctx.makeString("a"), ctx).booleanValue());
+}
+
+TEST(OperatorEquality, DifferentTypesAreAnError) {
+    Context ctx;
+    // Правило 2: типы различаются — ошибка, а не false.
+    EXPECT_EQ(binaryError(TokenKind::Equal, number(1.0), ctx.makeString("1"), ctx).code,
+              CS::ErrorCode::Type);
+    EXPECT_EQ(binaryError(TokenKind::Equal, Value::boolean(true), number(1.0), ctx).code,
+              CS::ErrorCode::Type);
+    EXPECT_EQ(binaryError(TokenKind::Equal, ctx.makeArray(), ctx.makeObject(), ctx).code,
+              CS::ErrorCode::Type);
+}
+
+TEST(OperatorEquality, NumbersCompareByValue) {
+    Context ctx;
+    EXPECT_TRUE(binary(TokenKind::Equal, number(1.5), number(1.5), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, number(1.5), number(2.5), ctx).booleanValue());
+}
+
+TEST(OperatorEquality, NaNIsNotEqualToItself) {
+    Context ctx;
+    const Value nan = number(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(binary(TokenKind::Equal, nan, nan, ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::NotEqual, nan, nan, ctx).booleanValue());
+}
+
+TEST(OperatorEquality, NegativeZeroEqualsZero) {
+    Context ctx;
+    // docs/semantics.md §4.3: -0 == 0 истинно, хотя ключами они различаются.
+    EXPECT_TRUE(binary(TokenKind::Equal, number(-0.0), number(0.0), ctx).booleanValue());
+}
+
+TEST(OperatorEquality, StringsCompareByBytes) {
+    Context ctx;
+    const Value a = ctx.makeString("привет");
+    const Value b = ctx.makeString("привет");
+    const Value c = ctx.makeString("пока");
+    // Два разных значения с одинаковым содержимым равны: сравниваются байты,
+    // а не хранилище.
+    EXPECT_TRUE(binary(TokenKind::Equal, a, b, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, a, c, ctx).booleanValue());
+}
+
+TEST(OperatorEquality, StringsAreNotNormalized) {
+    Context ctx;
+    // docs/semantics.md §5.4: нормализация юникода не выполняется. Одна и та
+    // же буква, записанная как готовый символ и как база с комбинирующим
+    // знаком, — разные строки.
+    const Value composed = ctx.makeString("\xD0\xB9");                  // й
+    const Value decomposed = ctx.makeString("\xD0\xB8\xCC\x86");        // и + бреве
+    EXPECT_FALSE(binary(TokenKind::Equal, composed, decomposed, ctx).booleanValue());
+}
+
+TEST(OperatorEquality, BooleansCompareByValue) {
+    Context ctx;
+    EXPECT_TRUE(binary(TokenKind::Equal, Value::boolean(true), Value::boolean(true), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, Value::boolean(true), Value::boolean(false), ctx).booleanValue());
+}
+
+TEST(OperatorEquality, AggregatesCompareByIdentity) {
+    Context ctx;
+    const Value items = ctx.makeArray();
+    ctx.arrayPush(items, number(1.0));
+    const Value alias = items;
+    const Value other = ctx.makeArray();
+    ctx.arrayPush(other, number(1.0));
+
+    // docs/semantics.md §5.4: равны тогда и только тогда, когда это один и тот
+    // же объект. Одинаковое содержимое не делает их равными.
+    EXPECT_TRUE(binary(TokenKind::Equal, items, alias, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, items, other, ctx).booleanValue());
+}
+
+TEST(OperatorEquality, NotEqualNegatesEqual) {
+    Context ctx;
+    EXPECT_FALSE(binary(TokenKind::NotEqual, number(1.0), number(1.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::NotEqual, number(1.0), number(2.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::NotEqual, Value::null(), Value::null(), ctx).booleanValue());
+}
+
+TEST(OperatorEquality, NotEqualPropagatesTheError) {
+    Context ctx;
+    // docs/semantics.md §5.4: != эквивалентен отрицанию == во всём, включая
+    // случай ошибки.
+    EXPECT_EQ(binaryError(TokenKind::NotEqual, number(1.0), ctx.makeString("1"), ctx).code,
+              CS::ErrorCode::Type);
+}
+
 }  // namespace

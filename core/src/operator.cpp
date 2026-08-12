@@ -75,6 +75,53 @@ bool applyOrdering(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
     return true;
 }
 
+/// Равенство (docs/semantics.md §5.4).
+///
+/// Правила применяются в порядке перечисления, и порядок существенен: null
+/// проверяется раньше несовпадения типов, поэтому null == 5 даёт false, а
+/// 1 == '1' — ошибку.
+bool valuesEqual(Value lhs, Value rhs, const Context &ctx, std::uint32_t offset,
+                 bool *out, Diagnostic &diag) {
+    // 1. Один из операндов null: равно тогда и только тогда, когда второй тоже.
+    if (lhs.kind() == Value::Kind::Null || rhs.kind() == Value::Kind::Null) {
+        *out = lhs.kind() == Value::Kind::Null && rhs.kind() == Value::Kind::Null;
+        return true;
+    }
+
+    // 2. Типы различаются — ошибка.
+    if (lhs.kind() != rhs.kind()) {
+        return failType(offset, "equality requires operands of the same type", diag);
+    }
+
+    switch (lhs.kind()) {
+        // 3. NaN не равен ничему, включая себя: это обычное сравнение double.
+        case Value::Kind::Number:
+            *out = lhs.numberValue() == rhs.numberValue();
+            return true;
+
+        // 4. Побайтово, без нормализации юникода.
+        case Value::Kind::String:
+            *out = ctx.string(lhs) == ctx.string(rhs);
+            return true;
+
+        // 5. По значению.
+        case Value::Kind::Boolean:
+            *out = lhs.booleanValue() == rhs.booleanValue();
+            return true;
+
+        // 6. По идентичности. Литерал создаёт новый агрегат при каждом
+        // вычислении (§2.3), поэтому state.items == [1, 2] ложно всегда.
+        case Value::Kind::Object:
+        case Value::Kind::Array:
+            *out = lhs.sameAggregate(rhs);
+            return true;
+
+        default:
+            assert(false && "Null обработан правилом 1");
+            return failType(offset, "equality is not defined for this type", diag);
+    }
+}
+
 }  // namespace
 
 bool applyUnary(TokenKind op, Value operand, std::uint32_t offset, Value *out,
@@ -104,7 +151,6 @@ bool applyUnary(TokenKind op, Value operand, std::uint32_t offset, Value *out,
 
 bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
                  std::uint32_t offset, Value *out, Diagnostic &diag) {
-    (void)ctx;  // понадобится равенству строк
     switch (op) {
         case TokenKind::Plus:
         case TokenKind::Minus:
@@ -118,6 +164,17 @@ bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
         case TokenKind::LessEqual:
         case TokenKind::GreaterEqual:
             return applyOrdering(op, lhs, rhs, offset, out, diag);
+
+        case TokenKind::Equal:
+        case TokenKind::NotEqual: {
+            bool equal = false;
+            if (!valuesEqual(lhs, rhs, ctx, offset, &equal, diag)) { return false; }
+            // != реализуется отрицанием ==, а не отдельной таблицей: тогда
+            // разойтись они не могут по построению. Отказ уже вернулся выше,
+            // поэтому «включая случай ошибки» выполняется само.
+            *out = Value::boolean(op == TokenKind::Equal ? equal : !equal);
+            return true;
+        }
 
         default:
             assert(false && "applyBinary принимает только операции без короткого замыкания");

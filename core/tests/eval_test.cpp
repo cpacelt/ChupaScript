@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -803,6 +804,86 @@ TEST(EvalAssignIndex, SubscriptMayBeAnExpression) {
     put(ctx, "i", "1");
     run(ctx, "items[i + 1] = 99;");
     EXPECT_EQ(evaluate(ctx, "items[2]").numberValue(), 99.0);
+}
+
+TEST(EvalCompound, FourOperatorsWorkOnAKey) {
+    Context ctx;
+    put(ctx, "s", "{'n': 10}");
+    run(ctx, "s.n += 5;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 15.0);
+    run(ctx, "s.n -= 3;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 12.0);
+    run(ctx, "s.n *= 2;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 24.0);
+    run(ctx, "s.n /= 4;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 6.0);
+}
+
+TEST(EvalCompound, WorksOnAnArrayElement) {
+    Context ctx;
+    put(ctx, "items", "[1, 2, 3]");
+    run(ctx, "items[1] += 10;");
+    EXPECT_EQ(evaluate(ctx, "items[1]").numberValue(), 12.0);
+}
+
+TEST(EvalCompound, WorksOnAnObjectKeyByIndex) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1}");
+    run(ctx, "o['a'] += 1;");
+    EXPECT_EQ(evaluate(ctx, "o.a").numberValue(), 2.0);
+}
+
+TEST(EvalCompound, TypeMismatchIsAnError) {
+    Context ctx;
+    put(ctx, "s", "{'text': 'а'}");
+    // Операция берётся из applyBinary, поэтому правила типов те же, что у
+    // обычного оператора: конкатенации строк через + нет.
+    EXPECT_EQ(runError(ctx, "s.text += 'б';").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCompound, MissingKeyReadsAsNullAndThenFails) {
+    Context ctx;
+    put(ctx, "s", "{}");
+    // Чтение отсутствующего ключа даёт null (§6.2), а null + 1 — ошибка типа.
+    EXPECT_EQ(runError(ctx, "s.missing += 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCompound, BeyondTheEndGivesTypeNotRange) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    // docs/semantics.md §7.3: x += e есть x = x + e. Сначала читается items[5],
+    // что штатно даёт null, затем вычисляется null + 1 — ошибка типа. До
+    // проверки границы записи дело не доходит, поэтому Type, а не Range.
+    // Простое присваивание туда же даёт Range — обе строки обязательны.
+    EXPECT_EQ(runError(ctx, "items[5] += 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "items[5] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalCompound, ErrorLeavesTheTargetUntouched) {
+    Context ctx;
+    put(ctx, "s", "{'n': 10}");
+    EXPECT_EQ(runError(ctx, "s.n += 'а';").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 10.0);
+}
+
+TEST(EvalCompound, DivisionByZeroFollowsIEEE) {
+    Context ctx;
+    put(ctx, "s", "{'n': 1}");
+    // Деление на ноль даёт бесконечность, а не ошибку (§5.2).
+    run(ctx, "s.n /= 0;");
+    EXPECT_TRUE(std::isinf(evaluate(ctx, "s.n").numberValue()));
+}
+
+TEST(EvalCompound, DeepTargetWorks) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'n': 1}]}");
+    put(ctx, "i", "0");
+    // Однократность вычисления цели (docs/grammar.md §6.4) в этом языке
+    // ненаблюдаема: выражения чисты, поэтому повторное вычисление дало бы тот
+    // же результат. Тест проверяет лишь, что сложная цель вообще работает;
+    // само требование держится устройством кода, а не этой проверкой.
+    run(ctx, "state.rows[i].n += 41;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].n").numberValue(), 42.0);
 }
 
 }  // namespace

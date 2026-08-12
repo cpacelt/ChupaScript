@@ -322,6 +322,21 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
     }
 }
 
+/// Соответствие составного оператора обычному (docs/semantics.md §7.3).
+///
+/// Операции %= в языке нет (docs/grammar.md §5.2).
+TokenKind compoundOperation(TokenKind op) {
+    switch (op) {
+        case TokenKind::PlusAssign: return TokenKind::Plus;
+        case TokenKind::MinusAssign: return TokenKind::Minus;
+        case TokenKind::StarAssign: return TokenKind::Star;
+        case TokenKind::SlashAssign: return TokenKind::Slash;
+        default:
+            assert(false && "не составной оператор присваивания");
+            return TokenKind::Plus;
+    }
+}
+
 /// Присваивание по имени поля: base.k = v.
 ///
 /// Порядок вычисления — подвыражения цели, затем правая часть
@@ -342,7 +357,22 @@ bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
     }
 
     // Имя поля берётся из узла буквально, как при чтении (§6.2).
-    ctx.objectSet(base, ast.text(target), value);
+    const std::string_view key = ast.text(target);
+
+    const TokenKind op = ast.op(node);
+    if (op != TokenKind::Assign) {
+        // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
+        // поэтому подвыражения цели вычислены ровно один раз (§6.4).
+        const Value current = ctx.objectGet(base, key);
+        Value combined = Value::null();
+        if (!applyBinary(compoundOperation(op), current, value, ctx,
+                         ast.offset(node), &combined, diag)) {
+            return false;
+        }
+        value = combined;
+    }
+
+    ctx.objectSet(base, key, value);
     return true;
 }
 
@@ -365,6 +395,25 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
             if (!checkArrayIndex(ast, target, subscript, &index, diag)) {
                 return false;
             }
+
+            const TokenKind op = ast.op(node);
+            if (op != TokenKind::Assign) {
+                // Чтение за границей штатно даёт null, поэтому items[5] += 1
+                // упирается не в границу записи, а в сложение с null: Type, а
+                // не Range (§7.3).
+                Value current = Value::null();
+                if (!readIndex(ast, target, ctx, base, subscript, &current,
+                               diag)) {
+                    return false;
+                }
+                Value combined = Value::null();
+                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                                 ast.offset(node), &combined, diag)) {
+                    return false;
+                }
+                value = combined;
+            }
+
             // Запись за границу — ошибка: расширяет только push (§6.1).
             // Сравнение в double, потому что индекс может превышать uint32.
             if (index >= static_cast<double>(ctx.arrayCount(base))) {
@@ -384,6 +433,18 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
                                 diag)) {
                 return false;
             }
+
+            const TokenKind op = ast.op(node);
+            if (op != TokenKind::Assign) {
+                const Value current = ctx.objectGet(base, key);
+                Value combined = Value::null();
+                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                                 ast.offset(node), &combined, diag)) {
+                    return false;
+                }
+                value = combined;
+            }
+
             ctx.objectSet(base, key, value);
             return true;
         }

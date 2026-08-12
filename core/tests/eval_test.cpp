@@ -696,6 +696,17 @@ TEST(EvalAssign, ErrorInTheValueLeavesTheTargetUntouched) {
     EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 1.0);
 }
 
+TEST(EvalAssign, TargetCheckLosesToValueErrorWhenBothFail) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §7.2: цель проверяется после вычисления правой части.
+    // Запись в null сама по себе даёт Type (WritingIntoNullIsAnError), но
+    // здесь неисправна и правая часть, и её ошибка вычисляется раньше —
+    // побеждает Name.
+    EXPECT_EQ(runError(ctx, "user.profile.name = usre;").code,
+              CS::ErrorCode::Name);
+}
+
 TEST(EvalScript, EmptyScriptSucceeds) {
     Context ctx;
     run(ctx, "");
@@ -864,6 +875,17 @@ TEST(EvalCompound, ErrorLeavesTheTargetUntouched) {
     put(ctx, "s", "{'n': 10}");
     EXPECT_EQ(runError(ctx, "s.n += 'а';").code, CS::ErrorCode::Type);
     EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 10.0);
+}
+
+TEST(EvalCompound, TargetCheckLosesToValueErrorWhenBothFail) {
+    Context ctx;
+    put(ctx, "items", "[1, 2, 3]");
+    // §7.3 говорит про результат ('x += e' есть 'x = x + e'), а не про
+    // порядок проверок: цель проверяется после вычисления правой части
+    // (docs/semantics.md §7.2). Индекс -1 сам по себе дал бы Range
+    // (FractionalAndNegativeIndicesAreErrors), но правая часть неисправна, и
+    // её Name побеждает первым.
+    EXPECT_EQ(runError(ctx, "items[-1] += usre;").code, CS::ErrorCode::Name);
 }
 
 TEST(EvalCompound, DivisionByZeroFollowsIEEE) {

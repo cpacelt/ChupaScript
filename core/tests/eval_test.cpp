@@ -78,11 +78,12 @@ TEST(EvalLiterals, StringEscapesAreDecoded) {
     EXPECT_EQ(ctx.string(evaluate(ctx, "'a\\nb'")), "a\nb");
 }
 
-TEST(EvalUnsupported, OperatorsAreNotSupportedYet) {
+TEST(EvalUnsupported, CallsAreNotSupportedYet) {
     Context ctx;
-    // Часть 1 не знает операторов и вызовов; парсер их принимает, вычислитель
-    // отвергает узнаваемым сообщением.
-    const Diagnostic diag = evalError(ctx, "1 + 1");
+    // Вызовы приходят с частью 3. После них в ветке default останутся только
+    // Program, Assign и CallStatement — узлы, которых в дереве от
+    // parseExpression быть не может, — и она станет защитной окончательно.
+    const Diagnostic diag = evalError(ctx, "count(items)");
     EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     EXPECT_STREQ(diag.message, "expression form is not supported");
 }
@@ -395,6 +396,57 @@ TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
     EXPECT_FALSE(first.sameAggregate(second));
     EXPECT_EQ(ctx.arrayCount(first), 2u);
     EXPECT_EQ(ctx.arrayCount(second), 2u);
+}
+
+TEST(EvalOperators, UnaryWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_FALSE(evaluate(ctx, "!true").booleanValue());
+    EXPECT_EQ(evaluate(ctx, "-3").numberValue(), -3.0);
+}
+
+TEST(EvalOperators, ArithmeticRespectsPrecedence) {
+    Context ctx;
+    // Приоритет — дело грамматики; вычислитель лишь обходит построенное дерево.
+    EXPECT_EQ(evaluate(ctx, "1 + 2 * 3").numberValue(), 7.0);
+    EXPECT_EQ(evaluate(ctx, "(1 + 2) * 3").numberValue(), 9.0);
+}
+
+TEST(EvalOperators, ComparisonWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "1 < 2").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "1 > 2").booleanValue());
+}
+
+TEST(EvalOperators, EqualityWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "1 == 1").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "1 != 2").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "null == null").booleanValue());
+}
+
+TEST(EvalOperators, OperandsComeFromTheContext) {
+    Context ctx;
+    put(ctx, "state", "{'count': 41}");
+    EXPECT_EQ(evaluate(ctx, "state.count + 1").numberValue(), 42.0);
+}
+
+TEST(EvalOperators, ErrorInTheLeftOperandStopsEvaluation) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "usre + 1").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalOperators, ErrorInTheRightOperandStopsEvaluation) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 + usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalOperators, AggregateEqualityIsByIdentityThroughTheWalk) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    // Литерал создаёт новый агрегат при каждом вычислении, поэтому сравнение
+    // с ним ложно даже при совпадающем содержимом.
+    EXPECT_TRUE(evaluate(ctx, "items == items").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "items == [1, 2]").booleanValue());
 }
 
 }  // namespace

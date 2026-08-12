@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "operator.hpp"
 #include "text.hpp"
 
 namespace CS {
@@ -225,6 +226,30 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             }
             *out = object;
             return true;
+        }
+
+        case NodeKind::Unary: {
+            Value operand = Value::null();
+            if (!eval(ast, ast.child(node, 0), ctx, &operand, diag)) { return false; }
+            return applyUnary(ast.op(node), operand, ast.offset(node), out, diag);
+        }
+
+        case NodeKind::Binary: {
+            const TokenKind op = ast.op(node);
+            // Короткое замыкание решает, вычислять ли правый операнд, поэтому
+            // в applyBinary не попадает. Его ветки приходят следующей задачей.
+            if (op == TokenKind::AndAnd || op == TokenKind::OrOr ||
+                op == TokenKind::QuestionQuestion) {
+                return fail(ast, node, ErrorCode::Type,
+                            "expression form is not supported", diag);
+            }
+
+            // Слева направо: порядок зафиксирован (docs/semantics.md §3.3).
+            Value lhs = Value::null();
+            if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+            Value rhs = Value::null();
+            if (!eval(ast, ast.child(node, 1), ctx, &rhs, diag)) { return false; }
+            return applyBinary(op, lhs, rhs, ctx, ast.offset(node), out, diag);
         }
 
         default:

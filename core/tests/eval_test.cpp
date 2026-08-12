@@ -952,6 +952,29 @@ TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
     EXPECT_EQ(evaluate(ctx, "shortcut[0]").numberValue(), 99.0);
 }
 
+TEST(EvalScriptBehaviour, AssignmentCreatesAnAliasJustLikeTheHostDoes) {
+    Context ctx;
+    // §2.3, первое предложение: «присваивание... копии не создаёт». Здесь, в
+    // отличие от MutationIsVisibleThroughAnotherName выше, второе имя для
+    // массива ставит не хост, а само присваивание скрипта.
+    put(ctx, "state", "{'a': [1, 2], 'b': null}");
+    run(ctx, "state.b = state.a; state.a[0] = 9;");
+    EXPECT_EQ(evaluate(ctx, "state.b[0]").numberValue(), 9.0);
+}
+
+TEST(EvalScriptBehaviour, SelfReferenceIsAValidProgram) {
+    Context ctx;
+    // §2.3: 'obj[\'self\'] = obj;' — корректная программа, ссылочность
+    // допускает циклы. Запись не обходит значение и потому не зацикливается;
+    // повторное чтение через self подтверждает, что цикл остался невредимым.
+    put(ctx, "obj", "{}");
+    // 'self' — зарезервированное слово (docs/grammar.md §4.5), поэтому чтение
+    // назад идёт через '[]', как и запись; через '.' этот ключ недостижим.
+    run(ctx, "obj['self'] = obj;");
+    EXPECT_TRUE(evaluate(ctx, "obj['self'] == obj").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "obj['self']['self']['self'] == obj").booleanValue());
+}
+
 TEST(EvalScriptBehaviour, EmptyStatementsAreSkipped) {
     Context ctx;
     put(ctx, "s", "{'n': 0}");

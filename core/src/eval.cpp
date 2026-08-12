@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <string>
+#include <string_view>
 
 #include "text.hpp"
 
@@ -38,6 +39,35 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             std::string scratch;
             *out = ctx.makeString(literalText(ast, node, scratch));
             return true;
+        }
+
+        case NodeKind::Identifier: {
+            // docs/semantics.md §7.1: объявлений в языке нет, всякий
+            // идентификатор — чтение из контекста.
+            const std::string_view name = ast.text(node);
+            // Неизвестный корень — ошибка, а не null: состав корней контексту
+            // известен, состав ключей внутри них — нет. Поэтому опечатка в
+            // корне ловится, а опечатка глубже даёт null по §6.3.
+            if (!ctx.hasRoot(name)) {
+                return fail(ast, node, ErrorCode::Name, "unknown root", diag);
+            }
+            *out = ctx.root(name);
+            return true;
+        }
+
+        case NodeKind::Member: {
+            // Проверка неизвестного корня приоритизируется выше, чем Type error:
+            // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md §4
+            const NodeId base = ast.child(node, 0);
+            if (ast.kind(base) == NodeKind::Identifier) {
+                const std::string_view baseName = ast.text(base);
+                if (!ctx.hasRoot(baseName)) {
+                    return fail(ast, base, ErrorCode::Name, "unknown root", diag);
+                }
+            }
+            // Member access не поддерживается в части 1
+            return fail(ast, node, ErrorCode::Type,
+                        "expression form is not supported", diag);
         }
 
         default:

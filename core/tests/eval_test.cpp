@@ -87,4 +87,40 @@ TEST(EvalUnsupported, OperatorsAreNotSupportedYet) {
     EXPECT_STREQ(diag.message, "expression form is not supported");
 }
 
+TEST(EvalNames, RootIsRead) {
+    Context ctx;
+    put(ctx, "count", "3");
+    EXPECT_EQ(evaluate(ctx, "count").numberValue(), 3.0);
+}
+
+TEST(EvalNames, RootHoldingAggregateIsReadByIdentity) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    EXPECT_TRUE(evaluate(ctx, "items").sameAggregate(ctx.root("items")));
+}
+
+TEST(EvalNames, RootHoldingNullIsRead) {
+    Context ctx;
+    put(ctx, "maybe", "null");
+    // Корень со значением null существует и читается как null — это не то же
+    // самое, что отсутствующий корень.
+    EXPECT_EQ(evaluate(ctx, "maybe").kind(), Value::Kind::Null);
+}
+
+TEST(EvalNames, UnknownRootIsAnError) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md §4:
+    // опечатка в корне ловится, потому что состав корней контексту известен.
+    const Diagnostic diag = evalError(ctx, "usre");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(diag.offset, 0u);
+}
+
+TEST(EvalNames, UnknownRootIsAnErrorEvenAsAPathBase) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
+}
+
 }  // namespace

@@ -78,11 +78,12 @@ TEST(EvalLiterals, StringEscapesAreDecoded) {
     EXPECT_EQ(ctx.string(evaluate(ctx, "'a\\nb'")), "a\nb");
 }
 
-TEST(EvalUnsupported, OperatorsAreNotSupportedYet) {
+TEST(EvalUnsupported, CallsAreNotSupportedYet) {
     Context ctx;
-    // Часть 1 не знает операторов и вызовов; парсер их принимает, вычислитель
-    // отвергает узнаваемым сообщением.
-    const Diagnostic diag = evalError(ctx, "1 + 1");
+    // Вызовы приходят с частью 3. После них в ветке default останутся только
+    // Program, Assign и CallStatement — узлы, которых в дереве от
+    // parseExpression быть не может, — и она станет защитной окончательно.
+    const Diagnostic diag = evalError(ctx, "count(items)");
     EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     EXPECT_STREQ(diag.message, "expression form is not supported");
 }
@@ -359,11 +360,11 @@ TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
     // звено цепочки стоит той же единицы, что и вложенность. До этой правки
     // цепочка длины не имела, разбиралась целиком и роняла процесс.
     //
-    // 93 — измеренный максимум для цепочки '.' в выражении
+    // 509 — измеренный максимум для цепочки '.' в выражении
     // (docs/grammar.md Приложение C.1). Чтение идёт через null по §6.3, то есть
     // все звенья действительно проходятся.
     std::string source = "user";
-    for (int i = 0; i < 93; ++i) {
+    for (int i = 0; i < 509; ++i) {
         source += ".b";
     }
     EXPECT_EQ(evaluate(ctx, source).kind(), Value::Kind::Null);
@@ -372,6 +373,31 @@ TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
     Ast ast;
     Diagnostic diag;
     const std::string tooLong = source + ".b";
+    EXPECT_FALSE(CS::parseExpression(
+        tooLong.data(), static_cast<std::uint32_t>(tooLong.size()), ast, diag));
+    EXPECT_STREQ(diag.message, "expression nesting too deep");
+}
+
+TEST(EvalDepth, OperatorChainAtTheParserLimitEvaluatesWithoutOverflow) {
+    Context ctx;
+    // Тот самый тест, ради которого левоассоциативные правила начали тратить
+    // бюджет. Цепочка '1 + 1 + …' разбирается циклом, но даёт левоглубокое
+    // дерево Binary, по которому вычислитель спускается рекурсивно. Пока
+    // бюджета она не тратила, «1» плюс 50 000 раз «+ 1» разбиралось успешно и
+    // роняло процесс по SIGSEGV.
+    //
+    // 509 — измеренный максимум для цепочки одного левоассоциативного уровня
+    // в выражении (docs/grammar.md Приложение C.1).
+    std::string source = "1";
+    for (int i = 0; i < 509; ++i) {
+        source += " + 1";
+    }
+    EXPECT_EQ(evaluate(ctx, source).numberValue(), 510.0);
+
+    // На единицу длиннее до вычислителя уже не доходит: отказ на разборе.
+    Ast ast;
+    Diagnostic diag;
+    const std::string tooLong = source + " + 1";
     EXPECT_FALSE(CS::parseExpression(
         tooLong.data(), static_cast<std::uint32_t>(tooLong.size()), ast, diag));
     EXPECT_STREQ(diag.message, "expression nesting too deep");
@@ -395,6 +421,184 @@ TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
     EXPECT_FALSE(first.sameAggregate(second));
     EXPECT_EQ(ctx.arrayCount(first), 2u);
     EXPECT_EQ(ctx.arrayCount(second), 2u);
+}
+
+TEST(EvalOperators, UnaryWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_FALSE(evaluate(ctx, "!true").booleanValue());
+    EXPECT_EQ(evaluate(ctx, "-3").numberValue(), -3.0);
+}
+
+TEST(EvalOperators, ArithmeticRespectsPrecedence) {
+    Context ctx;
+    // Приоритет — дело грамматики; вычислитель лишь обходит построенное дерево.
+    EXPECT_EQ(evaluate(ctx, "1 + 2 * 3").numberValue(), 7.0);
+    EXPECT_EQ(evaluate(ctx, "(1 + 2) * 3").numberValue(), 9.0);
+}
+
+TEST(EvalOperators, ComparisonWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "1 < 2").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "1 > 2").booleanValue());
+}
+
+TEST(EvalOperators, EqualityWorksThroughTheWalk) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "1 == 1").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "1 != 2").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "null == null").booleanValue());
+}
+
+TEST(EvalOperators, OperandsComeFromTheContext) {
+    Context ctx;
+    put(ctx, "state", "{'count': 41}");
+    EXPECT_EQ(evaluate(ctx, "state.count + 1").numberValue(), 42.0);
+}
+
+TEST(EvalOperators, ErrorInTheLeftOperandStopsEvaluation) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "usre + 1").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalOperators, ErrorInTheRightOperandStopsEvaluation) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 + usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalOperators, LeftOperandIsEvaluatedBeforeTheRight) {
+    Context ctx;
+    // docs/semantics.md §3.3 фиксирует порядок именно ради определённости
+    // диагностики, когда ошибочны оба операнда. С одним ошибочным операндом
+    // порядок ненаблюдаем, и перестановка прошла бы незамеченной.
+    const Diagnostic diag = evalError(ctx, "usre + alsoBad");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(diag.offset, 0u);
+}
+
+TEST(EvalOperators, AggregateEqualityIsByIdentityThroughTheWalk) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    // Литерал создаёт новый агрегат при каждом вычислении, поэтому сравнение
+    // с ним ложно даже при совпадающем содержимом.
+    EXPECT_TRUE(evaluate(ctx, "items == items").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "items == [1, 2]").booleanValue());
+}
+
+TEST(EvalShortCircuit, AndDoesNotEvaluateTheRightOperand) {
+    Context ctx;
+    // Побочных эффектов в выражениях нет, поэтому невычисление наблюдается
+    // единственным способом: ошибка справа не всплывает.
+    EXPECT_FALSE(evaluate(ctx, "false && usre").booleanValue());
+}
+
+TEST(EvalShortCircuit, AndEvaluatesTheRightOperandWhenNeeded) {
+    Context ctx;
+    EXPECT_FALSE(evaluate(ctx, "true && false").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "true && true").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, OrDoesNotEvaluateTheRightOperand) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "true || usre").booleanValue());
+}
+
+TEST(EvalShortCircuit, OrEvaluatesTheRightOperandWhenNeeded) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "false || true").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "false || false").booleanValue());
+    EXPECT_EQ(evalError(ctx, "false || usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, ErrorOnTheLeftIsNotSwallowed) {
+    Context ctx;
+    // docs/semantics.md §5.5: ошибка && false — ошибка.
+    EXPECT_EQ(evalError(ctx, "usre && false").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "usre || true").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, TypeOfTheUnevaluatedOperandIsNotChecked) {
+    Context ctx;
+    // Самая точная проверка правила: тип правого операнда проверяется тогда и
+    // только тогда, когда его пришлось вычислить. Поодиночке ни одна из двух
+    // строк ничего не доказывает.
+    EXPECT_FALSE(evaluate(ctx, "false && 5").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && 5").code, CS::ErrorCode::Type);
+    // Зеркало для ||: у него замыкает истина, а не ложь.
+    EXPECT_TRUE(evaluate(ctx, "true || 5").booleanValue());
+    EXPECT_EQ(evalError(ctx, "false || 5").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalShortCircuit, LogicalOperatorsRequireBooleanOnTheLeft) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 && true").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "'a' || true").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalShortCircuit, GuardIdiomProtectsTheRightSide) {
+    Context ctx;
+    put(ctx, "state", "{'items': []}");
+    // Ради этого короткое замыкание и существует. Правая часть без защиты
+    // слева даёт ошибку типа: строковый индекс массива запрещён. Настоящая
+    // идиома из §5.5 пользуется count(), который придёт с частью 3, — здесь
+    // та же форма на доступных средствах.
+    //
+    // Обе строки обязательны: одна показывает, что справа не пошли, вторая —
+    // что там действительно есть на что наткнуться.
+    EXPECT_FALSE(evaluate(ctx, "false && state.items['0'] == 1").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && state.items['0'] == 1").code,
+              CS::ErrorCode::Type);
+}
+
+TEST(EvalNilCoalesce, TakesTheLeftWhenItIsNotNull) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "1 ?? usre").numberValue(), 1.0);
+}
+
+TEST(EvalNilCoalesce, TakesTheRightWhenTheLeftIsNull) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "null ?? 2").numberValue(), 2.0);
+}
+
+TEST(EvalNilCoalesce, DoesNotSwallowErrors) {
+    Context ctx;
+    // docs/semantics.md §5.6: ?? перехватывает только null. Соблазнительно
+    // принять его за «если что-то пойдёт не так, подставь запасное»; он делает
+    // не это.
+    EXPECT_EQ(evalError(ctx, "usre ?? 0").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "(1 + 'a') ?? 0").code, CS::ErrorCode::Type);
+    // И справа тоже: если левый null, правый вычисляется по-настоящему.
+    EXPECT_EQ(evalError(ctx, "null ?? usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalNilCoalesce, OperandTypesNeedNotMatch) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(evaluate(ctx, "null ?? 'запасное'")), "запасное");
+}
+
+TEST(EvalNilCoalesce, ChainsRightAssociatively) {
+    Context ctx;
+    put(ctx, "user", "{'nickname': null}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "user.nickname ?? user.name ?? 'Гость'")),
+              "Гость");
+}
+
+TEST(EvalTernary, EvaluatesOnlyTheSelectedBranch) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "true ? 1 : usre").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "false ? usre : 2").numberValue(), 2.0);
+}
+
+TEST(EvalTernary, ConditionMustBeBoolean) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 ? 1 : 2").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "null ? 1 : 2").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalTernary, BranchesNeedNotShareAType) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "true ? 1 : 'a'").numberValue(), 1.0);
+    EXPECT_EQ(ctx.string(evaluate(ctx, "false ? 1 : 'a'")), "a");
 }
 
 }  // namespace

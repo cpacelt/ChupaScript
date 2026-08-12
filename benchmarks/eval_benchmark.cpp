@@ -98,6 +98,43 @@ void BM_Eval_FormatNumber(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_FormatNumber);
 
+/// Арифметика поверх глубокого пути. В измеренной стоимости доминирует не
+/// арифметика, а сам путь `user.profile.city.code.zip`: 82.1 нс здесь против
+/// 56.1 нс у `BM_Eval_DeepPath`, который меряет только его, — около 68%
+/// времени строки уходит на поиск по пути. Читать эту строку имеет смысл в
+/// сравнении с `BM_Eval_DeepPath`, а не саму по себе.
+void BM_Eval_Arithmetic(benchmark::State &state) {
+    runEval(state, "user.profile.city.code.zip * 2 + 1 - 3");
+}
+BENCHMARK(BM_Eval_Arithmetic);
+
+/// Цепочка сравнений, соединённая && — типичная защита в props.
+void BM_Eval_LogicalChain(benchmark::State &state) {
+    runEval(state, "1 < 2 && 2 < 3 && 3 < 4");
+}
+BENCHMARK(BM_Eval_LogicalChain);
+
+/// ?? по короткому пути: слева не null, правый операнд не вычисляется.
+void BM_Eval_NilCoalesceShort(benchmark::State &state) {
+    runEval(state, "user.name ?? 'Гость'");
+}
+BENCHMARK(BM_Eval_NilCoalesceShort);
+
+/// ?? по длинному пути: слева null, правый вычисляется. Разница с коротким —
+/// то, что видно на экране: ?? самый частый оператор в props.
+///
+/// Правый операнд — число, а не строковый литерал, именно чтобы разница мерила
+/// заявленное. Строковый литерал зовёт ctx.makeString и дописывает в пул текста
+/// контекста, а поштучного освобождения нет: пул рос бы на каждой итерации весь
+/// прогон, с переездами внутри измеряемого цикла (та же беда, что у
+/// BM_Eval_ArrayLiteral, см. B24). Короткий путь не выделяет ничего, и разница
+/// оказалась бы ценой вычисления правого операнда плюс неограниченным
+/// выделением, которого короткому пути платить не приходится.
+void BM_Eval_NilCoalesceLong(benchmark::State &state) {
+    runEval(state, "user.nickname ?? 0");
+}
+BENCHMARK(BM_Eval_NilCoalesceLong);
+
 }  // namespace
 
 static void BM_Version(benchmark::State &state) {

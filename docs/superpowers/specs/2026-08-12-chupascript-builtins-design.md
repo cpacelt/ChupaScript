@@ -116,7 +116,7 @@ std::uint32_t check(Ast &ast, const Context &ctx, Diagnostic *out,
                     std::uint32_t capacity);
 ```
 
-### 5.1 Шесть проверок
+### 5.1 Семь проверок
 
 | Проверка | Норма |
 |---|---|

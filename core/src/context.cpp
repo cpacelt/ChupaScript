@@ -322,7 +322,8 @@ std::size_t Context::bytesReserved() const noexcept {
     return pool_.capacity() * sizeof(Value) +
            arrays_.capacity() * sizeof(detail::ArrayRep) +
            objects_.capacity() * sizeof(detail::ObjectRep) +
-           entries_.capacity() * sizeof(detail::Entry) + text_.capacity();
+           entries_.capacity() * sizeof(detail::Entry) + text_.capacity() +
+           build_.capacity();
 }
 
 }  // namespace CS

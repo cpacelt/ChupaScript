@@ -101,6 +101,11 @@ TEST(PlaceholderCount, CountsAndRespectsEscaping) {
     EXPECT_EQ(CS::countPlaceholders("${"), 0u);
     EXPECT_EQ(CS::countPlaceholders("{}"), 0u);
     EXPECT_EQ(CS::countPlaceholders("$$"), 0u);
+    // $$${} — это литеральный $, за которым следует экранированное $${}:
+    // разбор берёт четырёхсимвольное совпадение с позиции 1, а не с позиции 0
+    // (там оно не совпадает — четвёртый символ там "{", а не "}"). Ноль
+    // плейсхолдеров.
+    EXPECT_EQ(CS::countPlaceholders("$$${}"), 0u);
 }
 
 }  // namespace

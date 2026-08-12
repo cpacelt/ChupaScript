@@ -1327,7 +1327,9 @@ TEST(EvalFormat, ArgumentThatWritesToThePoolDoesNotLeakIntoTheResult) {
               "Привет, мир!");
     // Вложенная сборка не поглощается внешней.
     EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', format('${}', 1))")), "1");
-    // str и keys тоже пишут в пул.
+    // str тоже пишет в пул. (keys сюда не годится в пример: она возвращает
+    // массив, а массив — агрегат, format отверг бы его по типу раньше, чем
+    // дело дошло бы до утечки байтов.)
     EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', str(2))")), "2");
 }
 
@@ -1336,6 +1338,23 @@ TEST(EvalFormat, ResultSurvivesIntoTheData) {
     put(ctx, "state", "{'label': ''}");
     run(ctx, "state.label = format('${} шт.', 'десять');");
     EXPECT_EQ(ctx.string(evaluate(ctx, "state.label")), "десять шт.");
+}
+
+TEST(EvalFormat, NestedAssemblyKeepsTheOuterPrefix) {
+    Context ctx;
+    // Вложенный format стоит не первым куском шаблона, поэтому к моменту его
+    // начала во внешней сборке уже накоплен префикс. Внутренняя обязана снять
+    // за собой ровно свой хвост и не тронуть его: это и есть свойство стека,
+    // ради которого сборка живёт в отдельном буфере.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('a${}b', format('c${}d', 1))")),
+              "ac1db");
+    // Три уровня, размотка изнутри наружу:
+    //   format('5${}6', 7)                       = "5" + "7"     + "6" = "576"
+    //   format('3${}4', "576")                    = "3" + "576"  + "4" = "35764"
+    //   format('1${}2', "35764")                  = "1" + "35764" + "2" = "1357642"
+    EXPECT_EQ(ctx.string(evaluate(
+                  ctx, "format('1${}2', format('3${}4', format('5${}6', 7)))")),
+              "1357642");
 }
 
 }  // namespace

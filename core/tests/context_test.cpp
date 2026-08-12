@@ -590,4 +590,15 @@ TEST(ContextStringBuilder, SurvivesPoolGrowth) {
     EXPECT_EQ(ctx.string(ctx.endString(mark)), expected);
 }
 
+TEST(ContextStringBuilder, NestedAbortLeavesTheOuterAssemblyIntact) {
+    Context ctx;
+    const std::uint32_t outer = ctx.beginString();
+    ctx.appendToString("внешнее ");
+    const std::uint32_t inner = ctx.beginString();
+    ctx.appendToString("выброшенное");
+    ctx.abortString(inner);
+    ctx.appendToString("продолжение");
+    EXPECT_EQ(ctx.string(ctx.endString(outer)), "внешнее продолжение");
+}
+
 }  // namespace

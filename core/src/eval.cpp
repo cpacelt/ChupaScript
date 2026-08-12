@@ -376,7 +376,8 @@ bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
     const TokenKind op = ast.op(node);
     if (op != TokenKind::Assign) {
         // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
-        // поэтому подвыражения цели вычислены ровно один раз (§6.4).
+        // поэтому подвыражения цели вычислены ровно один раз
+        // (docs/grammar.md §6.4).
         const Value current = ctx.objectGet(base, key);
         Value combined = Value::null();
         if (!applyBinary(compoundOperation(op), current, value, ctx,

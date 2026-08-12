@@ -1,0 +1,20 @@
+#pragma once
+#include "ast.hpp"
+#include "context.hpp"
+#include "diagnostic.hpp"
+#include "value.hpp"
+
+namespace CS {
+
+/// Вычисляет разобранное выражение и кладёт результат в *out.
+///
+/// Дерево обязано быть построено parseExpression успешно: у неудачного разбора
+/// корень равен kNoNode, и вычислять там нечего. Буфер исходника обязан
+/// пережить вычисление — имена и содержимое литералов в дереве это его срезы.
+///
+/// Значения-агрегаты создаются в ctx и живут по его правилам. При отказе
+/// возвращает false и заполняет diag; смещение считается от начала исходника
+/// выражения.
+bool evalExpression(const Ast &ast, Context &ctx, Value *out, Diagnostic &diag);
+
+}  // namespace CS

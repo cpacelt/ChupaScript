@@ -41,7 +41,11 @@ bool applyArithmetic(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
         case TokenKind::Slash: result = a / b; break;
         // Знак делимого: это std::fmod, а не остаток от целого деления.
         case TokenKind::Percent: result = std::fmod(a, b); break;
-        default: assert(false && "не арифметическая операция"); break;
+        // Отказ, а не break: иначе под NDEBUG функция вернула бы успех со
+        // сфабрикованным значением, а неверное значение хуже ошибки.
+        default:
+            assert(false && "не арифметическая операция");
+            return failType(offset, "unsupported arithmetic operator", diag);
     }
 
     *out = Value::number(result);
@@ -68,7 +72,9 @@ bool applyOrdering(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
         case TokenKind::Greater: result = a > b; break;
         case TokenKind::LessEqual: result = a <= b; break;
         case TokenKind::GreaterEqual: result = a >= b; break;
-        default: assert(false && "не операция порядка"); break;
+        default:
+            assert(false && "не операция порядка");
+            return failType(offset, "unsupported ordering operator", diag);
     }
 
     *out = Value::boolean(result);

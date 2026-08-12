@@ -33,6 +33,10 @@ Diagnostic binaryError(TokenKind op, Value lhs, Value rhs, const Context &ctx) {
     Diagnostic diag;
     Value out = Value::null();
     EXPECT_FALSE(CS::applyBinary(op, lhs, rhs, ctx, kOffset, &out, diag));
+    // operator.hpp обещает, что при отказе *out не трогается. Обещание
+    // проверяется здесь, потому что на него опирается вычислитель: ?? и
+    // тернарный передают out вызывающего внутрь.
+    EXPECT_EQ(out.kind(), Value::Kind::Null);
     return diag;
 }
 
@@ -49,6 +53,8 @@ Diagnostic unaryError(TokenKind op, Value operand) {
     Diagnostic diag;
     Value out = Value::null();
     EXPECT_FALSE(CS::applyUnary(op, operand, kOffset, &out, diag));
+    // То же обещание, что и у applyBinary.
+    EXPECT_EQ(out.kind(), Value::Kind::Null);
     return diag;
 }
 
@@ -179,6 +185,10 @@ TEST(OperatorOrdering, RequiresNumbers) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Greater, ctx.makeArray(), ctx.makeArray(), ctx).code,
               CS::ErrorCode::Type);
+    // Смешанная пара: число со строкой. Числа здесь достаточно, чтобы соблазн
+    // «привести второй операнд» выглядел естественным, — приведения нет.
+    EXPECT_EQ(binaryError(TokenKind::Less, number(1.0), ctx.makeString("2"), ctx).code,
+              CS::ErrorCode::Type);
 }
 
 TEST(OperatorOrdering, NaNMakesAllFourFalse) {
@@ -302,6 +312,16 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
     // же объект. Одинаковое содержимое не делает их равными.
     EXPECT_TRUE(binary(TokenKind::Equal, items, alias, ctx).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, items, other, ctx).booleanValue());
+
+    // Объекты идут по той же ветке switch, что и массивы, но проверены до сих
+    // пор были только массивы.
+    const Value box = ctx.makeObject();
+    ctx.objectSet(box, "k", number(1.0));
+    const Value boxAlias = box;
+    const Value otherBox = ctx.makeObject();
+    ctx.objectSet(otherBox, "k", number(1.0));
+    EXPECT_TRUE(binary(TokenKind::Equal, box, boxAlias, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, box, otherBox, ctx).booleanValue());
 }
 
 TEST(OperatorEquality, NotEqualNegatesEqual) {

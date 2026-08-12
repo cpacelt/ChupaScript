@@ -170,4 +170,14 @@ TEST(EvalMember, OffsetPointsAtTheFailingNode) {
     EXPECT_GT(evalError(ctx, "count.a.b").offset, 0u);
 }
 
+TEST(EvalMember, UnknownRootIsAnErrorAtAnyDepth) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // База вычисляется рекурсивно, поэтому опечатка в корне всплывает с любой
+    // глубины пути: usre.a.b спускается к usre и упирается в неизвестный
+    // корень. Частного случая для первого сегмента не нужно.
+    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "usre.a.b").code, CS::ErrorCode::Name);
+}
+
 }  // namespace

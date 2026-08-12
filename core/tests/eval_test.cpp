@@ -290,4 +290,71 @@ TEST(EvalIndex, ChainedAccessWorks) {
     EXPECT_EQ(evaluate(ctx, "state.items[1].id").numberValue(), 2.0);
 }
 
+TEST(EvalAggregates, ArrayLiteralKeepsOrder) {
+    Context ctx;
+    const Value a = evaluate(ctx, "[1, 2, 3]");
+    ASSERT_EQ(ctx.arrayCount(a), 3u);
+    EXPECT_EQ(ctx.arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(ctx.arrayAt(a, 2).numberValue(), 3.0);
+}
+
+TEST(EvalAggregates, ObjectLiteralStoresPairs) {
+    Context ctx;
+    const Value o = evaluate(ctx, "{'a': 1, 'b': 2}");
+    ASSERT_EQ(ctx.objectCount(o), 2u);
+    EXPECT_EQ(ctx.objectGet(o, "a").numberValue(), 1.0);
+    EXPECT_EQ(ctx.objectGet(o, "b").numberValue(), 2.0);
+}
+
+TEST(EvalAggregates, EmptyLiterals) {
+    Context ctx;
+    EXPECT_EQ(ctx.arrayCount(evaluate(ctx, "[]")), 0u);
+    EXPECT_EQ(ctx.objectCount(evaluate(ctx, "{}")), 0u);
+}
+
+TEST(EvalAggregates, ElementsAreArbitraryExpressions) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    put(ctx, "items", "[7]");
+    // Вот чем агрегат в выражении отличается от агрегата в данных: элемент —
+    // выражение, а не литерал.
+    const Value a = evaluate(ctx, "[user.name, items[0], user.missing]");
+    ASSERT_EQ(ctx.arrayCount(a), 3u);
+    EXPECT_EQ(ctx.string(ctx.arrayAt(a, 0)), "Вася");
+    EXPECT_EQ(ctx.arrayAt(a, 1).numberValue(), 7.0);
+    EXPECT_EQ(ctx.arrayAt(a, 2).kind(), Value::Kind::Null);
+}
+
+TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    const Value o = evaluate(ctx, "{'who': user.name}");
+    EXPECT_EQ(ctx.string(ctx.objectGet(o, "who")), "Вася");
+}
+
+TEST(EvalAggregates, ErrorInsideAnElementStopsEvaluation) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "[1, usre, 3]").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
+    Context ctx;
+    Ast ast;
+    Diagnostic diag;
+    const std::string_view text = "[1, 2]";
+    ASSERT_TRUE(CS::parseExpression(
+        text.data(), static_cast<std::uint32_t>(text.size()), ast, diag));
+
+    Value first = Value::null();
+    Value second = Value::null();
+    ASSERT_TRUE(CS::evalExpression(ast, ctx, &first, diag));
+    ASSERT_TRUE(CS::evalExpression(ast, ctx, &second, diag));
+
+    // docs/semantics.md §2.3: литерал создаёт новый агрегат при каждом
+    // вычислении. Без этого теста правило держится на честном слове.
+    EXPECT_FALSE(first.sameAggregate(second));
+    EXPECT_EQ(ctx.arrayCount(first), 2u);
+    EXPECT_EQ(ctx.arrayCount(second), 2u);
+}
+
 }  // namespace

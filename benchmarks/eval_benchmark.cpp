@@ -98,7 +98,11 @@ void BM_Eval_FormatNumber(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_FormatNumber);
 
-/// Арифметика: четыре операции над числами из контекста.
+/// Арифметика поверх глубокого пути. В измеренной стоимости доминирует не
+/// арифметика, а сам путь `user.profile.city.code.zip`: 82.1 нс здесь против
+/// 56.1 нс у `BM_Eval_DeepPath`, который меряет только его, — около 68%
+/// времени строки уходит на поиск по пути. Читать эту строку имеет смысл в
+/// сравнении с `BM_Eval_DeepPath`, а не саму по себе.
 void BM_Eval_Arithmetic(benchmark::State &state) {
     runEval(state, "user.profile.city.code.zip * 2 + 1 - 3");
 }

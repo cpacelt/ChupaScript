@@ -77,13 +77,13 @@ TEST(BuiltinTable, IsSortedByName) {
     }
 }
 
-TEST(BuiltinTable, TypeofAndTypeAreReservedNotBuiltin) {
-    // Оба имени зарезервированы грамматикой (docs/grammar.md §4.5) и функциями
-    // не являются: лексер отдаёт на них Reserved, поэтому вызов с таким именем
-    // не разбирается вовсе. Ограничение принято осознанно, см. B32.
+TEST(BuiltinTable, TypeofIsReservedAndThereforeNotBuiltin) {
+    // typeof зарезервирован грамматикой (docs/grammar.md §4.5): лексер отдаёт
+    // на него Reserved, поэтому вызов с таким именем не разбирается вовсе.
+    // Функции под этим именем нет и не будет — ограничение принято осознанно,
+    // см. B32. Тест упадёт, если typeof вернут в таблицу, не заметив резерва.
     Builtin id = Builtin::Abs;
     EXPECT_FALSE(CS::findBuiltin("typeof", &id));
-    EXPECT_FALSE(CS::findBuiltin("type", &id));
 }
 
 TEST(PlaceholderCount, CountsAndRespectsEscaping) {

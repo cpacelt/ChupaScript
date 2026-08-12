@@ -81,6 +81,8 @@ void BM_Eval_CoercedKey(benchmark::State &state) { runEval(state, "map[1]"); }
 BENCHMARK(BM_Eval_CoercedKey);
 
 /// Построение агрегата: десять элементов, точное выделение.
+/// Контекст создан снаружи цикла и не освобождает элементы поштучно, поэтому
+/// куча растёт от итерации к итерации, а строка шумнее прочих (см. B24).
 void BM_Eval_ArrayLiteral(benchmark::State &state) {
     runEval(state, "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
 }

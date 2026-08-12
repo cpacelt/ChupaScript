@@ -335,12 +335,71 @@ bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
     return true;
 }
 
+/// Присваивание по индексу: base[i] = v.
+bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+                   Diagnostic &diag) {
+    // Порядок: база, индекс, затем правая часть (docs/semantics.md §7.2).
+    Value base = Value::null();
+    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+    Value subscript = Value::null();
+    if (!eval(ast, ast.child(target, 1), ctx, &subscript, diag)) { return false; }
+
+    Value value = Value::null();
+    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+
+    switch (base.kind()) {
+        case Value::Kind::Array: {
+            // Требования к индексу те же, что при чтении (§6.1).
+            if (subscript.kind() != Value::Kind::Number) {
+                return fail(ast, target, ErrorCode::Type,
+                            "array index must be a number", diag);
+            }
+            const double index = subscript.numberValue();
+            if (!std::isfinite(index) || index < 0.0 ||
+                index != std::floor(index)) {
+                return fail(ast, target, ErrorCode::Range,
+                            "array index must be a non-negative integer", diag);
+            }
+            // Запись за границу — ошибка: расширяет только push (§6.1).
+            // Сравнение в double, потому что индекс может превышать uint32.
+            if (index >= static_cast<double>(ctx.arrayCount(base))) {
+                return fail(ast, target, ErrorCode::Range,
+                            "array index is out of bounds", diag);
+            }
+            // Границу проверили выше, поэтому запись не отказывает.
+            static_cast<void>(
+                ctx.arraySet(base, static_cast<std::uint32_t>(index), value));
+            return true;
+        }
+
+        case Value::Kind::Object: {
+            char buffer[kNumberBufferSize];
+            std::string_view key;
+            if (!coerceToString(ast, target, ctx, subscript, buffer, &key,
+                                diag)) {
+                return false;
+            }
+            ctx.objectSet(base, key, value);
+            return true;
+        }
+
+        default:
+            // Запись в null — ошибка, как и по имени поля.
+            return fail(ast, target, ErrorCode::Type,
+                        "only arrays and objects can be assigned by index",
+                        diag);
+    }
+}
+
 /// Присваивание: разбирает форму цели и передаёт дальше.
 bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
     const NodeId target = ast.child(node, 0);
     switch (ast.kind(target)) {
         case NodeKind::Member:
             return assignToKey(ast, node, target, ctx, diag);
+
+        case NodeKind::Index:
+            return assignToIndex(ast, node, target, ctx, diag);
 
         case NodeKind::Identifier:
             // Имя — входной слот от хоста, а не переменная скрипта. Состав
@@ -351,7 +410,8 @@ bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
 
         default:
             // Грамматика строит целью только Identifier, Member и Index
-            // (docs/grammar.md §5.2); Index приходит следующей задачей.
+            // (docs/grammar.md §5.2); все три разобраны выше — ветка
+            // защитная.
             return fail(ast, target, ErrorCode::Type,
                         "invalid assignment target", diag);
     }

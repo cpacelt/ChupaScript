@@ -711,4 +711,96 @@ TEST(EvalScript, CallStatementIsNotSupportedYet) {
     EXPECT_STREQ(diag.message, "statement form is not supported");
 }
 
+TEST(EvalAssignIndex, ArrayElementIsReplaced) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    run(ctx, "items[1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "items[1]").numberValue(), 99.0);
+    EXPECT_EQ(evaluate(ctx, "items[0]").numberValue(), 10.0);
+}
+
+TEST(EvalAssignIndex, WritingBeyondTheEndIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[10]");
+    // docs/semantics.md §6.1: чтение за границей штатно, запись за границу —
+    // намерение создать элемент, для чего существует push. Обе половины
+    // обязательны.
+    EXPECT_EQ(evaluate(ctx, "items[1]").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "items[1] = 1;").code, CS::ErrorCode::Range);
+    EXPECT_EQ(runError(ctx, "items[1000000] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalAssignIndex, FractionalAndNegativeIndicesAreErrors) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    put(ctx, "minusOne", "-1");
+    EXPECT_EQ(runError(ctx, "items[0.5] = 1;").code, CS::ErrorCode::Range);
+    EXPECT_EQ(runError(ctx, "items[minusOne] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalAssignIndex, NonNumberArrayIndexIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    EXPECT_EQ(runError(ctx, "items['0'] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, ObjectKeyIsWritten) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1}");
+    run(ctx, "o['a'] = 2;");
+    run(ctx, "o['fresh'] = 3;");
+    EXPECT_EQ(evaluate(ctx, "o.a").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "o.fresh").numberValue(), 3.0);
+}
+
+TEST(EvalAssignIndex, ScalarKeysAreCoercedToString) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    // docs/semantics.md §4.1: ключ объекта — одна из трёх позиций, требующих
+    // String; правила приведения те же, что при чтении.
+    run(ctx, "o[0] = 'ноль';");
+    run(ctx, "o[true] = 'да';");
+    run(ctx, "o[null] = 'ничего';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['0']")), "ноль");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['true']")), "да");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['null']")), "ничего");
+}
+
+TEST(EvalAssignIndex, AggregateKeyIsAnError) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(runError(ctx, "o[items] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, WritingIntoNullIsAnError) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    EXPECT_EQ(evaluate(ctx, "user.missing[0]").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "user.missing[0] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, WritingIntoANonAggregateIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "name", "'Вася'");
+    EXPECT_EQ(runError(ctx, "count[0] = 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "name[0] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, ChainedTargetWorks) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'cells': [1, 2]}]}");
+    run(ctx, "state.rows[0].cells[1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].cells[1]").numberValue(), 99.0);
+}
+
+TEST(EvalAssignIndex, SubscriptMayBeAnExpression) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    put(ctx, "i", "1");
+    run(ctx, "items[i + 1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "items[2]").numberValue(), 99.0);
+}
+
 }  // namespace

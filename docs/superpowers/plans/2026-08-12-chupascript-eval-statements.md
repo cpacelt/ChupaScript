@@ -624,7 +624,7 @@ TEST(EvalCompound, DivisionByZeroFollowsIEEE) {
     EXPECT_TRUE(std::isinf(evaluate(ctx, "s.n").numberValue()));
 }
 
-TEST(EvalCompound, TargetSubexpressionsAreEvaluatedOnce) {
+TEST(EvalCompound, DeepTargetWorks) {
     Context ctx;
     put(ctx, "state", "{'rows': [{'n': 1}]}");
     put(ctx, "i", "0");

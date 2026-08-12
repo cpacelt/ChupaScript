@@ -120,6 +120,16 @@ TEST(Check, FormatWithANonLiteralTemplateIsNotCheckedHere) {
     EXPECT_TRUE(checkExpr(ctx, "format(user.tpl, 1, 2, 3)").empty());
 }
 
+TEST(Check, FormatWithEscapesInTheTemplateIsStillChecked) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // Escape-последовательности лексера не дают ни $, ни { , ни } , поэтому
+    // границы плейсхолдеров от декодирования не зависят и шаблон проверяется
+    // наравне с прочими.
+    EXPECT_EQ(checkExpr(ctx, "format('строка\\nи ${}')").size(), 1u);
+    EXPECT_TRUE(checkExpr(ctx, "format('строка\\nи ${}', user.name)").empty());
+}
+
 TEST(Check, AssigningToANameIsACompileError) {
     Context ctx;
     put(ctx, "state", "{'n': 0}");
@@ -218,6 +228,24 @@ TEST(Check, ResetClearsTheMark) {
     ASSERT_TRUE(CS::parseExpression(
         other.data(), static_cast<std::uint32_t>(other.size()), ast, buffer[0]));
     EXPECT_FALSE(ast.isChecked());
+}
+
+TEST(Check, CountsWithoutABufferAtAll) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    Ast ast;
+    const std::string_view text = "cnt(items); min(1);";
+    // Ни ёмкости, ни буфера: счёт всё равно ведётся, записи не происходит.
+    EXPECT_GT(CS::compileScript(text.data(),
+                                static_cast<std::uint32_t>(text.size()), ast,
+                                ctx, nullptr, 0),
+              0u);
+    Diagnostic unused;
+    EXPECT_GT(CS::compileScript(text.data(),
+                                static_cast<std::uint32_t>(text.size()), ast,
+                                ctx, &unused, 0),
+              0u);
+    EXPECT_EQ(unused.code, CS::ErrorCode::None);
 }
 
 }  // namespace

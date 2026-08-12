@@ -54,11 +54,16 @@ struct Checker {
         if (id != Builtin::Format) { return; }
 
         // Шаблон-литерал сверяется здесь; иначе проверка уходит в выполнение
-        // (docs/semantics.md §8.9). Литерал с escape-последовательностями
-        // пропускается: в дереве лежит недекодированный текст, и ${} могло бы
-        // прийти из $ — считать по нему неверно.
+        // (docs/semantics.md §8.9). Считаем по сырому, недекодированному
+        // тексту — это верно и для escape-последовательностей: лексер
+        // (core/src/lexer.cpp) декодирует только \\ \' \" \n \t, ни одна не
+        // даёт байт $, { или }, и каждая разворачивается из двух символов
+        // ровно в один — границы ${} декодированием не создаются и не
+        // разрушаются. Если в лексер добавят escape, дающий $, { или } —
+        // сюда придётся вернуться: подсчёт по сырому тексту перестанет
+        // совпадать с подсчётом по декодированному.
         const NodeId tmpl = ast.child(node, 0);
-        if (ast.kind(tmpl) != NodeKind::String || ast.hasEscape(tmpl)) { return; }
+        if (ast.kind(tmpl) != NodeKind::String) { return; }
         if (countPlaceholders(ast.text(tmpl)) != count - 1) {
             report(node, ErrorCode::Name,
                    "format placeholder count does not match arguments");

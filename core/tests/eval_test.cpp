@@ -889,8 +889,11 @@ TEST(EvalCompound, DeepTargetWorks) {
 TEST(EvalScriptBehaviour, StatementsApplyInOrder) {
     Context ctx;
     put(ctx, "s", "{'n': 0}");
-    run(ctx, "s.n = 1; s.n = 2; s.n = 3;");
-    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 3.0);
+    // Каждый стейтмент читает результат предыдущего, поэтому 13 получается
+    // только если применились все три и именно в этом порядке: пропуск первого
+    // даёт 3, второго — 4, третьего — 10, перестановка — иное число.
+    run(ctx, "s.n = s.n + 1; s.n = s.n * 10; s.n = s.n + 3;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 13.0);
 }
 
 TEST(EvalScriptBehaviour, LaterStatementsSeeEarlierWrites) {

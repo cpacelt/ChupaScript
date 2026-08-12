@@ -540,4 +540,48 @@ TEST(ContextRoots, EnumerationYieldsEveryName) {
     EXPECT_EQ(seen, "state user ");
 }
 
+TEST(ContextStringBuilder, AssemblesFromParts) {
+    Context ctx;
+    const std::uint32_t mark = ctx.beginString();
+    ctx.appendToString("Привет");
+    ctx.appendToString(", ");
+    ctx.appendToString("мир");
+    const Value built = ctx.endString(mark);
+    EXPECT_EQ(ctx.string(built), "Привет, мир");
+}
+
+TEST(ContextStringBuilder, EmptyBuildGivesEmptyString) {
+    Context ctx;
+    const std::uint32_t mark = ctx.beginString();
+    const Value built = ctx.endString(mark);
+    EXPECT_EQ(ctx.string(built), "");
+}
+
+TEST(ContextStringBuilder, AbortLeavesNothingBehind) {
+    Context ctx;
+    const Value before = ctx.makeString("уже в пуле");
+    const std::uint32_t used = ctx.bytesUsed();
+
+    const std::uint32_t mark = ctx.beginString();
+    ctx.appendToString("это будет выброшено");
+    ctx.abortString(mark);
+
+    // Пул усечён к метке, а прежняя строка цела.
+    EXPECT_EQ(ctx.bytesUsed(), used);
+    EXPECT_EQ(ctx.string(before), "уже в пуле");
+}
+
+TEST(ContextStringBuilder, SurvivesPoolGrowth) {
+    Context ctx;
+    // Кусков заведомо больше, чем влезет без переезда пула: сборка обязана
+    // держаться на смещениях, а не на указателях.
+    const std::uint32_t mark = ctx.beginString();
+    std::string expected;
+    for (int i = 0; i < 500; ++i) {
+        ctx.appendToString("кусок");
+        expected += "кусок";
+    }
+    EXPECT_EQ(ctx.string(ctx.endString(mark)), expected);
+}
+
 }  // namespace

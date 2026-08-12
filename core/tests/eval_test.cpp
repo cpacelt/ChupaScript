@@ -1099,10 +1099,10 @@ TEST(EvalCall, ArgumentsAreEvaluatedLeftToRight) {
 
 TEST(EvalCall, VariadicFormatDoesNotOverflowTheArgumentBuffer) {
     Context ctx;
-    // format проходит проверки с любым числом аргументов, а буфер ветки Call
-    // рассчитан на два: аргументы обязаны не попадать в него вовсе.
-    EXPECT_EQ(evalError(ctx, "format('${}${}${}${}${}', 1, 2, 3, 4, 5)").code,
-              CS::ErrorCode::Type);
+    // Буфер аргументов в ветке Call рассчитан на два: format обязан идти мимо
+    // него. Пять аргументов затёрли бы стек, попади они туда.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}${}${}${}${}', 1, 2, 3, 4, 5)")),
+              "12345");
 }
 
 TEST(EvalCall, PushAppends) {
@@ -1238,6 +1238,85 @@ TEST(EvalCall, ArithmeticBuiltinsFollowIEEEOnSpecialValues) {
     EXPECT_TRUE(std::isinf(evaluate(ctx, "abs(inf)").numberValue()));
     EXPECT_TRUE(std::isinf(evaluate(ctx, "max(1, inf)").numberValue()));
     EXPECT_EQ(evaluate(ctx, "min(1, inf)").numberValue(), 1.0);
+}
+
+TEST(EvalFormat, SubstitutesLeftToRight) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    put(ctx, "cart", "{'taken': 2, 'total': 5}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('Привет, ${}!', user.name)")),
+              "Привет, Вася!");
+    EXPECT_EQ(ctx.string(evaluate(ctx,
+                                  "format('${} из ${}', cart.taken, cart.total)")),
+              "2 из 5");
+}
+
+TEST(EvalFormat, EscapedPlaceholderIsLiteral) {
+    Context ctx;
+    // docs/semantics.md §8.9: $${} даёт литеральное ${} и аргумента не требует.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('цена $${}')")), "цена ${}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('$${} и ${}', 1)")), "${} и 1");
+}
+
+TEST(EvalFormat, NoPlaceholdersGivesTheTemplate) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('без подстановок')")),
+              "без подстановок");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('')")), "");
+}
+
+TEST(EvalFormat, ArgumentsAreCoercedByChapterFour) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', 0.5)")), "0.5");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', true)")), "true");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', null)")), "null");
+}
+
+TEST(EvalFormat, AggregateArgumentIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(evalError(ctx, "format('${}', items)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalFormat, NonStringTemplateIsAnError) {
+    Context ctx;
+    put(ctx, "n", "1");
+    EXPECT_EQ(evalError(ctx, "format(n, 1)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalFormat, MismatchWithANonLiteralTemplateIsARuntimeError) {
+    Context ctx;
+    put(ctx, "tpl", "{'two': '${} и ${}', 'none': 'нет'}");
+    // Шаблон не литерал, значит проход сверить не мог — ловится здесь (§8.9).
+    EXPECT_EQ(evalError(ctx, "format(tpl.two, 1)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "format(tpl.none, 1)").code, CS::ErrorCode::Type);
+    // А совпадающее число проходит.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format(tpl.two, 1, 2)")), "1 и 2");
+}
+
+TEST(EvalFormat, ResultIsAnOrdinaryString) {
+    Context ctx;
+    put(ctx, "state", "{'label': ''}");
+    run(ctx, "state.label = format('${} шт.', 3);");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "state.label")), "3 шт.");
+    // count у строки считает байты, а не символы (§8.1): пять символов
+    // «3 шт.» дают семь байт, потому что ш и т по два.
+    EXPECT_EQ(evaluate(ctx, "count(state.label)").numberValue(), 7.0);
+}
+
+TEST(EvalFormat, LongResultCrossesPoolGrowth) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // Результат заведомо длиннее начальной ёмкости пула: сборка обязана
+    // пережить его переезд.
+    const Value built = evaluate(
+        ctx,
+        "format('${}${}${}${}${}${}${}${}${}${}', user.name, user.name,"
+        " user.name, user.name, user.name, user.name, user.name, user.name,"
+        " user.name, user.name)");
+    std::string expected;
+    for (int i = 0; i < 10; ++i) { expected += "Вася"; }
+    EXPECT_EQ(ctx.string(built), expected);
 }
 
 }  // namespace

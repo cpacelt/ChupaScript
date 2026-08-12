@@ -90,6 +90,84 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
                                 ast.offset(node), diag);
 }
 
+/// Собирает строку по шаблону (docs/semantics.md §8.9).
+///
+/// Живёт здесь, а не в builtin.cpp, потому что format вариадичен: буфер под
+/// заранее вычисленные аргументы потребовал бы верхней границы их числа,
+/// которой §8.9 не устанавливает. Шаблон потребляет аргументы строго слева
+/// направо, по одному на плейсхолдер, поэтому лениво выходит и проще, и без
+/// придуманного предела.
+bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
+                Diagnostic &diag) {
+    const std::uint32_t argCount = ast.childCount(node);
+
+    Value tmpl = Value::null();
+    if (!eval(ast, ast.child(node, 0), ctx, &tmpl, diag)) { return false; }
+    if (tmpl.kind() != Value::Kind::String) {
+        return fail(ast, node, ErrorCode::Type,
+                    "format expects a string template", diag);
+    }
+
+    const std::uint32_t mark = ctx.beginString();
+    std::uint32_t next = 1;      // следующий аргумент
+    std::size_t i = 0;           // позиция в шаблоне
+    std::size_t runStart = 0;    // начало неподставляемого куска
+
+    // Срез шаблона берётся заново после каждого дописывания: пул вправе
+    // переехать, и прежний срез повис бы. Смещение и длина при этом остаются
+    // верными, потому что содержимое пула переезд сохраняет.
+    while (i < ctx.string(tmpl).size()) {
+        const std::string_view text = ctx.string(tmpl);
+        const bool escaped = text.compare(i, 4, "$${}") == 0;
+        const bool placeholder = !escaped && text.compare(i, 3, "${}") == 0;
+        if (!escaped && !placeholder) {
+            ++i;
+            continue;
+        }
+
+        ctx.appendToString(text.substr(runStart, i - runStart));
+        if (escaped) {
+            ctx.appendToString("${}");
+            i += 4;
+            runStart = i;
+            continue;
+        }
+
+        if (next >= argCount) {
+            ctx.abortString(mark);
+            return fail(ast, node, ErrorCode::Type,
+                        "format placeholder count does not match arguments",
+                        diag);
+        }
+        Value argument = Value::null();
+        if (!eval(ast, ast.child(node, next), ctx, &argument, diag)) {
+            ctx.abortString(mark);
+            return false;
+        }
+        ++next;
+
+        char buffer[kNumberBufferSize];
+        std::string_view piece;
+        if (!coerceToString(ast, node, ctx, argument, buffer, &piece, diag)) {
+            ctx.abortString(mark);
+            return false;
+        }
+        ctx.appendToString(piece);
+        i += 3;
+        runStart = i;
+    }
+
+    ctx.appendToString(ctx.string(tmpl).substr(runStart));
+
+    if (next != argCount) {
+        ctx.abortString(mark);
+        return fail(ast, node, ErrorCode::Type,
+                    "format placeholder count does not match arguments", diag);
+    }
+    *out = ctx.endString(mark);
+    return true;
+}
+
 /// Проверяет индекс массива по правилам §6.1: Number, конечный, целый, не
 /// отрицательный. Решение про границу остаётся вызывающему — оно у чтения и
 /// записи разное: чтение за границей штатно даёт null, запись — ошибка Range.
@@ -331,10 +409,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // релизной сборке он исчезает, а переполнение буфера остаётся:
             // check пропускает format с любым числом аргументов, и
             // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
-            if (id == Builtin::Format) {
-                return fail(ast, node, ErrorCode::Type,
-                            "builtin is not implemented yet", diag);
-            }
+            if (id == Builtin::Format) { return evalFormat(ast, node, ctx, out, diag); }
 
             // Арность гарантирована проходом, поэтому буфер по самой широкой
             // невариадической функции — двум аргументам.

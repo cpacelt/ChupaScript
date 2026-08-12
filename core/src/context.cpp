@@ -75,6 +75,25 @@ std::string_view Context::string(Value v) const noexcept {
     return textAt(v.index(), v.length());
 }
 
+std::uint32_t Context::beginString() noexcept {
+    return static_cast<std::uint32_t>(text_.size());
+}
+
+void Context::appendToString(std::string_view bytes) {
+    // appendText уже умеет копировать срез собственного пула: аргумент format
+    // вполне может им быть.
+    appendText(bytes);
+}
+
+Value Context::endString(std::uint32_t mark) noexcept {
+    const std::uint32_t size = static_cast<std::uint32_t>(text_.size()) - mark;
+    return Value::string(mark, size);
+}
+
+void Context::abortString(std::uint32_t mark) noexcept {
+    text_.resize(mark);
+}
+
 // Парная функция — growObject: правку в одной надо повторять в другой.
 void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }

@@ -155,4 +155,72 @@ TEST(OperatorDiagnostics, OffsetIsCarriedThrough) {
     EXPECT_EQ(unaryError(TokenKind::Bang, number(1.0)).offset, kOffset);
 }
 
+TEST(OperatorOrdering, FourOperatorsWork) {
+    Context ctx;
+    EXPECT_TRUE(binary(TokenKind::Less, number(1.0), number(2.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Less, number(2.0), number(1.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::Greater, number(2.0), number(1.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::LessEqual, number(1.0), number(1.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::GreaterEqual, number(1.0), number(1.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Less, number(1.0), number(1.0), ctx).booleanValue());
+}
+
+TEST(OperatorOrdering, RequiresNumbers) {
+    Context ctx;
+    // docs/semantics.md §5.3: строки, логические значения и агрегаты
+    // сравнивать нельзя. Побайтовый порядок строк не соответствует
+    // алфавитному, а порядок, зависящий от языка, — это коллация, которой
+    // в рантайме нет.
+    EXPECT_EQ(binaryError(TokenKind::Less, ctx.makeString("a"), ctx.makeString("b"), ctx).code,
+              CS::ErrorCode::Type);
+    EXPECT_EQ(binaryError(TokenKind::Less, Value::boolean(false), Value::boolean(true), ctx).code,
+              CS::ErrorCode::Type);
+    EXPECT_EQ(binaryError(TokenKind::Less, Value::null(), number(1.0), ctx).code,
+              CS::ErrorCode::Type);
+    EXPECT_EQ(binaryError(TokenKind::Greater, ctx.makeArray(), ctx.makeArray(), ctx).code,
+              CS::ErrorCode::Type);
+}
+
+TEST(OperatorOrdering, NaNMakesAllFourFalse) {
+    Context ctx;
+    const Value nan = number(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(binary(TokenKind::Less, nan, number(1.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Greater, nan, number(1.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::LessEqual, nan, number(1.0), ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::GreaterEqual, nan, number(1.0), ctx).booleanValue());
+}
+
+TEST(OperatorOrdering, NoOperatorIsDerivedByNegatingAnother) {
+    Context ctx;
+    const Value nan = number(std::numeric_limits<double>::quiet_NaN());
+    // Это и есть проверка запрета из docs/semantics.md §5.3: !(1 < NaN)
+    // истинно, тогда как 1 >= NaN ложно. Если бы >= был написан как
+    // отрицание <, здесь получилось бы true.
+    EXPECT_FALSE(binary(TokenKind::Less, number(1.0), nan, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::GreaterEqual, number(1.0), nan, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Greater, number(1.0), nan, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::LessEqual, number(1.0), nan, ctx).booleanValue());
+}
+
+TEST(OperatorOrdering, NaNComparedWithItselfIsAlsoFalse) {
+    Context ctx;
+    const Value nan = number(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_FALSE(binary(TokenKind::LessEqual, nan, nan, ctx).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::GreaterEqual, nan, nan, ctx).booleanValue());
+}
+
+TEST(OperatorOrdering, NegativeZeroComparesEqualToZero) {
+    Context ctx;
+    // Знак нуля различает ключи объекта, но не порядок: -0 и 0 равны по IEEE.
+    EXPECT_FALSE(binary(TokenKind::Less, number(-0.0), number(0.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::LessEqual, number(-0.0), number(0.0), ctx).booleanValue());
+}
+
+TEST(OperatorOrdering, InfinitiesOrderAsExpected) {
+    Context ctx;
+    const double inf = std::numeric_limits<double>::infinity();
+    EXPECT_TRUE(binary(TokenKind::Less, number(-inf), number(1.0), ctx).booleanValue());
+    EXPECT_TRUE(binary(TokenKind::Less, number(1.0), number(inf), ctx).booleanValue());
+}
+
 }  // namespace

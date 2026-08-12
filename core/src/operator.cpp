@@ -48,6 +48,33 @@ bool applyArithmetic(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
     return true;
 }
 
+/// Сравнение порядка (docs/semantics.md §5.3).
+///
+/// Только Number, оба операнда. Если хотя бы один NaN, все четыре оператора
+/// дают false — поэтому **ни один из них не выводится отрицанием соседа**:
+/// !(1 < NaN) истинно, тогда как 1 >= NaN ложно. Встроенные сравнения C++
+/// ведут себя с NaN ровно так, как требует §5.3, и используются напрямую.
+bool applyOrdering(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
+                   Value *out, Diagnostic &diag) {
+    if (!bothNumbers(lhs, rhs)) {
+        return failType(offset, "ordering requires numbers", diag);
+    }
+
+    const double a = lhs.numberValue();
+    const double b = rhs.numberValue();
+    bool result = false;
+    switch (op) {
+        case TokenKind::Less: result = a < b; break;
+        case TokenKind::Greater: result = a > b; break;
+        case TokenKind::LessEqual: result = a <= b; break;
+        case TokenKind::GreaterEqual: result = a >= b; break;
+        default: assert(false && "не операция порядка"); break;
+    }
+
+    *out = Value::boolean(result);
+    return true;
+}
+
 }  // namespace
 
 bool applyUnary(TokenKind op, Value operand, std::uint32_t offset, Value *out,
@@ -85,6 +112,12 @@ bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
         case TokenKind::Slash:
         case TokenKind::Percent:
             return applyArithmetic(op, lhs, rhs, offset, out, diag);
+
+        case TokenKind::Less:
+        case TokenKind::Greater:
+        case TokenKind::LessEqual:
+        case TokenKind::GreaterEqual:
+            return applyOrdering(op, lhs, rhs, offset, out, diag);
 
         default:
             assert(false && "applyBinary принимает только операции без короткого замыкания");

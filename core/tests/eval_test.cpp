@@ -1194,6 +1194,18 @@ TEST(EvalCall, MinAndMaxRejectNonNumbers) {
     EXPECT_EQ(evalError(ctx, "min(null, 1)").code, CS::ErrorCode::Type);
 }
 
+TEST(EvalCall, MinAndMaxPropagateNaN) {
+    Context ctx;
+    // 0 / 0 даёт NaN как значение (§5.2). Обе позиции обязательны: fmin и fmax
+    // вернули бы число в каждой из них.
+    EXPECT_TRUE(std::isnan(evaluate(ctx, "min(0 / 0, 5)").numberValue()));
+    EXPECT_TRUE(std::isnan(evaluate(ctx, "min(5, 0 / 0)").numberValue()));
+    EXPECT_TRUE(std::isnan(evaluate(ctx, "max(0 / 0, 5)").numberValue()));
+    EXPECT_TRUE(std::isnan(evaluate(ctx, "max(5, 0 / 0)").numberValue()));
+    // А бесконечность по-прежнему проходит насквозь, не превращаясь в NaN.
+    EXPECT_EQ(evaluate(ctx, "min(1, 1 / 0)").numberValue(), 1.0);
+}
+
 TEST(EvalCall, AbsIsTheModulus) {
     Context ctx;
     EXPECT_EQ(evaluate(ctx, "abs(3)").numberValue(), 3.0);

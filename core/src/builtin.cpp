@@ -88,6 +88,19 @@ bool numbersOnly(const Value *args, std::uint32_t count, const char *what,
     return true;
 }
 
+/// Выбор из двух чисел с распространением NaN.
+///
+/// std::fmin и std::fmax по стандарту NaN игнорируют и возвращают второй
+/// операнд. В этом языке так не годится: арифметика NaN распространяет (§5.2),
+/// сравнения его не прячут (§5.3), и min с max — единственные, кто мог бы
+/// сделать иначе. Тихо исчезающее NaN означало бы, что испорченное число из
+/// данных доедет до экрана обычным.
+double chooseOrNaN(double a, double b, bool takeSmaller) noexcept {
+    if (std::isnan(a)) { return a; }
+    if (std::isnan(b)) { return b; }
+    return takeSmaller ? std::fmin(a, b) : std::fmax(a, b);
+}
+
 }  // namespace
 
 bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
@@ -211,16 +224,16 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             if (!numbersOnly(args, 2, "min expects numbers", offset, diag)) {
                 return false;
             }
-            *out = Value::number(
-                std::fmin(args[0].numberValue(), args[1].numberValue()));
+            *out = Value::number(chooseOrNaN(args[0].numberValue(),
+                                              args[1].numberValue(), true));
             return true;
 
         case Builtin::Max:
             if (!numbersOnly(args, 2, "max expects numbers", offset, diag)) {
                 return false;
             }
-            *out = Value::number(
-                std::fmax(args[0].numberValue(), args[1].numberValue()));
+            *out = Value::number(chooseOrNaN(args[0].numberValue(),
+                                              args[1].numberValue(), false));
             return true;
 
         case Builtin::Abs:

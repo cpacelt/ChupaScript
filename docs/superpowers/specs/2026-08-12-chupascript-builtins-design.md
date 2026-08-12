@@ -31,8 +31,10 @@
 
 ```cpp
 // core/src/builtin.hpp
+/// Порядок совпадает с алфавитным порядком имён: таблица ищется двоично, и
+/// номер в enum служит индексом в неё.
 enum class Builtin : std::uint8_t {
-    Count, Keys, Has, Last, Push, Pop, Str, Typeof, Format, Min, Max, Abs, Round
+    Abs, Count, Format, Has, Keys, Last, Max, Min, Pop, Push, Round, Str, Typeof
 };
 
 /// Переменное число аргументов: только у format (§8.9).

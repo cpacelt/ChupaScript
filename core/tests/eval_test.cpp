@@ -273,6 +273,15 @@ TEST(EvalIndex, SubscriptIsEvaluatedEvenWhenTheBaseIsNull) {
     EXPECT_EQ(evalError(ctx, "user.missing[usre]").code, CS::ErrorCode::Name);
 }
 
+TEST(EvalIndex, BaseIsEvaluatedBeforeTheSubscript) {
+    Context ctx;
+    // docs/semantics.md §3.3 фиксирует порядок именно ради определённости
+    // диагностики, когда ошибочны оба операнда.
+    const Diagnostic diag = evalError(ctx, "usre[alsoBad]");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(diag.offset, 0u);
+}
+
 TEST(EvalIndex, IndexingANonAggregateIsAnError) {
     Context ctx;
     put(ctx, "count", "3");
@@ -332,9 +341,40 @@ TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
     EXPECT_EQ(ctx.string(ctx.objectGet(o, "who")), "Вася");
 }
 
-TEST(EvalAggregates, ErrorInsideAnElementStopsEvaluation) {
+TEST(EvalAggregates, ErrorInsideAnElementStopsAtTheFirstFailure) {
     Context ctx;
-    EXPECT_EQ(evalError(ctx, "[1, usre, 3]").code, CS::ErrorCode::Name);
+    // Два сбойных элемента: диагностика обязана указать на первый, иначе
+    // «первая ошибка выигрывает» держится на честном слове. В частях 2 и 3 это
+    // правило станет несущим для && и ??.
+    const Diagnostic diag = evalError(ctx, "[usre, alsoBad]");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_LT(diag.offset, 6u);
+}
+
+TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // Вычислитель спускается по дереву рекурсивно и тратит кадр на звено.
+    // Собственного предела у него нет — его даёт парсер, но только потому, что
+    // звено цепочки стоит той же единицы, что и вложенность. До этой правки
+    // цепочка длины не имела, разбиралась целиком и роняла процесс.
+    //
+    // 93 — измеренный максимум для цепочки '.' в выражении
+    // (docs/grammar.md Приложение C.1). Чтение идёт через null по §6.3, то есть
+    // все звенья действительно проходятся.
+    std::string source = "user";
+    for (int i = 0; i < 93; ++i) {
+        source += ".b";
+    }
+    EXPECT_EQ(evaluate(ctx, source).kind(), Value::Kind::Null);
+
+    // На единицу длиннее до вычислителя уже не доходит: отказ на разборе.
+    Ast ast;
+    Diagnostic diag;
+    const std::string tooLong = source + ".b";
+    EXPECT_FALSE(CS::parseExpression(
+        tooLong.data(), static_cast<std::uint32_t>(tooLong.size()), ast, diag));
+    EXPECT_STREQ(diag.message, "expression nesting too deep");
 }
 
 TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {

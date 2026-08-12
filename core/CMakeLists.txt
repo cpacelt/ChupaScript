@@ -4,6 +4,7 @@ add_library(chupascript STATIC
     src/data.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/text.cpp
     src/version.cpp
 )
 

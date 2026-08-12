@@ -5,6 +5,7 @@ add_executable(chupascript_tests
     lexer_test.cpp
     parser_test.cpp
     smoke_test.cpp
+    text_test.cpp
     value_test.cpp
 )
 

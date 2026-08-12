@@ -1,0 +1,44 @@
+#pragma once
+#include <cstddef>
+#include <string>
+#include <string_view>
+
+#include "ast.hpp"
+
+namespace CS {
+
+/// Раскодирует экранирование строкового литерала в scratch.
+///
+/// Набор — из docs/grammar.md Приложение A: \\ \' \" \n \t. Неизвестной
+/// последовательности здесь быть не может: её отверг лексер.
+///
+/// Возвращает срез scratch. Буфер очищается при каждом вызове и потому
+/// пригоден для повторного использования.
+std::string_view decodeEscapes(std::string_view raw, std::string &scratch);
+
+/// Содержимое строкового литерала: срез исходника, если экранирования нет,
+/// иначе раскодированное в scratch.
+///
+/// Флаг hasEscape избавляет от временного буфера в подавляющем большинстве
+/// случаев: экранирование редкость.
+///
+/// Предусловие: ast.kind(node) == NodeKind::String.
+std::string_view literalText(const Ast &ast, NodeId node, std::string &scratch);
+
+/// Достаточный размер буфера под formatNumber.
+///
+/// Худшая фиксированная запись внутри порога занимает около тридцати символов,
+/// худшая научная — двадцать четыре; запас взят, чтобы вопрос не возвращался.
+inline constexpr std::size_t kNumberBufferSize = 48;
+
+/// Представление числа по docs/semantics.md §4.3: кратчайшая десятичная запись,
+/// читающаяся обратно в то же значение double.
+///
+/// Порядок правил: nan и бесконечности; ноль со своим знаком; фиксированная
+/// запись при 1e-7 <= |x| < 1e21; научная вне порога.
+///
+/// Предусловие: size >= kNumberBufferSize. Возвращает срез buffer либо
+/// статическую строку для особых значений.
+std::string_view formatNumber(double value, char *buffer, std::size_t size);
+
+}  // namespace CS

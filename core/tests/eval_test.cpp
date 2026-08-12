@@ -1319,4 +1319,23 @@ TEST(EvalFormat, LongResultCrossesPoolGrowth) {
     EXPECT_EQ(ctx.string(built), expected);
 }
 
+TEST(EvalFormat, ArgumentThatWritesToThePoolDoesNotLeakIntoTheResult) {
+    Context ctx;
+    // Строковый литерал в аргументе сам кладёт строку в пул — между началом
+    // и концом сборки. В результат это попадать не должно.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('Привет, ${}!', 'мир')")),
+              "Привет, мир!");
+    // Вложенная сборка не поглощается внешней.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', format('${}', 1))")), "1");
+    // str и keys тоже пишут в пул.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "format('${}', str(2))")), "2");
+}
+
+TEST(EvalFormat, ResultSurvivesIntoTheData) {
+    Context ctx;
+    put(ctx, "state", "{'label': ''}");
+    run(ctx, "state.label = format('${} шт.', 'десять');");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "state.label")), "десять шт.");
+}
+
 }  // namespace

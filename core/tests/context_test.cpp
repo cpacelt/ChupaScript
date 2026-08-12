@@ -559,16 +559,22 @@ TEST(ContextStringBuilder, EmptyBuildGivesEmptyString) {
 
 TEST(ContextStringBuilder, AbortLeavesNothingBehind) {
     Context ctx;
+    // Сборка идёт в собственном буфере, отдельном от пула текста (§ context.hpp
+    // «сборка строки по частям»), поэтому bytesUsed() её не видит вовсе — до
+    // endString пул текста не трогается. Наблюдаем через то, что действительно
+    // меняется: прежняя строка цела, а следующая сборка не видит отменённого
+    // хвоста.
     const Value before = ctx.makeString("уже в пуле");
-    const std::uint32_t used = ctx.bytesUsed();
 
     const std::uint32_t mark = ctx.beginString();
     ctx.appendToString("это будет выброшено");
     ctx.abortString(mark);
 
-    // Пул усечён к метке, а прежняя строка цела.
-    EXPECT_EQ(ctx.bytesUsed(), used);
     EXPECT_EQ(ctx.string(before), "уже в пуле");
+
+    const std::uint32_t nextMark = ctx.beginString();
+    ctx.appendToString("новая сборка");
+    EXPECT_EQ(ctx.string(ctx.endString(nextMark)), "новая сборка");
 }
 
 TEST(ContextStringBuilder, SurvivesPoolGrowth) {

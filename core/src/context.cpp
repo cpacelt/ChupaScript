@@ -76,22 +76,24 @@ std::string_view Context::string(Value v) const noexcept {
 }
 
 std::uint32_t Context::beginString() noexcept {
-    return static_cast<std::uint32_t>(text_.size());
+    return static_cast<std::uint32_t>(build_.size());
 }
 
 void Context::appendToString(std::string_view bytes) {
-    // appendText уже умеет копировать срез собственного пула: аргумент format
-    // вполне может им быть.
-    appendText(bytes);
+    build_.append(bytes);
 }
 
 Value Context::endString(std::uint32_t mark) noexcept {
-    const std::uint32_t size = static_cast<std::uint32_t>(text_.size()) - mark;
-    return Value::string(mark, size);
+    // makeString копирует из build_ в text_; алиас-проверка в appendText
+    // сравнивает источник с диапазоном text_, а build_ — другое хранилище,
+    // поэтому спутать их не может.
+    const Value result = makeString(std::string_view(build_).substr(mark));
+    build_.resize(mark);
+    return result;
 }
 
 void Context::abortString(std::uint32_t mark) noexcept {
-    text_.resize(mark);
+    build_.resize(mark);
 }
 
 // Парная функция — growObject: правку в одной надо повторять в другой.

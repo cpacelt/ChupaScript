@@ -97,6 +97,22 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
 /// которой §8.9 не устанавливает. Шаблон потребляет аргументы строго слева
 /// направо, по одному на плейсхолдер, поэтому лениво выходит и проще, и без
 /// придуманного предела.
+///
+/// Разбор шаблона — через nextFormatPiece (builtin.hpp): это та же функция,
+/// которой статический проход (check.cpp) считает плейсхолдеры у литерального
+/// шаблона, так что правило «$${} — литерал, ${} — плейсхолдер» записано один
+/// раз и держит обоих потребителей синхронными не по договорённости, а по
+/// устройству.
+///
+/// ctx.string(tmpl) берётся заново на каждый вызов nextFormatPiece, а не
+/// один раз до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе
+/// само писать в пул текста — строковый литерал зовёт makeString, вложенный
+/// format завершает свою сборку в тот же пул, — и это может переселить text_
+/// в новую память. Смещение, на которое указывает tmpl, при переезде
+/// остаётся верным (Context::string пересчитывает срез из смещения и длины),
+/// а вот кэшированный указатель — уже нет. Свежий вызов ctx.string(tmpl)
+/// перед каждым обращением к шаблону — единственный способ не держать такой
+/// указатель через границу, за которой могла случиться запись.
 bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
                 Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);
@@ -109,30 +125,24 @@ bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
     }
 
     const std::uint32_t mark = ctx.beginString();
-    std::uint32_t next = 1;      // следующий аргумент
-    std::size_t i = 0;           // позиция в шаблоне
-    std::size_t runStart = 0;    // начало неподставляемого куска
+    std::uint32_t next = 1;  // следующий аргумент
+    FormatCursor cursor;
 
-    // Срез шаблона берётся заново после каждого дописывания: пул вправе
-    // переехать, и прежний срез повис бы. Смещение и длина при этом остаются
-    // верными, потому что содержимое пула переезд сохраняет.
-    while (i < ctx.string(tmpl).size()) {
-        const std::string_view text = ctx.string(tmpl);
-        const bool escaped = text.compare(i, 4, "$${}") == 0;
-        const bool placeholder = !escaped && text.compare(i, 3, "${}") == 0;
-        if (!escaped && !placeholder) {
-            ++i;
+    for (;;) {
+        FormatPiece kind = FormatPiece::Literal;
+        std::string_view chunk;
+        if (!nextFormatPiece(ctx.string(tmpl), cursor, &kind, &chunk)) { break; }
+
+        if (kind == FormatPiece::Literal) {
+            ctx.appendToString(chunk);
             continue;
         }
-
-        ctx.appendToString(text.substr(runStart, i - runStart));
-        if (escaped) {
+        if (kind == FormatPiece::Escaped) {
             ctx.appendToString("${}");
-            i += 4;
-            runStart = i;
             continue;
         }
 
+        // FormatPiece::Placeholder — потребляет следующий аргумент.
         if (next >= argCount) {
             ctx.abortString(mark);
             return fail(ast, node, ErrorCode::Type,
@@ -147,17 +157,13 @@ bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
         ++next;
 
         char buffer[kNumberBufferSize];
-        std::string_view piece;
-        if (!coerceToString(ast, node, ctx, argument, buffer, &piece, diag)) {
+        std::string_view text;
+        if (!coerceToString(ast, node, ctx, argument, buffer, &text, diag)) {
             ctx.abortString(mark);
             return false;
         }
-        ctx.appendToString(piece);
-        i += 3;
-        runStart = i;
+        ctx.appendToString(text);
     }
-
-    ctx.appendToString(ctx.string(tmpl).substr(runStart));
 
     if (next != argCount) {
         ctx.abortString(mark);

@@ -46,22 +46,46 @@ const BuiltinInfo &builtinInfo(Builtin id) noexcept {
     return kTable[index];
 }
 
+bool nextFormatPiece(std::string_view fmt, FormatCursor &cursor,
+                     FormatPiece *piece, std::string_view *text) noexcept {
+    if (cursor.pos >= fmt.size()) { return false; }
+
+    // $${} — экранированный плейсхолдер: даёт литеральное ${}, но сам им не
+    // является. Проверяется первым: иначе его собственное "${}" отсеклось бы
+    // как настоящий плейсхолдер.
+    if (fmt.compare(cursor.pos, 4, "$${}") == 0) {
+        *piece = FormatPiece::Escaped;
+        *text = fmt.substr(cursor.pos, 4);
+        cursor.pos += 4;
+        return true;
+    }
+    if (fmt.compare(cursor.pos, 3, "${}") == 0) {
+        *piece = FormatPiece::Placeholder;
+        *text = fmt.substr(cursor.pos, 3);
+        cursor.pos += 3;
+        return true;
+    }
+
+    // Литеральный пробег тянется до следующего плейсхолдера, экранирования
+    // либо конца шаблона.
+    const std::size_t start = cursor.pos;
+    do {
+        ++cursor.pos;
+    } while (cursor.pos < fmt.size() &&
+             fmt.compare(cursor.pos, 4, "$${}") != 0 &&
+             fmt.compare(cursor.pos, 3, "${}") != 0);
+    *piece = FormatPiece::Literal;
+    *text = fmt.substr(start, cursor.pos - start);
+    return true;
+}
+
 std::uint32_t countPlaceholders(std::string_view fmt) noexcept {
     std::uint32_t count = 0;
-    std::size_t i = 0;
-    while (i < fmt.size()) {
-        // $${} — экранированный плейсхолдер: даёт литеральное ${}, но сам им
-        // не является.
-        if (fmt.compare(i, 4, "$${}") == 0) {
-            i += 4;
-            continue;
-        }
-        if (fmt.compare(i, 3, "${}") == 0) {
-            ++count;
-            i += 3;
-            continue;
-        }
-        ++i;
+    FormatCursor cursor;
+    FormatPiece piece;
+    std::string_view text;
+    while (nextFormatPiece(fmt, cursor, &piece, &text)) {
+        if (piece == FormatPiece::Placeholder) { ++count; }
     }
     return count;
 }

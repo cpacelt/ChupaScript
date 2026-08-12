@@ -86,9 +86,11 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
     }
 }
 
-/// Чтение элемента массива (docs/semantics.md §6.1).
-bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
-               Value subscript, Value *out, Diagnostic &diag) {
+/// Проверяет индекс массива по правилам §6.1: Number, конечный, целый, не
+/// отрицательный. Решение про границу остаётся вызывающему — оно у чтения и
+/// записи разное: чтение за границей штатно даёт null, запись — ошибка Range.
+bool checkArrayIndex(const Ast &ast, NodeId node, Value subscript, double *out,
+                     Diagnostic &diag) {
     if (subscript.kind() != Value::Kind::Number) {
         return fail(ast, node, ErrorCode::Type, "array index must be a number",
                     diag);
@@ -101,6 +103,15 @@ bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
         return fail(ast, node, ErrorCode::Range,
                     "array index must be a non-negative integer", diag);
     }
+    *out = index;
+    return true;
+}
+
+/// Чтение элемента массива (docs/semantics.md §6.1).
+bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
+               Value subscript, Value *out, Diagnostic &diag) {
+    double index = 0.0;
+    if (!checkArrayIndex(ast, node, subscript, &index, diag)) { return false; }
 
     // За границей — штатное чтение. Сравнение в double, потому что индекс
     // может превышать всё, что влезает в uint32.
@@ -350,15 +361,9 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
     switch (base.kind()) {
         case Value::Kind::Array: {
             // Требования к индексу те же, что при чтении (§6.1).
-            if (subscript.kind() != Value::Kind::Number) {
-                return fail(ast, target, ErrorCode::Type,
-                            "array index must be a number", diag);
-            }
-            const double index = subscript.numberValue();
-            if (!std::isfinite(index) || index < 0.0 ||
-                index != std::floor(index)) {
-                return fail(ast, target, ErrorCode::Range,
-                            "array index must be a non-negative integer", diag);
+            double index = 0.0;
+            if (!checkArrayIndex(ast, target, subscript, &index, diag)) {
+                return false;
             }
             // Запись за границу — ошибка: расширяет только push (§6.1).
             // Сравнение в double, потому что индекс может превышать uint32.

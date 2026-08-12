@@ -728,6 +728,8 @@ TEST(EvalAssignIndex, WritingBeyondTheEndIsAnError) {
     EXPECT_EQ(evaluate(ctx, "items[1]").kind(), Value::Kind::Null);
     EXPECT_EQ(runError(ctx, "items[1] = 1;").code, CS::ErrorCode::Range);
     EXPECT_EQ(runError(ctx, "items[1000000] = 1;").code, CS::ErrorCode::Range);
+    // 2^32: приведение к uint32_t усекло бы индекс в ноль, попав в границы.
+    EXPECT_EQ(runError(ctx, "items[4294967296] = 1;").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalAssignIndex, FractionalAndNegativeIndicesAreErrors) {

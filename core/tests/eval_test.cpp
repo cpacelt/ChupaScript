@@ -886,4 +886,60 @@ TEST(EvalCompound, DeepTargetWorks) {
     EXPECT_EQ(evaluate(ctx, "state.rows[0].n").numberValue(), 42.0);
 }
 
+TEST(EvalScriptBehaviour, StatementsApplyInOrder) {
+    Context ctx;
+    put(ctx, "s", "{'n': 0}");
+    run(ctx, "s.n = 1; s.n = 2; s.n = 3;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 3.0);
+}
+
+TEST(EvalScriptBehaviour, LaterStatementsSeeEarlierWrites) {
+    Context ctx;
+    put(ctx, "s", "{'a': 1}");
+    run(ctx, "s.b = s.a + 1; s.c = s.b + 1;");
+    EXPECT_EQ(evaluate(ctx, "s.c").numberValue(), 3.0);
+}
+
+TEST(EvalScriptBehaviour, ErrorStopsTheScriptAndKeepsWhatWasDone) {
+    Context ctx;
+    put(ctx, "s", "{'a': 0, 'b': 0, 'c': 0}");
+    // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md: откатывать
+    // нечего, предыдущих состояний хранилище не держит. Обработчик, упавший на
+    // третьем присваивании из пяти, оставит первые два применёнными.
+    const Diagnostic diag =
+        runError(ctx, "s.a = 1; s.b = 2; s.x = usre; s.c = 3;");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(evaluate(ctx, "s.a").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "s.b").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "s.c").numberValue(), 0.0);
+    EXPECT_FALSE(ctx.objectHas(ctx.root("s"), "x"));
+}
+
+TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
+    Context ctx;
+    // Хост кладёт один агрегат под двумя именами: значения — хендлы, поэтому
+    // это тот же массив (docs/semantics.md §2.3).
+    put(ctx, "state", "{'items': [1, 2]}");
+    const Value items = ctx.objectGet(ctx.root("state"), "items");
+    ctx.setRoot("shortcut", items);
+
+    run(ctx, "state.items[0] = 99;");
+    EXPECT_EQ(evaluate(ctx, "shortcut[0]").numberValue(), 99.0);
+}
+
+TEST(EvalScriptBehaviour, EmptyStatementsAreSkipped) {
+    Context ctx;
+    put(ctx, "s", "{'n': 0}");
+    run(ctx, ";; s.n = 1 ;;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 1.0);
+}
+
+TEST(EvalScriptBehaviour, DeepPathInsideAScript) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'cells': [0]}, {'cells': [0]}]}");
+    run(ctx, "state.rows[0].cells[0] = 1; state.rows[1].cells[0] = 2;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].cells[0]").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "state.rows[1].cells[0]").numberValue(), 2.0);
+}
+
 }  // namespace

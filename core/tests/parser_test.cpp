@@ -695,11 +695,11 @@ std::string chainOf(const char *link, int count) {
 // взяло по единице.
 
 TEST(ParserLimits, LongMemberChainIsAcceptedUpToTheLimit) {
-    EXPECT_TRUE(parseExpr(chainOf(".b", 93)).ok);
+    EXPECT_TRUE(parseExpr(chainOf(".b", 509)).ok);
 }
 
 TEST(ParserLimits, MemberChainPastTheLimitIsRejected) {
-    const Parsed parsed = parseExpr(chainOf(".b", 94));
+    const Parsed parsed = parseExpr(chainOf(".b", 510));
     ASSERT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
@@ -708,11 +708,11 @@ TEST(ParserLimits, MemberChainPastTheLimitIsRejected) {
 TEST(ParserLimits, LongIndexChainIsAcceptedUpToTheLimit) {
     // На три звена короче, чем цепочка '.': подвыражение внутри последнего
     // '[...]' проходит ternary, nilCoalesce и unary поверх накопленной глубины.
-    EXPECT_TRUE(parseExpr(chainOf("[0]", 90)).ok);
+    EXPECT_TRUE(parseExpr(chainOf("[0]", 506)).ok);
 }
 
 TEST(ParserLimits, IndexChainPastTheLimitIsRejected) {
-    const Parsed parsed = parseExpr(chainOf("[0]", 91));
+    const Parsed parsed = parseExpr(chainOf("[0]", 507));
     ASSERT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
@@ -729,10 +729,10 @@ TEST(ParserLimits, NestingAndChainsShareOneBudget) {
     // Главное свойство правки: цепочки и вложенность не перемножаются. Каждый
     // уровень скобок стоит трёх единиц, поэтому доступная длина цепочки внутри
     // убывает на три за уровень, а высота дерева остаётся ограниченной.
-    EXPECT_TRUE(parseExpr("(" + chainOf(".b", 90) + ")").ok);
-    EXPECT_FALSE(parseExpr("(" + chainOf(".b", 91) + ")").ok);
-    EXPECT_TRUE(parseExpr("((((" + chainOf(".b", 81) + "))))").ok);
-    EXPECT_FALSE(parseExpr("((((" + chainOf(".b", 82) + "))))").ok);
+    EXPECT_TRUE(parseExpr("(" + chainOf(".b", 506) + ")").ok);
+    EXPECT_FALSE(parseExpr("(" + chainOf(".b", 507) + ")").ok);
+    EXPECT_TRUE(parseExpr("((((" + chainOf(".b", 497) + "))))").ok);
+    EXPECT_FALSE(parseExpr("((((" + chainOf(".b", 498) + "))))").ok);
 }
 
 /// Цепочка из count операторов op над count+1 копиями operand.
@@ -753,22 +753,22 @@ std::string operatorChain(const char *operand, const char *op, int count) {
 // разбиралась успешно и роняла процесс в вычислителе.
 
 TEST(ParserLimits, LongAdditiveChainIsAcceptedUpToTheLimit) {
-    EXPECT_TRUE(parseExpr(operatorChain("1", " + ", 93)).ok);
+    EXPECT_TRUE(parseExpr(operatorChain("1", " + ", 509)).ok);
 }
 
 TEST(ParserLimits, AdditiveChainPastTheLimitIsRejected) {
-    const Parsed parsed = parseExpr(operatorChain("1", " + ", 94));
+    const Parsed parsed = parseExpr(operatorChain("1", " + ", 510));
     ASSERT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
 }
 
 TEST(ParserLimits, LongLogicalChainIsAcceptedUpToTheLimit) {
-    EXPECT_TRUE(parseExpr(operatorChain("true", " && ", 93)).ok);
+    EXPECT_TRUE(parseExpr(operatorChain("true", " && ", 509)).ok);
 }
 
 TEST(ParserLimits, LogicalChainPastTheLimitIsRejected) {
-    const Parsed parsed = parseExpr(operatorChain("true", " && ", 94));
+    const Parsed parsed = parseExpr(operatorChain("true", " && ", 510));
     ASSERT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
@@ -784,10 +784,10 @@ TEST(ParserLimits, VeryLongOperatorChainIsRejectedNotCrashing) {
 TEST(ParserLimits, OperatorChainsShareTheBudgetWithNesting) {
     // Цепочка внутри скобок короче на три единицы за уровень — ровно как
     // цепочка '.': бюджет один на всё дерево, и перемножения не происходит.
-    EXPECT_TRUE(parseExpr("(" + operatorChain("1", " + ", 90) + ")").ok);
-    EXPECT_FALSE(parseExpr("(" + operatorChain("1", " + ", 91) + ")").ok);
-    EXPECT_TRUE(parseExpr("((((" + operatorChain("1", " + ", 81) + "))))").ok);
-    EXPECT_FALSE(parseExpr("((((" + operatorChain("1", " + ", 82) + "))))").ok);
+    EXPECT_TRUE(parseExpr("(" + operatorChain("1", " + ", 506) + ")").ok);
+    EXPECT_FALSE(parseExpr("(" + operatorChain("1", " + ", 507) + ")").ok);
+    EXPECT_TRUE(parseExpr("((((" + operatorChain("1", " + ", 497) + "))))").ok);
+    EXPECT_FALSE(parseExpr("((((" + operatorChain("1", " + ", 498) + "))))").ok);
 }
 
 TEST(ParserLimits, ChainsInsideSubscriptsAreCountedToo) {

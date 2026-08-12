@@ -268,18 +268,18 @@ TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
 TEST(DataAggregates, NestingLimit) {
     Context ctx;
     // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §4:
-    // предел вложенности агрегатов — тот же, что у парсера, 31 уровень.
+    // предел вложенности агрегатов — тот же, что у парсера, 169 уровней.
     // Текст строится программно, а не руками, чтобы граница была видна.
-    std::string nested31(31, '[');
-    nested31 += "1";
-    nested31 += std::string(31, ']');
+    std::string nested169(169, '[');
+    nested169 += "1";
+    nested169 += std::string(169, ']');
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(ctx, "ok", nested31, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(ctx, "ok", nested169, diag)) << diag.message;
 
-    std::string nested32(32, '[');
-    nested32 += "1";
-    nested32 += std::string(32, ']');
-    EXPECT_FALSE(CS::setVariable(ctx, "bad", nested32, diag));
+    std::string nested170(170, '[');
+    nested170 += "1";
+    nested170 += std::string(170, ']');
+    EXPECT_FALSE(CS::setVariable(ctx, "bad", nested170, diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 

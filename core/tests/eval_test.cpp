@@ -360,11 +360,11 @@ TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
     // звено цепочки стоит той же единицы, что и вложенность. До этой правки
     // цепочка длины не имела, разбиралась целиком и роняла процесс.
     //
-    // 93 — измеренный максимум для цепочки '.' в выражении
+    // 509 — измеренный максимум для цепочки '.' в выражении
     // (docs/grammar.md Приложение C.1). Чтение идёт через null по §6.3, то есть
     // все звенья действительно проходятся.
     std::string source = "user";
-    for (int i = 0; i < 93; ++i) {
+    for (int i = 0; i < 509; ++i) {
         source += ".b";
     }
     EXPECT_EQ(evaluate(ctx, source).kind(), Value::Kind::Null);
@@ -386,13 +386,13 @@ TEST(EvalDepth, OperatorChainAtTheParserLimitEvaluatesWithoutOverflow) {
     // бюджета она не тратила, «1» плюс 50 000 раз «+ 1» разбиралось успешно и
     // роняло процесс по SIGSEGV.
     //
-    // 93 — измеренный максимум для цепочки одного левоассоциативного уровня
+    // 509 — измеренный максимум для цепочки одного левоассоциативного уровня
     // в выражении (docs/grammar.md Приложение C.1).
     std::string source = "1";
-    for (int i = 0; i < 93; ++i) {
+    for (int i = 0; i < 509; ++i) {
         source += " + 1";
     }
-    EXPECT_EQ(evaluate(ctx, source).numberValue(), 94.0);
+    EXPECT_EQ(evaluate(ctx, source).numberValue(), 510.0);
 
     // На единицу длиннее до вычислителя уже не доходит: отказ на разборе.
     Ast ast;

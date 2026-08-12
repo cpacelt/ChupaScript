@@ -19,11 +19,10 @@ constexpr BuiltinInfo kTable[] = {
     {"max", 2, 2, true},        {"min", 2, 2, true},
     {"pop", 1, 1, false},       {"push", 2, 2, false},
     {"round", 1, 1, true},      {"str", 1, 1, true},
-    {"typeof", 1, 1, true},
 };
 
 constexpr std::size_t kCount = sizeof kTable / sizeof kTable[0];
-static_assert(kCount == static_cast<std::size_t>(Builtin::Typeof) + 1,
+static_assert(kCount == static_cast<std::size_t>(Builtin::Str) + 1,
               "таблица и enum обязаны совпадать по составу");
 
 }  // namespace
@@ -157,6 +156,39 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             const std::uint32_t size = ctx.arrayCount(args[0]);
             // На пустом — null (§8.4): через индексацию это невыразимо.
             *out = size == 0 ? Value::null() : ctx.arrayAt(args[0], size - 1);
+            return true;
+        }
+
+        case Builtin::Push:
+            if (args[0].kind() != Value::Kind::Array) {
+                return failType(offset, "push expects an array", diag);
+            }
+            // Void: *out не трогается (§2.2).
+            ctx.arrayPush(args[0], args[1]);
+            return true;
+
+        case Builtin::Pop:
+            if (args[0].kind() != Value::Kind::Array) {
+                return failType(offset, "pop expects an array", diag);
+            }
+            // На пустом ничего не делает и не отказывает (§8.6). Снятое
+            // значение никуда не идёт: pop его не возвращает.
+            ctx.arrayPop(args[0], nullptr);
+            return true;
+
+        case Builtin::Str: {
+            if (args[0].kind() == Value::Kind::String) {
+                *out = args[0];
+                return true;
+            }
+            char buffer[kNumberBufferSize];
+            std::string_view text;
+            // Агрегат отвергается тем же правилом §4, что и всюду: сообщение
+            // общее, частных формулировок под каждый билтин не заводим.
+            if (!coerceScalarToString(ctx, args[0], buffer, &text, offset, diag)) {
+                return false;
+            }
+            *out = ctx.makeString(text);
             return true;
         }
 

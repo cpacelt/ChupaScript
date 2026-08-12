@@ -719,17 +719,6 @@ TEST(EvalScript, EmptyScriptSucceeds) {
     run(ctx, ";;;");
 }
 
-TEST(EvalScript, CallStatementReachesTheEvaluator) {
-    Context ctx;
-    put(ctx, "items", "[1]");
-    // push придёт задачей 4; сейчас важно, что стейтмент-вызов вообще
-    // доходит до applyBuiltin, а не отвергается формой (было бы "statement
-    // form is not supported", если бы ветка CallStatement не исполнялась).
-    const Diagnostic diag = runError(ctx, "push(items, 1);");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
-    EXPECT_STREQ(diag.message, "builtin is not implemented yet");
-}
-
 TEST(EvalAssignIndex, ArrayElementIsReplaced) {
     Context ctx;
     put(ctx, "items", "[10, 20, 30]");
@@ -1114,6 +1103,79 @@ TEST(EvalCall, VariadicFormatDoesNotOverflowTheArgumentBuffer) {
     // рассчитан на два: аргументы обязаны не попадать в него вовсе.
     EXPECT_EQ(evalError(ctx, "format('${}${}${}${}${}', 1, 2, 3, 4, 5)").code,
               CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, PushAppends) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    run(ctx, "push(items, 3);");
+    EXPECT_EQ(evaluate(ctx, "count(items)").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "items[2]").numberValue(), 3.0);
+}
+
+TEST(EvalCall, PushIsTheOnlyWayToGrowAnArray) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    // docs/semantics.md §6.1: запись за границу — ошибка, расширяет только push.
+    EXPECT_EQ(runError(ctx, "items[1] = 2;").code, CS::ErrorCode::Range);
+    run(ctx, "push(items, 2);");
+    EXPECT_EQ(evaluate(ctx, "items[1]").numberValue(), 2.0);
+}
+
+TEST(EvalCall, PushRejectsNonArrays) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    EXPECT_EQ(runError(ctx, "push(o, 1);").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, PopRemovesAndDoesNothingOnEmpty) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    put(ctx, "empty", "[]");
+    run(ctx, "pop(items);");
+    EXPECT_EQ(evaluate(ctx, "count(items)").numberValue(), 1.0);
+    // docs/semantics.md §8.6: на пустом ничего не делает и не отказывает.
+    run(ctx, "pop(empty);");
+    EXPECT_EQ(evaluate(ctx, "count(empty)").numberValue(), 0.0);
+}
+
+TEST(EvalCall, TakingTheRemovedElementNeedsTwoSteps) {
+    Context ctx;
+    put(ctx, "state", "{'items': [1, 2, 3], 'taken': null}");
+    // docs/semantics.md §8.6 показывает ровно эту пару: pop значения не
+    // возвращает, читают его через last.
+    run(ctx, "state.taken = last(state.items); pop(state.items);");
+    EXPECT_EQ(evaluate(ctx, "state.taken").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "count(state.items)").numberValue(), 2.0);
+}
+
+TEST(EvalCall, PushAndPopAreVisibleThroughAnAlias) {
+    Context ctx;
+    put(ctx, "state", "{'items': [1]}");
+    const Value items = ctx.objectGet(ctx.root("state"), "items");
+    ctx.setRoot("shortcut", items);
+    // docs/semantics.md §2.3: мутация через один путь видна через второй.
+    run(ctx, "push(state.items, 2);");
+    EXPECT_EQ(evaluate(ctx, "count(shortcut)").numberValue(), 2.0);
+}
+
+TEST(EvalCall, StrConvertsScalars) {
+    Context ctx;
+    // docs/semantics.md §8.7 — правила §4.2 и §4.3.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str(1)")), "1");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str(0.5)")), "0.5");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str(true)")), "true");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str(false)")), "false");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str(null)")), "null");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "str('уже строка')")), "уже строка");
+}
+
+TEST(EvalCall, StrRejectsAggregates) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    put(ctx, "o", "{}");
+    EXPECT_EQ(evalError(ctx, "str(items)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "str(o)").code, CS::ErrorCode::Type);
 }
 
 }  // namespace

@@ -12,7 +12,7 @@ namespace CS {
 ///
 /// Порядок совпадает с алфавитным порядком имён: таблица ищется двоично.
 enum class Builtin : std::uint8_t {
-    Abs, Count, Format, Has, Keys, Last, Max, Min, Pop, Push, Round, Str, Typeof
+    Abs, Count, Format, Has, Keys, Last, Max, Min, Pop, Push, Round, Str
 };
 
 /// Верхняя граница числа аргументов отсутствует. Только у format (§8.9).

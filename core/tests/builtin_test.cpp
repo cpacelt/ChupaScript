@@ -7,12 +7,13 @@ namespace {
 using CS::Builtin;
 
 TEST(BuiltinTable, FindsEveryName) {
-    // Тринадцать функций docs/semantics.md §8.
+    // Двенадцать функций docs/semantics.md §8. typeof и type зарезервированы
+    // грамматикой и функциями не являются (B32, docs/backlog.md).
     const std::pair<const char *, Builtin> all[] = {
         {"count", Builtin::Count},   {"keys", Builtin::Keys},
         {"has", Builtin::Has},       {"last", Builtin::Last},
         {"push", Builtin::Push},     {"pop", Builtin::Pop},
-        {"str", Builtin::Str},       {"typeof", Builtin::Typeof},
+        {"str", Builtin::Str},
         {"format", Builtin::Format}, {"min", Builtin::Min},
         {"max", Builtin::Max},       {"abs", Builtin::Abs},
         {"round", Builtin::Round},
@@ -35,7 +36,7 @@ TEST(BuiltinTable, RejectsUnknownNames) {
 TEST(BuiltinTable, ArityMatchesTheSpecification) {
     // docs/semantics.md §8: один аргумент.
     for (Builtin id : {Builtin::Count, Builtin::Keys, Builtin::Last,
-                       Builtin::Pop, Builtin::Str, Builtin::Typeof,
+                       Builtin::Pop, Builtin::Str,
                        Builtin::Abs, Builtin::Round}) {
         EXPECT_EQ(CS::builtinInfo(id).minArgs, 1);
         EXPECT_EQ(CS::builtinInfo(id).maxArgs, 1);
@@ -57,7 +58,7 @@ TEST(BuiltinTable, OnlyPushAndPopAreVoid) {
     EXPECT_FALSE(CS::builtinInfo(Builtin::Push).returnsValue);
     EXPECT_FALSE(CS::builtinInfo(Builtin::Pop).returnsValue);
     for (Builtin id : {Builtin::Count, Builtin::Keys, Builtin::Has,
-                       Builtin::Last, Builtin::Str, Builtin::Typeof,
+                       Builtin::Last, Builtin::Str,
                        Builtin::Format, Builtin::Min, Builtin::Max,
                        Builtin::Abs, Builtin::Round}) {
         EXPECT_TRUE(CS::builtinInfo(id).returnsValue);
@@ -67,13 +68,22 @@ TEST(BuiltinTable, OnlyPushAndPopAreVoid) {
 TEST(BuiltinTable, IsSortedByName) {
     // Поиск двоичный, поэтому порядок таблицы — инвариант, а не оформление.
     std::string_view previous;
-    // Typeof — последний по алфавиту, значит и последний в enum.
-    for (int i = 0; i <= static_cast<int>(Builtin::Typeof); ++i) {
+    // Str — последний по алфавиту, значит и последний в enum.
+    for (int i = 0; i <= static_cast<int>(Builtin::Str); ++i) {
         const std::string_view name =
             CS::builtinInfo(static_cast<Builtin>(i)).name;
         EXPECT_LT(previous, name) << i;
         previous = name;
     }
+}
+
+TEST(BuiltinTable, TypeofAndTypeAreReservedNotBuiltin) {
+    // Оба имени зарезервированы грамматикой (docs/grammar.md §4.5) и функциями
+    // не являются: лексер отдаёт на них Reserved, поэтому вызов с таким именем
+    // не разбирается вовсе. Ограничение принято осознанно, см. B32.
+    Builtin id = Builtin::Abs;
+    EXPECT_FALSE(CS::findBuiltin("typeof", &id));
+    EXPECT_FALSE(CS::findBuiltin("type", &id));
 }
 
 TEST(PlaceholderCount, CountsAndRespectsEscaping) {

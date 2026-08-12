@@ -676,11 +676,6 @@ TEST(EvalNames, UnknownRootIsAnError) {
     EXPECT_EQ(diag.offset, 0u);
 }
 
-TEST(EvalNames, UnknownRootIsAnErrorEvenAsAPathBase) {
-    Context ctx;
-    put(ctx, "user", "{'name': 'Вася'}");
-    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
-}
 ```
 
 - [ ] **Шаг 2: Убедиться, что тесты падают**
@@ -713,12 +708,12 @@ Expected: FAIL — идентификатор попадает в ветку `de
 - [ ] **Шаг 4: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure -R EvalNames`
-Expected: 5 тестов PASS.
+Expected: 4 теста PASS.
 
 - [ ] **Шаг 5: Прогнать весь набор**
 
 Run: `ctest --test-dir build --output-on-failure`
-Expected: 278 тестов PASS.
+Expected: 277 тестов PASS.
 
 - [ ] **Шаг 6: Коммит**
 
@@ -789,6 +784,16 @@ TEST(EvalMember, KeyIsTakenLiterallyNotAsAName) {
     EXPECT_EQ(ctx.string(evaluate(ctx, "o.name")), "ключ");
 }
 
+TEST(EvalMember, UnknownRootIsAnErrorAtAnyDepth) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // База вычисляется рекурсивно, поэтому опечатка в корне всплывает с любой
+    // глубины пути: usre.a.b спускается к usre и упирается в неизвестный
+    // корень. Частного случая для первого сегмента не нужно.
+    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "usre.a.b").code, CS::ErrorCode::Name);
+}
+
 TEST(EvalMember, OffsetPointsAtTheFailingNode) {
     Context ctx;
     put(ctx, "count", "3");
@@ -851,7 +856,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
 - [ ] **Шаг 4: Собрать и прогнать**
 
 Run: `cmake --build build -j && ctest --test-dir build --output-on-failure -R EvalMember`
-Expected: 6 тестов PASS.
+Expected: 7 тестов PASS.
 
 - [ ] **Шаг 5: Прогнать весь набор**
 

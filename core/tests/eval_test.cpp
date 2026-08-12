@@ -117,10 +117,4 @@ TEST(EvalNames, UnknownRootIsAnError) {
     EXPECT_EQ(diag.offset, 0u);
 }
 
-TEST(EvalNames, UnknownRootIsAnErrorEvenAsAPathBase) {
-    Context ctx;
-    put(ctx, "user", "{'name': 'Вася'}");
-    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
-}
-
 }  // namespace

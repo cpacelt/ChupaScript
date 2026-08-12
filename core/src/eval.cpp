@@ -55,21 +55,6 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             return true;
         }
 
-        case NodeKind::Member: {
-            // Проверка неизвестного корня приоритизируется выше, чем Type error:
-            // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md §4
-            const NodeId base = ast.child(node, 0);
-            if (ast.kind(base) == NodeKind::Identifier) {
-                const std::string_view baseName = ast.text(base);
-                if (!ctx.hasRoot(baseName)) {
-                    return fail(ast, base, ErrorCode::Name, "unknown root", diag);
-                }
-            }
-            // Member access не поддерживается в части 1
-            return fail(ast, node, ErrorCode::Type,
-                        "expression form is not supported", diag);
-        }
-
         default:
             // Часть 1 не знает операторов и вызовов. С приходом частей 2 и 3
             // ветка сузится до Program, Assign и CallStatement — узлов, которых

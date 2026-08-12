@@ -81,9 +81,9 @@ TEST(EvalLiterals, StringEscapesAreDecoded) {
 
 TEST(EvalUnsupported, CallsAreNotSupportedYet) {
     Context ctx;
-    // Вызовы приходят с частью 3. После них в ветке default останутся только
-    // Program, Assign и CallStatement — узлы, которых в дереве от
-    // parseExpression быть не может, — и она станет защитной окончательно.
+    // Вызовы приходят с частью 3b. До тех пор NodeKind::Call ловит защитная
+    // ветка default вместе с Program, Assign и CallStatement — узлами,
+    // которых в дереве от parseExpression быть не может.
     const Diagnostic diag = evalError(ctx, "count(items)");
     EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     EXPECT_STREQ(diag.message, "expression form is not supported");

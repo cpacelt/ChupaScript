@@ -328,9 +328,11 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
         }
 
         default:
-            // Часть 1 не знает операторов и вызовов. С приходом частей 2 и 3
-            // ветка сузится до Program, Assign и CallStatement — узлов, которых
-            // в дереве от parseExpression быть не может, — и станет защитной.
+            // Операторы и цепочки доступа разобраны выше отдельными ветками.
+            // Сюда попадают узлы, которых в дереве от parseExpression быть не
+            // может: Program, Assign, CallStatement — стейтменты, а не
+            // выражения, — и NodeKind::Call, который придёт вместе с вызовами
+            // билтинов в части 3b. До тех пор ветка защитная.
             return fail(ast, node, ErrorCode::Type,
                         "expression form is not supported", diag);
     }

@@ -735,6 +735,61 @@ TEST(ParserLimits, NestingAndChainsShareOneBudget) {
     EXPECT_FALSE(parseExpr("((((" + chainOf(".b", 82) + "))))").ok);
 }
 
+/// Цепочка из count операторов op над count+1 копиями operand.
+std::string operatorChain(const char *operand, const char *op, int count) {
+    std::string source = operand;
+    for (int i = 0; i < count; ++i) {
+        source += op;
+        source += operand;
+    }
+    return source;
+}
+
+// Левоассоциативные уровни — '||', '&&', '+'/'-', '*'/'/'/'%' — разбирают
+// цепочку циклом, но каждый оператор даёт уровень левоглубокого дерева Binary,
+// по которому вычислитель спускается рекурсивно. Поэтому оператор тратит ту же
+// единицу бюджета, что и вложенность, а границы ниже — измеренные
+// (docs/grammar.md Приложение C.1). До этой правки цепочка любой длины
+// разбиралась успешно и роняла процесс в вычислителе.
+
+TEST(ParserLimits, LongAdditiveChainIsAcceptedUpToTheLimit) {
+    EXPECT_TRUE(parseExpr(operatorChain("1", " + ", 93)).ok);
+}
+
+TEST(ParserLimits, AdditiveChainPastTheLimitIsRejected) {
+    const Parsed parsed = parseExpr(operatorChain("1", " + ", 94));
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
+TEST(ParserLimits, LongLogicalChainIsAcceptedUpToTheLimit) {
+    EXPECT_TRUE(parseExpr(operatorChain("true", " && ", 93)).ok);
+}
+
+TEST(ParserLimits, LogicalChainPastTheLimitIsRejected) {
+    const Parsed parsed = parseExpr(operatorChain("true", " && ", 94));
+    ASSERT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");
+}
+
+TEST(ParserLimits, VeryLongOperatorChainIsRejectedNotCrashing) {
+    // Ровно тот вход, который раньше разбирался целиком (100 002 узла) и ронял
+    // вычислитель по SIGSEGV.
+    EXPECT_FALSE(parseExpr(operatorChain("1", " + ", 50000)).ok);
+    EXPECT_FALSE(parseExpr(operatorChain("true", " && ", 50000)).ok);
+}
+
+TEST(ParserLimits, OperatorChainsShareTheBudgetWithNesting) {
+    // Цепочка внутри скобок короче на три единицы за уровень — ровно как
+    // цепочка '.': бюджет один на всё дерево, и перемножения не происходит.
+    EXPECT_TRUE(parseExpr("(" + operatorChain("1", " + ", 90) + ")").ok);
+    EXPECT_FALSE(parseExpr("(" + operatorChain("1", " + ", 91) + ")").ok);
+    EXPECT_TRUE(parseExpr("((((" + operatorChain("1", " + ", 81) + "))))").ok);
+    EXPECT_FALSE(parseExpr("((((" + operatorChain("1", " + ", 82) + "))))").ok);
+}
+
 TEST(ParserLimits, ChainsInsideSubscriptsAreCountedToo) {
     // Выражение внутри '[...]' видит глубину, накопленную предыдущими звеньями:
     // иначе каждый уровень вложенности нёс бы полную цепочку и высота дерева

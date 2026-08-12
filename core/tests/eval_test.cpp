@@ -378,6 +378,31 @@ TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
     EXPECT_STREQ(diag.message, "expression nesting too deep");
 }
 
+TEST(EvalDepth, OperatorChainAtTheParserLimitEvaluatesWithoutOverflow) {
+    Context ctx;
+    // Тот самый тест, ради которого левоассоциативные правила начали тратить
+    // бюджет. Цепочка '1 + 1 + …' разбирается циклом, но даёт левоглубокое
+    // дерево Binary, по которому вычислитель спускается рекурсивно. Пока
+    // бюджета она не тратила, «1» плюс 50 000 раз «+ 1» разбиралось успешно и
+    // роняло процесс по SIGSEGV.
+    //
+    // 93 — измеренный максимум для цепочки одного левоассоциативного уровня
+    // в выражении (docs/grammar.md Приложение C.1).
+    std::string source = "1";
+    for (int i = 0; i < 93; ++i) {
+        source += " + 1";
+    }
+    EXPECT_EQ(evaluate(ctx, source).numberValue(), 94.0);
+
+    // На единицу длиннее до вычислителя уже не доходит: отказ на разборе.
+    Ast ast;
+    Diagnostic diag;
+    const std::string tooLong = source + " + 1";
+    EXPECT_FALSE(CS::parseExpression(
+        tooLong.data(), static_cast<std::uint32_t>(tooLong.size()), ast, diag));
+    EXPECT_STREQ(diag.message, "expression nesting too deep");
+}
+
 TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
     Context ctx;
     Ast ast;
@@ -440,6 +465,16 @@ TEST(EvalOperators, ErrorInTheRightOperandStopsEvaluation) {
     EXPECT_EQ(evalError(ctx, "1 + usre").code, CS::ErrorCode::Name);
 }
 
+TEST(EvalOperators, LeftOperandIsEvaluatedBeforeTheRight) {
+    Context ctx;
+    // docs/semantics.md §3.3 фиксирует порядок именно ради определённости
+    // диагностики, когда ошибочны оба операнда. С одним ошибочным операндом
+    // порядок ненаблюдаем, и перестановка прошла бы незамеченной.
+    const Diagnostic diag = evalError(ctx, "usre + alsoBad");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(diag.offset, 0u);
+}
+
 TEST(EvalOperators, AggregateEqualityIsByIdentityThroughTheWalk) {
     Context ctx;
     put(ctx, "items", "[1, 2]");
@@ -489,6 +524,9 @@ TEST(EvalShortCircuit, TypeOfTheUnevaluatedOperandIsNotChecked) {
     // строк ничего не доказывает.
     EXPECT_FALSE(evaluate(ctx, "false && 5").booleanValue());
     EXPECT_EQ(evalError(ctx, "true && 5").code, CS::ErrorCode::Type);
+    // Зеркало для ||: у него замыкает истина, а не ложь.
+    EXPECT_TRUE(evaluate(ctx, "true || 5").booleanValue());
+    EXPECT_EQ(evalError(ctx, "false || 5").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalShortCircuit, LogicalOperatorsRequireBooleanOnTheLeft) {

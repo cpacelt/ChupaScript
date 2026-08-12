@@ -12,12 +12,14 @@ namespace {
 /// Предел высоты дерева разбора.
 ///
 /// Вход недоверенный, а без предела тексты вида "((((((…", "!!!!!!…",
-/// "1 ?? 1 ?? 1 ?? …" и "a.b.b.b…" роняют процесс переполнением стека — либо
-/// в самом парсере, либо потом в вычислителе, который спускается по дереву
-/// рекурсивно. Счётчик растёт в трёх саморекурсивных правилах — ternary,
-/// nilCoalesce, unary — и на каждом звене постфиксной цепочки ('.' и '[]'),
-/// поэтому один уровень вложенности скобок стоит трёх единиц, а цепочка из
-/// '!', '??' или '.k' — одной за звено.
+/// "1 ?? 1 ?? 1 ?? …", "a.b.b.b…" и "1 + 1 + 1 + …" роняют процесс
+/// переполнением стека — либо в самом парсере, либо потом в вычислителе,
+/// который спускается по дереву рекурсивно. Счётчик растёт в трёх
+/// саморекурсивных правилах — ternary, nilCoalesce, unary, — на каждом звене
+/// постфиксной цепочки ('.' и '[]') и на каждом операторе левоассоциативной
+/// цепочки ('||', '&&', '+'/'-', '*'/'/'/'%'), поэтому один уровень
+/// вложенности скобок стоит трёх единиц, а цепочка из '!', '??', '.k' или '+' —
+/// одной за звено.
 ///
 /// Звено цепочки тратит тот же бюджет, что и вложенность, именно потому, что
 /// предел обязан ограничивать высоту дерева целиком. Отдельный предел на
@@ -80,23 +82,24 @@ class Parser {
         std::uint32_t &depth_;
     };
 
-    /// Возвращает бюджет, занятый звеньями постфиксной цепочки, — весь разом
-    /// и только при выходе из postfix().
+    /// Возвращает бюджет, занятый уровнями дерева, которые правило построило
+    /// циклом, — весь разом и только при выходе из правила.
     ///
-    /// Освобождать по единице на каждой итерации цикла нельзя: выражение
-    /// внутри '[...]' обязано видеть глубину, накопленную предыдущими
-    /// звеньями, иначе вложенность и цепочки перестают складываться.
-    class ChainGuard {
+    /// Освобождать по единице на каждой итерации нельзя: операнд следующей
+    /// итерации обязан видеть глубину, накопленную предыдущими, иначе
+    /// вложенность и цепочки перестают складываться и высота дерева
+    /// перестаёт быть ограниченной.
+    class LevelGuard {
        public:
-        ChainGuard(std::uint32_t &depth, const std::uint32_t &links) noexcept
-            : depth_(depth), links_(links) {}
-        ~ChainGuard() { depth_ -= links_; }
-        ChainGuard(const ChainGuard &) = delete;
-        ChainGuard &operator=(const ChainGuard &) = delete;
+        LevelGuard(std::uint32_t &depth, const std::uint32_t &levels) noexcept
+            : depth_(depth), levels_(levels) {}
+        ~LevelGuard() { depth_ -= levels_; }
+        LevelGuard(const LevelGuard &) = delete;
+        LevelGuard &operator=(const LevelGuard &) = delete;
 
        private:
         std::uint32_t &depth_;
-        const std::uint32_t &links_;
+        const std::uint32_t &levels_;
     };
 
     bool advance();
@@ -121,9 +124,9 @@ class Parser {
     NodeId postfix();
     NodeId primary();
 
-    /// Занимает единицу бюджета глубины под очередное звено цепочки.
-    /// false — предел исчерпан, отказ уже записан.
-    bool takeChainLink(std::uint32_t &links);
+    /// Занимает единицу бюджета глубины под очередной уровень дерева,
+    /// построенный циклом. false — предел исчерпан, отказ уже записан.
+    bool takeLevel(std::uint32_t &levels);
 
     NodeId callArguments(const Token &name);
     NodeId arrayLiteral();
@@ -211,7 +214,16 @@ NodeId Parser::logicalOr() {
     if (lhs == kNoNode) {
         return kNoNode;
     }
+    // Левая ассоциативность разбирается циклом, но дерево наращивает так же,
+    // как рекурсия: 'a || b || c' — это Binary над Binary. Поэтому каждый
+    // оператор цепочки стоит той же единицы бюджета, что и вложенность
+    // (см. kMaxDepth), и занятые единицы держатся до выхода из правила.
+    std::uint32_t levels = 0;
+    const LevelGuard guard(depth_, levels);
     while (at(TokenKind::OrOr)) {
+        if (!takeLevel(levels)) {
+            return kNoNode;
+        }
         const std::uint32_t offset = cur_.offset;
         if (!advance()) {
             return kNoNode;
@@ -230,7 +242,12 @@ NodeId Parser::logicalAnd() {
     if (lhs == kNoNode) {
         return kNoNode;
     }
+    std::uint32_t levels = 0;
+    const LevelGuard guard(depth_, levels);
     while (at(TokenKind::AndAnd)) {
+        if (!takeLevel(levels)) {
+            return kNoNode;
+        }
         const std::uint32_t offset = cur_.offset;
         if (!advance()) {
             return kNoNode;
@@ -298,7 +315,12 @@ NodeId Parser::additive() {
     if (lhs == kNoNode) {
         return kNoNode;
     }
+    std::uint32_t levels = 0;
+    const LevelGuard guard(depth_, levels);
     while (at(TokenKind::Plus) || at(TokenKind::Minus)) {
+        if (!takeLevel(levels)) {
+            return kNoNode;
+        }
         const TokenKind op = cur_.kind;
         const std::uint32_t offset = cur_.offset;
         if (!advance()) {
@@ -318,8 +340,13 @@ NodeId Parser::multiplicative() {
     if (lhs == kNoNode) {
         return kNoNode;
     }
+    std::uint32_t levels = 0;
+    const LevelGuard guard(depth_, levels);
     while (at(TokenKind::Star) || at(TokenKind::Slash) ||
            at(TokenKind::Percent)) {
+        if (!takeLevel(levels)) {
+            return kNoNode;
+        }
         const TokenKind op = cur_.kind;
         const std::uint32_t offset = cur_.offset;
         if (!advance()) {
@@ -354,13 +381,13 @@ NodeId Parser::unary() {
     return postfix();
 }
 
-bool Parser::takeChainLink(std::uint32_t &links) {
+bool Parser::takeLevel(std::uint32_t &levels) {
     if (depth_ >= kMaxDepth) {
         fail(cur_.offset, "expression nesting too deep");
         return false;
     }
     ++depth_;
-    ++links;
+    ++levels;
     return true;
 }
 
@@ -374,12 +401,12 @@ NodeId Parser::postfix() {
     // вычислитель, поэтому звено стоит единицы того же бюджета, что и
     // вложенность (см. kMaxDepth). Цикл здесь только про форму разбора: высоту
     // дерева он наращивает ровно так же, как рекурсия.
-    std::uint32_t links = 0;
-    const ChainGuard chain(depth_, links);
+    std::uint32_t levels = 0;
+    const LevelGuard chain(depth_, levels);
 
     for (;;) {
         if (at(TokenKind::Dot)) {
-            if (!takeChainLink(links)) {
+            if (!takeLevel(levels)) {
                 return kNoNode;
             }
             if (!advance()) {
@@ -397,7 +424,7 @@ NodeId Parser::postfix() {
             const std::uint32_t offset = cur_.offset;
             // Единица берётся до разбора подвыражения: оно обязано видеть
             // глубину, уже накопленную цепочкой.
-            if (!takeChainLink(links)) {
+            if (!takeLevel(levels)) {
                 return kNoNode;
             }
             if (!advance()) {

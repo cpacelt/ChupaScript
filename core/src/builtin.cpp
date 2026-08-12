@@ -75,6 +75,21 @@ bool failType(std::uint32_t offset, const char *message, Diagnostic &diag) {
 
 }  // namespace
 
+namespace {
+
+/// Все четыре арифметические функции требуют Number и отказывают одинаково.
+bool numbersOnly(const Value *args, std::uint32_t count, const char *what,
+                 std::uint32_t offset, Diagnostic &diag) {
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (args[i].kind() != Value::Kind::Number) {
+            return failType(offset, what, diag);
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
 bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
                           std::string_view *out, std::uint32_t offset,
                           Diagnostic &diag) {
@@ -191,6 +206,37 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             *out = ctx.makeString(text);
             return true;
         }
+
+        case Builtin::Min:
+            if (!numbersOnly(args, 2, "min expects numbers", offset, diag)) {
+                return false;
+            }
+            *out = Value::number(
+                std::fmin(args[0].numberValue(), args[1].numberValue()));
+            return true;
+
+        case Builtin::Max:
+            if (!numbersOnly(args, 2, "max expects numbers", offset, diag)) {
+                return false;
+            }
+            *out = Value::number(
+                std::fmax(args[0].numberValue(), args[1].numberValue()));
+            return true;
+
+        case Builtin::Abs:
+            if (!numbersOnly(args, 1, "abs expects a number", offset, diag)) {
+                return false;
+            }
+            *out = Value::number(std::fabs(args[0].numberValue()));
+            return true;
+
+        case Builtin::Round:
+            if (!numbersOnly(args, 1, "round expects a number", offset, diag)) {
+                return false;
+            }
+            // От нуля, а не к чётному (§8.11): ровно то, что делает std::round.
+            *out = Value::number(std::round(args[0].numberValue()));
+            return true;
 
         default:
             // Остальные функции приходят следующими задачами.

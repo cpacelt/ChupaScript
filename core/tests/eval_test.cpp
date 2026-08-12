@@ -1178,4 +1178,54 @@ TEST(EvalCall, StrRejectsAggregates) {
     EXPECT_EQ(evalError(ctx, "str(o)").code, CS::ErrorCode::Type);
 }
 
+TEST(EvalCall, MinAndMaxTakeExactlyTwo) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "min(1, 2)").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "max(1, 2)").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "min(-1, -2)").numberValue(), -2.0);
+    // Для трёх и более — вложение (§8.10).
+    EXPECT_EQ(evaluate(ctx, "min(3, min(1, 2))").numberValue(), 1.0);
+}
+
+TEST(EvalCall, MinAndMaxRejectNonNumbers) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "min('a', 1)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "max(1, true)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "min(null, 1)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, AbsIsTheModulus) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "abs(3)").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "abs(-3)").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "abs(0)").numberValue(), 0.0);
+    EXPECT_EQ(evalError(ctx, "abs('a')").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, RoundGoesAwayFromZero) {
+    Context ctx;
+    // docs/semantics.md §8.11 перечисляет ровно эти случаи: от нуля, а не к
+    // чётному. round(2.5) даёт 3, чего половинное-к-чётному не дало бы.
+    EXPECT_EQ(evaluate(ctx, "round(0.5)").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "round(1.5)").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "round(2.5)").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "round(-0.5)").numberValue(), -1.0);
+    EXPECT_EQ(evaluate(ctx, "round(1.4)").numberValue(), 1.0);
+    EXPECT_EQ(evalError(ctx, "round(true)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, ArithmeticBuiltinsFollowIEEEOnSpecialValues) {
+    Context ctx;
+    // Экспонента в числах не входит в грамматику (docs/grammar.md §4.6:
+    // `1e3` — не число), поэтому "1e400" не разбирается. Бесконечность из
+    // данных получают тем же путём, что и core/tests/data_test.cpp
+    // (DataScalars.VeryLongIntegerBecomesInfinity): 400-значный литерал
+    // переполняет double и лексер округляет его до IEEE-бесконечности.
+    put(ctx, "inf", std::string(400, '9'));
+    // Бесконечность — значение, а не ошибка (§5.2), и функции её пропускают.
+    EXPECT_TRUE(std::isinf(evaluate(ctx, "abs(inf)").numberValue()));
+    EXPECT_TRUE(std::isinf(evaluate(ctx, "max(1, inf)").numberValue()));
+    EXPECT_EQ(evaluate(ctx, "min(1, inf)").numberValue(), 1.0);
+}
+
 }  // namespace

@@ -4,9 +4,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <set>
 #include <string>
 
 #include "ast.hpp"
+#include "compile.hpp"
 #include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
@@ -23,10 +25,9 @@ using CS::Value;
 Value evaluate(Context &ctx, std::string_view text) {
     Ast ast;
     Diagnostic diag;
-    EXPECT_TRUE(CS::parseExpression(text.data(),
-                                    static_cast<std::uint32_t>(text.size()), ast,
-                                    diag))
-        << diag.message;
+    const std::uint32_t errors = CS::compileExpression(
+        text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
+    EXPECT_EQ(errors, 0u) << diag.message;
     Value out = Value::null();
     EXPECT_TRUE(CS::evalExpression(ast, ctx, &out, diag)) << diag.message;
     return out;
@@ -36,10 +37,9 @@ Value evaluate(Context &ctx, std::string_view text) {
 Diagnostic evalError(Context &ctx, std::string_view text) {
     Ast ast;
     Diagnostic diag;
-    EXPECT_TRUE(CS::parseExpression(text.data(),
-                                    static_cast<std::uint32_t>(text.size()), ast,
-                                    diag))
-        << diag.message;
+    const std::uint32_t errors = CS::compileExpression(
+        text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
+    EXPECT_EQ(errors, 0u) << diag.message;
     Value out = Value::null();
     EXPECT_FALSE(CS::evalExpression(ast, ctx, &out, diag));
     return diag;
@@ -79,16 +79,6 @@ TEST(EvalLiterals, StringEscapesAreDecoded) {
     EXPECT_EQ(ctx.string(evaluate(ctx, "'a\\nb'")), "a\nb");
 }
 
-TEST(EvalUnsupported, CallsAreNotSupportedYet) {
-    Context ctx;
-    // Вызовы приходят с частью 3b. До тех пор NodeKind::Call ловит защитная
-    // ветка default вместе с Program, Assign и CallStatement — узлами,
-    // которых в дереве от parseExpression быть не может.
-    const Diagnostic diag = evalError(ctx, "count(items)");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
-    EXPECT_STREQ(diag.message, "expression form is not supported");
-}
-
 TEST(EvalNames, RootIsRead) {
     Context ctx;
     put(ctx, "count", "3");
@@ -107,16 +97,6 @@ TEST(EvalNames, RootHoldingNullIsRead) {
     // Корень со значением null существует и читается как null — это не то же
     // самое, что отсутствующий корень.
     EXPECT_EQ(evaluate(ctx, "maybe").kind(), Value::Kind::Null);
-}
-
-TEST(EvalNames, UnknownRootIsAnError) {
-    Context ctx;
-    put(ctx, "user", "{'name': 'Вася'}");
-    // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md §4:
-    // опечатка в корне ловится, потому что состав корней контексту известен.
-    const Diagnostic diag = evalError(ctx, "usre");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
-    EXPECT_EQ(diag.offset, 0u);
 }
 
 TEST(EvalMember, ExistingKeyIsRead) {
@@ -170,16 +150,6 @@ TEST(EvalMember, OffsetPointsAtTheFailingNode) {
     put(ctx, "count", "3");
     // Место ошибки — там, где чинить, а не в начале выражения.
     EXPECT_GT(evalError(ctx, "count.a.b").offset, 0u);
-}
-
-TEST(EvalMember, UnknownRootIsAnErrorAtAnyDepth) {
-    Context ctx;
-    put(ctx, "user", "{'name': 'Вася'}");
-    // База вычисляется рекурсивно, поэтому опечатка в корне всплывает с любой
-    // глубины пути: usre.a.b спускается к usre и упирается в неизвестный
-    // корень. Частного случая для первого сегмента не нужно.
-    EXPECT_EQ(evalError(ctx, "usre.name").code, CS::ErrorCode::Name);
-    EXPECT_EQ(evalError(ctx, "usre.a.b").code, CS::ErrorCode::Name);
 }
 
 TEST(EvalIndex, ArrayElementIsRead) {
@@ -272,16 +242,24 @@ TEST(EvalIndex, SubscriptIsEvaluatedEvenWhenTheBaseIsNull) {
     // только у логических, ?? и тернарного. Ошибка в индексе обязана всплыть,
     // а не быть съеденной null-базой. Побочных эффектов в выражениях нет, так
     // что наблюдать порядок можно только через ошибку.
-    EXPECT_EQ(evalError(ctx, "user.missing[usre]").code, CS::ErrorCode::Name);
+    //
+    // Ошибка вынесена через 1 + 'a' (Type), а не через неизвестное имя: с
+    // приходом статического прохода (core/src/check.hpp) неизвестное имя
+    // отсеивается ещё до вычисления, независимо от того, какая ветка дерева
+    // его на самом деле достигает, и уже не годится в качестве пробы «дошли
+    // ли мы сюда вычислением».
+    EXPECT_EQ(evalError(ctx, "user.missing[1 + 'a']").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalIndex, BaseIsEvaluatedBeforeTheSubscript) {
     Context ctx;
     // docs/semantics.md §3.3 фиксирует порядок именно ради определённости
-    // диагностики, когда ошибочны оба операнда.
-    const Diagnostic diag = evalError(ctx, "usre[alsoBad]");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
-    EXPECT_EQ(diag.offset, 0u);
+    // диагностики, когда ошибочны оба операнда. Обе ошибки — Type через
+    // 1 + 'a' (по причине из SubscriptIsEvaluatedEvenWhenTheBaseIsNull выше),
+    // и левая обязана выиграть.
+    const Diagnostic diag = evalError(ctx, "(1 + 'a')[2 + 'b']");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_LT(diag.offset, 10u);
 }
 
 TEST(EvalIndex, IndexingANonAggregateIsAnError) {
@@ -348,9 +326,13 @@ TEST(EvalAggregates, ErrorInsideAnElementStopsAtTheFirstFailure) {
     // Два сбойных элемента: диагностика обязана указать на первый, иначе
     // «первая ошибка выигрывает» держится на честном слове. В частях 2 и 3 это
     // правило станет несущим для && и ??.
-    const Diagnostic diag = evalError(ctx, "[usre, alsoBad]");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
-    EXPECT_LT(diag.offset, 6u);
+    //
+    // Обе ошибки — Type через 1 + 'a', не неизвестное имя: статический проход
+    // (core/src/check.hpp) отсеял бы оба элемента разом, ещё до вычисления, и
+    // «первый выигрывает» стало бы непроверяемым.
+    const Diagnostic diag = evalError(ctx, "[1 + 'a', 2 + 'b']");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_LT(diag.offset, 10u);
 }
 
 TEST(EvalDepth, ChainAtTheParserLimitEvaluatesWithoutOverflow) {
@@ -409,8 +391,14 @@ TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
     Ast ast;
     Diagnostic diag;
     const std::string_view text = "[1, 2]";
-    ASSERT_TRUE(CS::parseExpression(
-        text.data(), static_cast<std::uint32_t>(text.size()), ast, diag));
+    // Дерево используется дважды подряд, поэтому проверка идёт через фасад
+    // компиляции напрямую, а не через evaluate(): тому нужен свежий Ast на
+    // каждый вызов, а здесь как раз важно одно и то же дерево.
+    ASSERT_EQ(CS::compileExpression(text.data(),
+                                    static_cast<std::uint32_t>(text.size()),
+                                    ast, ctx, &diag, 1),
+              0u)
+        << diag.message;
 
     Value first = Value::null();
     Value second = Value::null();
@@ -458,12 +446,15 @@ TEST(EvalOperators, OperandsComeFromTheContext) {
 
 TEST(EvalOperators, ErrorInTheLeftOperandStopsEvaluation) {
     Context ctx;
-    EXPECT_EQ(evalError(ctx, "usre + 1").code, CS::ErrorCode::Name);
+    // Ошибка — Type через 1 + 'a', не неизвестное имя: статический проход
+    // (core/src/check.hpp) отсеял бы неизвестное имя ещё до вычисления, и
+    // пробой «дошли ли мы сюда вычислением» оно уже быть не может.
+    EXPECT_EQ(evalError(ctx, "(1 + 'a') + 1").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalOperators, ErrorInTheRightOperandStopsEvaluation) {
     Context ctx;
-    EXPECT_EQ(evalError(ctx, "1 + usre").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "1 + (2 + 'b')").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalOperators, LeftOperandIsEvaluatedBeforeTheRight) {
@@ -471,9 +462,9 @@ TEST(EvalOperators, LeftOperandIsEvaluatedBeforeTheRight) {
     // docs/semantics.md §3.3 фиксирует порядок именно ради определённости
     // диагностики, когда ошибочны оба операнда. С одним ошибочным операндом
     // порядок ненаблюдаем, и перестановка прошла бы незамеченной.
-    const Diagnostic diag = evalError(ctx, "usre + alsoBad");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
-    EXPECT_EQ(diag.offset, 0u);
+    const Diagnostic diag = evalError(ctx, "(1 + 'a') + (2 + 'b')");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_LT(diag.offset, 10u);
 }
 
 TEST(EvalOperators, AggregateEqualityIsByIdentityThroughTheWalk) {
@@ -489,33 +480,40 @@ TEST(EvalShortCircuit, AndDoesNotEvaluateTheRightOperand) {
     Context ctx;
     // Побочных эффектов в выражениях нет, поэтому невычисление наблюдается
     // единственным способом: ошибка справа не всплывает.
-    EXPECT_FALSE(evaluate(ctx, "false && usre").booleanValue());
+    //
+    // Проба — Type через 1 + 'a', не неизвестное имя: статический проход
+    // (core/src/check.hpp) отсеял бы неизвестное имя ещё до вычисления,
+    // независимо от того, короткое замыкание его достигает или нет, и такой
+    // пробой служить больше не может.
+    EXPECT_FALSE(evaluate(ctx, "false && (1 + 'a')").booleanValue());
 }
 
 TEST(EvalShortCircuit, AndEvaluatesTheRightOperandWhenNeeded) {
     Context ctx;
     EXPECT_FALSE(evaluate(ctx, "true && false").booleanValue());
     EXPECT_TRUE(evaluate(ctx, "true && true").booleanValue());
-    EXPECT_EQ(evalError(ctx, "true && usre").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "true && (1 + 'a')").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalShortCircuit, OrDoesNotEvaluateTheRightOperand) {
     Context ctx;
-    EXPECT_TRUE(evaluate(ctx, "true || usre").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "true || (1 + 'a')").booleanValue());
 }
 
 TEST(EvalShortCircuit, OrEvaluatesTheRightOperandWhenNeeded) {
     Context ctx;
     EXPECT_TRUE(evaluate(ctx, "false || true").booleanValue());
     EXPECT_FALSE(evaluate(ctx, "false || false").booleanValue());
-    EXPECT_EQ(evalError(ctx, "false || usre").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "false || (1 + 'a')").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalShortCircuit, ErrorOnTheLeftIsNotSwallowed) {
     Context ctx;
-    // docs/semantics.md §5.5: ошибка && false — ошибка.
-    EXPECT_EQ(evalError(ctx, "usre && false").code, CS::ErrorCode::Name);
-    EXPECT_EQ(evalError(ctx, "usre || true").code, CS::ErrorCode::Name);
+    // docs/semantics.md §5.5: ошибка && false — ошибка. Левый операнд обязан
+    // быть булевым по грамматике оператора, поэтому пробу берём такую, что
+    // сама по себе даёт Type ещё до проверки булевости (1 + 'a').
+    EXPECT_EQ(evalError(ctx, "(1 + 'a') && false").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "(1 + 'a') || true").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalShortCircuit, TypeOfTheUnevaluatedOperandIsNotChecked) {
@@ -553,7 +551,10 @@ TEST(EvalShortCircuit, GuardIdiomProtectsTheRightSide) {
 
 TEST(EvalNilCoalesce, TakesTheLeftWhenItIsNotNull) {
     Context ctx;
-    EXPECT_EQ(evaluate(ctx, "1 ?? usre").numberValue(), 1.0);
+    // Проба справа — Type через 1 + 'a' (см. DoesNotSwallowErrors ниже,
+    // где этот приём уже применён): она обязана не всплыть, если левый не
+    // null.
+    EXPECT_EQ(evaluate(ctx, "1 ?? (1 + 'a')").numberValue(), 1.0);
 }
 
 TEST(EvalNilCoalesce, TakesTheRightWhenTheLeftIsNull) {
@@ -566,10 +567,9 @@ TEST(EvalNilCoalesce, DoesNotSwallowErrors) {
     // docs/semantics.md §5.6: ?? перехватывает только null. Соблазнительно
     // принять его за «если что-то пойдёт не так, подставь запасное»; он делает
     // не это.
-    EXPECT_EQ(evalError(ctx, "usre ?? 0").code, CS::ErrorCode::Name);
     EXPECT_EQ(evalError(ctx, "(1 + 'a') ?? 0").code, CS::ErrorCode::Type);
     // И справа тоже: если левый null, правый вычисляется по-настоящему.
-    EXPECT_EQ(evalError(ctx, "null ?? usre").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "null ?? (2 + 'b')").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalNilCoalesce, OperandTypesNeedNotMatch) {
@@ -586,8 +586,10 @@ TEST(EvalNilCoalesce, ChainsRightAssociatively) {
 
 TEST(EvalTernary, EvaluatesOnlyTheSelectedBranch) {
     Context ctx;
-    EXPECT_EQ(evaluate(ctx, "true ? 1 : usre").numberValue(), 1.0);
-    EXPECT_EQ(evaluate(ctx, "false ? usre : 2").numberValue(), 2.0);
+    // Проба в невыбранной ветке — Type через 1 + 'a', не неизвестное имя: она
+    // обязана не всплыть, что доказывает невычисление.
+    EXPECT_EQ(evaluate(ctx, "true ? 1 : (1 + 'a')").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "false ? (1 + 'a') : 2").numberValue(), 2.0);
 }
 
 TEST(EvalTernary, ConditionMustBeBoolean) {
@@ -606,10 +608,9 @@ TEST(EvalTernary, BranchesNeedNotShareAType) {
 void run(Context &ctx, std::string_view text) {
     Ast ast;
     Diagnostic diag;
-    ASSERT_TRUE(CS::parseProgram(text.data(),
-                                 static_cast<std::uint32_t>(text.size()), ast,
-                                 diag))
-        << diag.message;
+    const std::uint32_t errors = CS::compileScript(
+        text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
+    ASSERT_EQ(errors, 0u) << diag.message;
     ASSERT_TRUE(CS::runScript(ast, ctx, diag)) << diag.message;
 }
 
@@ -617,10 +618,9 @@ void run(Context &ctx, std::string_view text) {
 Diagnostic runError(Context &ctx, std::string_view text) {
     Ast ast;
     Diagnostic diag;
-    EXPECT_TRUE(CS::parseProgram(text.data(),
-                                 static_cast<std::uint32_t>(text.size()), ast,
-                                 diag))
-        << diag.message;
+    const std::uint32_t errors = CS::compileScript(
+        text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
+    EXPECT_EQ(errors, 0u) << diag.message;
     EXPECT_FALSE(CS::runScript(ast, ctx, diag));
     return diag;
 }
@@ -672,39 +672,34 @@ TEST(EvalAssign, WritingAKeyOffANonObjectIsAnError) {
     EXPECT_EQ(runError(ctx, "items.x = 1;").code, CS::ErrorCode::Type);
 }
 
-TEST(EvalAssign, AssigningToANameIsAnError) {
-    Context ctx;
-    put(ctx, "state", "{'a': 1}");
-    // Имя — входной слот от хоста, а не переменная скрипта: состав имён
-    // программе неподвластен (§7.1), а замена значения целиком порвала бы
-    // алиасы, которые §2.3 обещает наблюдаемыми.
-    EXPECT_EQ(runError(ctx, "state = 1;").code, CS::ErrorCode::Name);
-    // А путь внутрь — работает.
-    run(ctx, "state.a = 2;");
-    EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 2.0);
-}
-
-TEST(EvalAssign, UnknownNameIsAnError) {
-    Context ctx;
-    EXPECT_EQ(runError(ctx, "usre.a = 1;").code, CS::ErrorCode::Name);
-}
+// AssigningToANameIsAnError и UnknownNameIsAnError переехали в
+// core/tests/check_test.cpp (Check.AssigningToANameIsACompileError,
+// Check.UnknownNameInAssignmentTargetIsACompileError): "state = 1;" и
+// "usre.a = 1;" отсеиваются статическим проходом ещё до вычисления, и
+// runError() до них больше не доходит.
 
 TEST(EvalAssign, ErrorInTheValueLeavesTheTargetUntouched) {
     Context ctx;
     put(ctx, "state", "{'a': 1}");
-    EXPECT_EQ(runError(ctx, "state.a = usre;").code, CS::ErrorCode::Name);
+    // Ошибка — Type через 1 + 'a', не неизвестное имя: с приходом
+    // статического прохода последнее ловится ещё на компиляции, а здесь
+    // важно именно поведение вычислителя при рантайм-ошибке справа.
+    EXPECT_EQ(runError(ctx, "state.a = 1 + 'a';").code, CS::ErrorCode::Type);
     EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 1.0);
 }
 
 TEST(EvalAssign, TargetCheckLosesToValueErrorWhenBothFail) {
     Context ctx;
     put(ctx, "user", "{'name': 'Вася'}");
+    put(ctx, "items", "[1, 2, 3]");
+    put(ctx, "minusOne", "-1");
     // docs/semantics.md §7.2: цель проверяется после вычисления правой части.
     // Запись в null сама по себе даёт Type (WritingIntoNullIsAnError), но
-    // здесь неисправна и правая часть, и её ошибка вычисляется раньше —
-    // побеждает Name.
-    EXPECT_EQ(runError(ctx, "user.profile.name = usre;").code,
-              CS::ErrorCode::Name);
+    // здесь неисправна и правая часть тоже — чтение по отрицательному индексу
+    // даёт Range (FractionalAndNegativeIndicesAreErrors), и она вычисляется
+    // раньше — побеждает Range.
+    EXPECT_EQ(runError(ctx, "user.profile.name = items[minusOne];").code,
+              CS::ErrorCode::Range);
 }
 
 TEST(EvalScript, EmptyScriptSucceeds) {
@@ -713,15 +708,13 @@ TEST(EvalScript, EmptyScriptSucceeds) {
     run(ctx, ";;;");
 }
 
-TEST(EvalScript, CallStatementIsNotSupportedYet) {
-    Context ctx;
-    put(ctx, "items", "[]");
-    // Вызовы приходят с частью 3b. Сообщение говорит про стейтмент, а не про
-    // выражение: цикл по стейтментам различает виды сам.
-    const Diagnostic diag = runError(ctx, "push(items, 1);");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
-    EXPECT_STREQ(diag.message, "statement form is not supported");
-}
+// EvalScript.CallStatementIsNotSupportedYet удалён: он проверял, что
+// CallStatement попадал в защитную ветку default с сообщением "statement
+// form is not supported". CallStatement теперь исполняется по-настоящему
+// (core/src/eval.cpp), и то же выражение push(items, 1) даёт другую ошибку —
+// Type "builtin is not implemented yet" из applyBuiltin, потому что push
+// приходит отдельной задачей. Возможность вызывать билтин-стейтмент из
+// вычислителя покрывают тесты EvalCall ниже.
 
 TEST(EvalAssignIndex, ArrayElementIsReplaced) {
     Context ctx;
@@ -883,9 +876,9 @@ TEST(EvalCompound, TargetCheckLosesToValueErrorWhenBothFail) {
     // §7.3 говорит про результат ('x += e' есть 'x = x + e'), а не про
     // порядок проверок: цель проверяется после вычисления правой части
     // (docs/semantics.md §7.2). Индекс -1 сам по себе дал бы Range
-    // (FractionalAndNegativeIndicesAreErrors), но правая часть неисправна, и
-    // её Name побеждает первым.
-    EXPECT_EQ(runError(ctx, "items[-1] += usre;").code, CS::ErrorCode::Name);
+    // (FractionalAndNegativeIndicesAreErrors), но правая часть неисправна —
+    // Type через 1 + 'a' — и она побеждает первой.
+    EXPECT_EQ(runError(ctx, "items[-1] += 1 + 'a';").code, CS::ErrorCode::Type);
 }
 
 TEST(EvalCompound, DivisionByZeroFollowsIEEE) {
@@ -931,9 +924,13 @@ TEST(EvalScriptBehaviour, ErrorStopsTheScriptAndKeepsWhatWasDone) {
     // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md: откатывать
     // нечего, предыдущих состояний хранилище не держит. Обработчик, упавший на
     // третьем присваивании из пяти, оставит первые два применёнными.
+    //
+    // Ошибка — Type через 1 + 'a', не неизвестное имя: статический проход
+    // отсеял бы весь скрипт ещё до первого стейтмента, и «первые два
+    // применились» стало бы неверно уже по другой причине.
     const Diagnostic diag =
-        runError(ctx, "s.a = 1; s.b = 2; s.x = usre; s.c = 3;");
-    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+        runError(ctx, "s.a = 1; s.b = 2; s.x = 1 + 'a'; s.c = 3;");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     EXPECT_EQ(evaluate(ctx, "s.a").numberValue(), 1.0);
     EXPECT_EQ(evaluate(ctx, "s.b").numberValue(), 2.0);
     EXPECT_EQ(evaluate(ctx, "s.c").numberValue(), 0.0);
@@ -988,6 +985,112 @@ TEST(EvalScriptBehaviour, DeepPathInsideAScript) {
     run(ctx, "state.rows[0].cells[0] = 1; state.rows[1].cells[0] = 2;");
     EXPECT_EQ(evaluate(ctx, "state.rows[0].cells[0]").numberValue(), 1.0);
     EXPECT_EQ(evaluate(ctx, "state.rows[1].cells[0]").numberValue(), 2.0);
+}
+
+TEST(EvalCall, CountOfEachKind) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    put(ctx, "o", "{'a': 1, 'b': 2}");
+    put(ctx, "empty", "[]");
+    EXPECT_EQ(evaluate(ctx, "count(items)").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "count(o)").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "count(empty)").numberValue(), 0.0);
+}
+
+TEST(EvalCall, CountOfStringCountsBytesNotCharacters) {
+    Context ctx;
+    // docs/semantics.md §8.1 явно: байты, а не символы.
+    EXPECT_EQ(evaluate(ctx, "count('привет')").numberValue(), 12.0);
+    EXPECT_EQ(evaluate(ctx, "count('😀')").numberValue(), 4.0);
+    EXPECT_EQ(evaluate(ctx, "count('abc')").numberValue(), 3.0);
+    EXPECT_EQ(evaluate(ctx, "count('')").numberValue(), 0.0);
+}
+
+TEST(EvalCall, CountRejectsScalarsOtherThanString) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "count(1)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "count(true)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "count(null)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, KeysReturnsEveryKey) {
+    Context ctx;
+    put(ctx, "o", "{'b': 1, 'a': 2, 'c': 3}");
+    const Value keys = evaluate(ctx, "keys(o)");
+    ASSERT_EQ(keys.kind(), Value::Kind::Array);
+    ASSERT_EQ(ctx.arrayCount(keys), 3u);
+    // Порядок docs/semantics.md §8.2 не определяет, поэтому тест собирает
+    // множество, а не список: опираться на порядок значило бы обещать его.
+    std::set<std::string> got;
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        got.insert(std::string(ctx.string(ctx.arrayAt(keys, i))));
+    }
+    EXPECT_EQ(got, (std::set<std::string>{"a", "b", "c"}));
+}
+
+TEST(EvalCall, KeysOfEmptyObjectIsEmptyArray) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    EXPECT_EQ(ctx.arrayCount(evaluate(ctx, "keys(o)")), 0u);
+}
+
+TEST(EvalCall, KeysRejectsNonObjects) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(evalError(ctx, "keys(items)").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "keys('a')").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, HasDistinguishesAbsentFromNull) {
+    Context ctx;
+    put(ctx, "o", "{'present': 1, 'empty': null}");
+    // docs/semantics.md §8.3: единственный способ их различить. Обе половины
+    // обязательны, иначе правило вырождается.
+    EXPECT_TRUE(evaluate(ctx, "has(o, 'present')").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "has(o, 'empty')").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "has(o, 'missing')").booleanValue());
+    EXPECT_EQ(evaluate(ctx, "o.empty").kind(), Value::Kind::Null);
+    EXPECT_EQ(evaluate(ctx, "o.missing").kind(), Value::Kind::Null);
+}
+
+TEST(EvalCall, HasCoercesTheKey) {
+    Context ctx;
+    put(ctx, "o", "{'0': 'ноль', 'true': 'да'}");
+    EXPECT_TRUE(evaluate(ctx, "has(o, 0)").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "has(o, true)").booleanValue());
+    EXPECT_EQ(evalError(ctx, "has(o, [1])").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, LastOfArrayAndOfEmpty) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    put(ctx, "empty", "[]");
+    EXPECT_EQ(evaluate(ctx, "last(items)").numberValue(), 30.0);
+    // docs/semantics.md §8.4: на пустом — null, тогда как items[count-1] дал бы
+    // ошибку. Обе половины в одном тесте.
+    EXPECT_EQ(evaluate(ctx, "last(empty)").kind(), Value::Kind::Null);
+    EXPECT_EQ(evalError(ctx, "empty[count(empty) - 1]").code,
+              CS::ErrorCode::Range);
+}
+
+TEST(EvalCall, LastRejectsNonArrays) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    EXPECT_EQ(evalError(ctx, "last(o)").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCall, NestedCallsWork) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1, 'b': 2}");
+    EXPECT_EQ(evaluate(ctx, "count(keys(o))").numberValue(), 2.0);
+}
+
+TEST(EvalCall, ArgumentsAreEvaluatedLeftToRight) {
+    Context ctx;
+    put(ctx, "o", "{'k': 1}");
+    put(ctx, "items", "[1]");
+    // Первый аргумент негоден, второй тоже — побеждает первая ошибка.
+    EXPECT_EQ(evalError(ctx, "has(items, [1])").code, CS::ErrorCode::Type);
 }
 
 }  // namespace

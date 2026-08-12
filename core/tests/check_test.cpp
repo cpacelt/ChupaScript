@@ -148,6 +148,18 @@ TEST(Check, UnknownNameIsACompileError) {
     EXPECT_TRUE(checkExpr(ctx, "user.name").empty());
 }
 
+TEST(Check, UnknownNameInAssignmentTargetIsACompileError) {
+    Context ctx;
+    put(ctx, "state", "{'a': 1}");
+    // Переезд из core/tests/eval_test.cpp (EvalAssign.UnknownNameIsAnError):
+    // неизвестный корень внутри цели присваивания ловится тем же узлом
+    // Identifier, что и в обычном выражении — здесь важно лишь то, что
+    // стейтменты проверяются наравне с выражениями.
+    ASSERT_EQ(checkScript(ctx, "usre.a = 1;").size(), 1u);
+    EXPECT_EQ(checkScript(ctx, "usre.a = 1;")[0].code, CS::ErrorCode::Name);
+    EXPECT_TRUE(checkScript(ctx, "state.a = 1;").empty());
+}
+
 TEST(Check, MisspelledKeyIsNotAnErrorAtAnyStage) {
     Context ctx;
     put(ctx, "user", "{'name': 'Вася'}");

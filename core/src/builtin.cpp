@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+
+#include "text.hpp"
 
 namespace CS {
 namespace {
@@ -62,6 +65,99 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept {
         ++i;
     }
     return count;
+}
+
+namespace {
+
+bool failType(std::uint32_t offset, const char *message, Diagnostic &diag) {
+    diag = Diagnostic{ErrorCode::Type, offset, message};
+    return false;
+}
+
+/// Приводит скаляр к строке ключа по docs/semantics.md §4; агрегат — ошибка.
+bool keyOf(const Context &ctx, Value v, char *buffer, std::string_view *out,
+          std::uint32_t offset, Diagnostic &diag) {
+    switch (v.kind()) {
+        case Value::Kind::String: *out = ctx.string(v); return true;
+        case Value::Kind::Number:
+            *out = formatNumber(v.numberValue(), buffer, kNumberBufferSize);
+            return true;
+        case Value::Kind::Boolean:
+            *out = v.booleanValue() ? "true" : "false";
+            return true;
+        case Value::Kind::Null: *out = "null"; return true;
+        default:
+            return failType(offset, "aggregate cannot be used as a key", diag);
+    }
+}
+
+}  // namespace
+
+bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
+                  std::uint32_t count, std::uint32_t offset, Value *out,
+                  Diagnostic &diag) {
+    (void)count;  // арность гарантирована проходом
+    switch (id) {
+        case Builtin::Count:
+            // Array, Object либо String (§8.1); у строки — байты, не символы.
+            switch (args[0].kind()) {
+                case Value::Kind::Array:
+                    *out = Value::number(ctx.arrayCount(args[0]));
+                    return true;
+                case Value::Kind::Object:
+                    *out = Value::number(ctx.objectCount(args[0]));
+                    return true;
+                case Value::Kind::String:
+                    *out = Value::number(
+                        static_cast<double>(ctx.string(args[0]).size()));
+                    return true;
+                default:
+                    return failType(offset,
+                                    "count expects an array, object or string",
+                                    diag);
+            }
+
+        case Builtin::Keys: {
+            if (args[0].kind() != Value::Kind::Object) {
+                return failType(offset, "keys expects an object", diag);
+            }
+            const std::uint32_t size = ctx.objectCount(args[0]);
+            // Точное выделение: длина известна заранее.
+            Value result = ctx.makeArray(size);
+            for (std::uint32_t i = 0; i < size; ++i) {
+                // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
+                // ключи лежат, и обещанием это не становится.
+                ctx.arrayPush(result, ctx.makeString(ctx.objectKeyAt(args[0], i)));
+            }
+            *out = result;
+            return true;
+        }
+
+        case Builtin::Has: {
+            if (args[0].kind() != Value::Kind::Object) {
+                return failType(offset, "has expects an object", diag);
+            }
+            char buffer[kNumberBufferSize];
+            std::string_view key;
+            if (!keyOf(ctx, args[1], buffer, &key, offset, diag)) { return false; }
+            *out = Value::boolean(ctx.objectHas(args[0], key));
+            return true;
+        }
+
+        case Builtin::Last: {
+            if (args[0].kind() != Value::Kind::Array) {
+                return failType(offset, "last expects an array", diag);
+            }
+            const std::uint32_t size = ctx.arrayCount(args[0]);
+            // На пустом — null (§8.4): через индексацию это невыразимо.
+            *out = size == 0 ? Value::null() : ctx.arrayAt(args[0], size - 1);
+            return true;
+        }
+
+        default:
+            // Остальные функции приходят следующими задачами.
+            return failType(offset, "builtin is not implemented yet", diag);
+    }
 }
 
 }  // namespace CS

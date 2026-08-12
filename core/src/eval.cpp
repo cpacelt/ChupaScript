@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "builtin.hpp"
 #include "operator.hpp"
 #include "text.hpp"
 
@@ -327,12 +328,31 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             return eval(ast, branch, ctx, out, diag);
         }
 
+        case NodeKind::Call: {
+            Builtin id = Builtin::Count;
+            const bool known = findBuiltin(ast.text(node), &id);
+            // Неизвестное имя отсеял статический проход, а дереву мы доверяем
+            // (спека §5.3): здесь это утверждение, а не диагностика.
+            assert(known && "дерево обязано пройти check");
+            (void)known;
+
+            // Арность гарантирована проходом, поэтому буфер по самой широкой
+            // невариадической функции — двум аргументам.
+            Value args[2] = {Value::null(), Value::null()};
+            const std::uint32_t count = ast.childCount(node);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                if (!eval(ast, ast.child(node, i), ctx, &args[i], diag)) {
+                    return false;
+                }
+            }
+            return applyBuiltin(id, ctx, args, count, ast.offset(node), out, diag);
+        }
+
         default:
             // Операторы и цепочки доступа разобраны выше отдельными ветками.
             // Сюда попадают узлы, которых в дереве от parseExpression быть не
             // может: Program, Assign, CallStatement — стейтменты, а не
-            // выражения, — и NodeKind::Call, который придёт вместе с вызовами
-            // билтинов в части 3b. До тех пор ветка защитная.
+            // выражения.
             return fail(ast, node, ErrorCode::Type,
                         "expression form is not supported", diag);
     }
@@ -484,22 +504,12 @@ bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
         case NodeKind::Index:
             return assignToIndex(ast, node, target, ctx, diag);
 
-        case NodeKind::Identifier:
-            // Имя — входной слот от хоста, а не переменная скрипта. Состав
-            // имён программе неподвластен (§7.1), а замена значения целиком
-            // порвала бы алиасы, которые §2.3 обещает наблюдаемыми.
-            //
-            // Проверка решается по дереву, без данных контекста, и по
-            // устройству — статическая (docs/grammar.md §6). Живёт здесь, а
-            // не в статическом проходе, потому что того прохода ещё нет.
-            // TODO(B27): перенести в статический проход, когда он появится.
-            return fail(ast, target, ErrorCode::Name,
-                        "cannot assign to a variable name", diag);
-
         default:
-            // Грамматика строит целью только Identifier, Member и Index
-            // (docs/grammar.md §5.2); все три разобраны выше — ветка
-            // защитная.
+            // Грамматика строит целью Identifier, Member и Index
+            // (docs/grammar.md §5.2). Identifier как цель отсеян статическим
+            // проходом (core/src/check.hpp, docs/semantics.md §7.2) — дерево,
+            // дошедшее до вычислителя, эту форму содержать не может, и
+            // защитная ветка покрывает её наравне с прочими невозможными.
             return fail(ast, target, ErrorCode::Type,
                         "invalid assignment target", diag);
     }
@@ -511,10 +521,17 @@ bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
         case NodeKind::Assign:
             return assign(ast, node, ctx, diag);
 
+        case NodeKind::CallStatement: {
+            // Вызов в позиции стейтмента возвращает Void, поэтому результат
+            // читать нечего и незачем (docs/semantics.md §2.2).
+            Value discarded = Value::null();
+            return eval(ast, ast.child(node, 0), ctx, &discarded, diag);
+        }
+
         default:
-            // Сегодня сюда попадает только CallStatement: вызовы приходят с
-            // части 3b. Отдавать его в eval нельзя — вышло бы сообщение про
-            // выражение там, где речь о стейтменте.
+            // Грамматика строит стейтмент только как Assign либо
+            // CallStatement (docs/grammar.md §5.1); обе разобраны выше —
+            // ветка защитная.
             return fail(ast, node, ErrorCode::Type,
                         "statement form is not supported", diag);
     }
@@ -525,11 +542,13 @@ bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
 bool evalExpression(const Ast &ast, Context &ctx, Value *out,
                     Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
     return eval(ast, ast.root(), ctx, out, diag);
 }
 
 bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
     const NodeId program = ast.root();
     assert(ast.kind(program) == NodeKind::Program &&
            "runScript ждёт дерево от parseProgram");

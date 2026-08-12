@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <string_view>
 
+#include "context.hpp"
+#include "diagnostic.hpp"
+#include "value.hpp"
+
 namespace CS {
 
 /// Встроенные функции языка (docs/semantics.md §8).
@@ -34,5 +38,18 @@ const BuiltinInfo &builtinInfo(Builtin id) noexcept;
 /// аргументов при литеральном шаблоне, вычислитель ею же разбирает шаблон при
 /// сборке строки. Правило записано один раз.
 std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
+
+/// Применяет функцию к уже вычисленным аргументам. Все, кроме format: он
+/// вариадичен и вычисляет аргументы по мере надобности, поэтому его цикл живёт
+/// в вычислителе (core/src/eval.cpp).
+///
+/// Число аргументов и то, что функция возвращает значение, гарантированы
+/// статическим проходом (core/src/check.hpp): здесь они не перепроверяются.
+/// Для Void-функций *out не трогается — Void не становится значением (§2.2).
+///
+/// offset — смещение узла вызова, для диагностики.
+bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
+                  std::uint32_t count, std::uint32_t offset, Value *out,
+                  Diagnostic &diag);
 
 }  // namespace CS

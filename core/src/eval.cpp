@@ -311,12 +311,88 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
     }
 }
 
+/// Присваивание по имени поля: base.k = v.
+///
+/// Порядок вычисления — подвыражения цели, затем правая часть
+/// (docs/semantics.md §7.2).
+bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+                 Diagnostic &diag) {
+    Value base = Value::null();
+    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+
+    Value value = Value::null();
+    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+
+    // Запись в null — ошибка: мягкость §6.3 распространяется только на чтение,
+    // а молчаливо пропущенная запись потеряла бы данные без следа.
+    if (base.kind() != Value::Kind::Object) {
+        return fail(ast, target, ErrorCode::Type, "only objects have keys",
+                    diag);
+    }
+
+    // Имя поля берётся из узла буквально, как при чтении (§6.2).
+    ctx.objectSet(base, ast.text(target), value);
+    return true;
+}
+
+/// Присваивание: разбирает форму цели и передаёт дальше.
+bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+    const NodeId target = ast.child(node, 0);
+    switch (ast.kind(target)) {
+        case NodeKind::Member:
+            return assignToKey(ast, node, target, ctx, diag);
+
+        case NodeKind::Identifier:
+            // Имя — входной слот от хоста, а не переменная скрипта. Состав
+            // имён программе неподвластен (§7.1), а замена значения целиком
+            // порвала бы алиасы, которые §2.3 обещает наблюдаемыми.
+            return fail(ast, target, ErrorCode::Name,
+                        "cannot assign to a variable name", diag);
+
+        default:
+            // Грамматика строит целью только Identifier, Member и Index
+            // (docs/grammar.md §5.2); Index приходит следующей задачей.
+            return fail(ast, target, ErrorCode::Type,
+                        "invalid assignment target", diag);
+    }
+}
+
+/// Выполняет один стейтмент.
+bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+    switch (ast.kind(node)) {
+        case NodeKind::Assign:
+            return assign(ast, node, ctx, diag);
+
+        default:
+            // Сегодня сюда попадает только CallStatement: вызовы приходят с
+            // части 3b. Отдавать его в eval нельзя — вышло бы сообщение про
+            // выражение там, где речь о стейтменте.
+            return fail(ast, node, ErrorCode::Type,
+                        "statement form is not supported", diag);
+    }
+}
+
 }  // namespace
 
 bool evalExpression(const Ast &ast, Context &ctx, Value *out,
                     Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     return eval(ast, ast.root(), ctx, out, diag);
+}
+
+bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag) {
+    assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    const NodeId program = ast.root();
+    assert(ast.kind(program) == NodeKind::Program &&
+           "runScript ждёт дерево от parseProgram");
+
+    const std::uint32_t count = ast.childCount(program);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        // Ошибка прерывает выполнение, а сделанное остаётся сделанным:
+        // откатывать нечего.
+        if (!execute(ast, ast.child(program, i), ctx, diag)) { return false; }
+    }
+    return true;
 }
 
 }  // namespace CS

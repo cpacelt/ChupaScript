@@ -601,4 +601,114 @@ TEST(EvalTernary, BranchesNeedNotShareAType) {
     EXPECT_EQ(ctx.string(evaluate(ctx, "false ? 1 : 'a'")), "a");
 }
 
+/// Разбирает и выполняет скрипт; требует успеха обоих шагов.
+void run(Context &ctx, std::string_view text) {
+    Ast ast;
+    Diagnostic diag;
+    ASSERT_TRUE(CS::parseProgram(text.data(),
+                                 static_cast<std::uint32_t>(text.size()), ast,
+                                 diag))
+        << diag.message;
+    ASSERT_TRUE(CS::runScript(ast, ctx, diag)) << diag.message;
+}
+
+/// Разбирает успешно, выполняет с отказом; возвращает диагностику выполнения.
+Diagnostic runError(Context &ctx, std::string_view text) {
+    Ast ast;
+    Diagnostic diag;
+    EXPECT_TRUE(CS::parseProgram(text.data(),
+                                 static_cast<std::uint32_t>(text.size()), ast,
+                                 diag))
+        << diag.message;
+    EXPECT_FALSE(CS::runScript(ast, ctx, diag));
+    return diag;
+}
+
+TEST(EvalAssign, ExistingKeyIsReplaced) {
+    Context ctx;
+    put(ctx, "state", "{'count': 1}");
+    run(ctx, "state.count = 42;");
+    EXPECT_EQ(evaluate(ctx, "state.count").numberValue(), 42.0);
+}
+
+TEST(EvalAssign, MissingKeyIsCreated) {
+    Context ctx;
+    put(ctx, "state", "{}");
+    // docs/semantics.md §6.2: запись создаёт ключ, если его нет.
+    run(ctx, "state.fresh = 'значение';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "state.fresh")), "значение");
+}
+
+TEST(EvalAssign, ValueMayBeAnyExpression) {
+    Context ctx;
+    put(ctx, "state", "{'a': 2, 'b': 3}");
+    run(ctx, "state.sum = state.a * state.b + 1;");
+    EXPECT_EQ(evaluate(ctx, "state.sum").numberValue(), 7.0);
+}
+
+TEST(EvalAssign, DeepPathIsWritable) {
+    Context ctx;
+    put(ctx, "user", "{'profile': {'city': {}}}");
+    run(ctx, "user.profile.city.name = 'Москва';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "user.profile.city.name")), "Москва");
+}
+
+TEST(EvalAssign, WritingIntoNullIsAnError) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §7.2: мягкость §6.3 распространяется только на чтение.
+    // Обе половины обязательны: без второй правило вырождается.
+    EXPECT_EQ(evaluate(ctx, "user.profile.name").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "user.profile.name = 'Вася';").code,
+              CS::ErrorCode::Type);
+}
+
+TEST(EvalAssign, WritingAKeyOffANonObjectIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(runError(ctx, "count.x = 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "items.x = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssign, AssigningToANameIsAnError) {
+    Context ctx;
+    put(ctx, "state", "{'a': 1}");
+    // Имя — входной слот от хоста, а не переменная скрипта: состав имён
+    // программе неподвластен (§7.1), а замена значения целиком порвала бы
+    // алиасы, которые §2.3 обещает наблюдаемыми.
+    EXPECT_EQ(runError(ctx, "state = 1;").code, CS::ErrorCode::Name);
+    // А путь внутрь — работает.
+    run(ctx, "state.a = 2;");
+    EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 2.0);
+}
+
+TEST(EvalAssign, UnknownNameIsAnError) {
+    Context ctx;
+    EXPECT_EQ(runError(ctx, "usre.a = 1;").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalAssign, ErrorInTheValueLeavesTheTargetUntouched) {
+    Context ctx;
+    put(ctx, "state", "{'a': 1}");
+    EXPECT_EQ(runError(ctx, "state.a = usre;").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 1.0);
+}
+
+TEST(EvalScript, EmptyScriptSucceeds) {
+    Context ctx;
+    run(ctx, "");
+    run(ctx, ";;;");
+}
+
+TEST(EvalScript, CallStatementIsNotSupportedYet) {
+    Context ctx;
+    put(ctx, "items", "[]");
+    // Вызовы приходят с частью 3b. Сообщение говорит про стейтмент, а не про
+    // выражение: цикл по стейтментам различает виды сам.
+    const Diagnostic diag = runError(ctx, "push(items, 1);");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_STREQ(diag.message, "statement form is not supported");
+}
+
 }  // namespace

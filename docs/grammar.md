@@ -179,7 +179,7 @@ true    false    null
 идентификаторы:
 
 ```
-let       var       val       const     void      typeof
+let       var       val       const     void      typeof    type
 if        else      while     for       in        break     continue  do
 function  func      return
 this      self      new       delete
@@ -618,7 +618,7 @@ ReservedWord    ::= 'true' | 'false' | 'null'
                   | 'if' | 'else' | 'while' | 'for' | 'in' | 'break'
                   | 'continue' | 'do'
                   | 'function' | 'func' | 'return'
-                  | 'const' | 'void' | 'typeof'
+                  | 'const' | 'void' | 'typeof' | 'type'
                   | 'this' | 'self' | 'new' | 'delete'
                   | 'switch' | 'case' | 'default'
                   | 'try' | 'catch' | 'throw'

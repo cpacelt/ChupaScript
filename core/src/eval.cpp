@@ -52,6 +52,11 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 
 /// Приведение скаляра к строке (docs/semantics.md §4).
 ///
+/// Тонкая обёртка над builtin.hpp::coerceScalarToString, которая знает про
+/// узел дерева ровно настолько, чтобы взять из него смещение для диагностики
+/// — правило §4 записано один раз, в builtin.cpp, и обслуживает и ключ
+/// объекта, и has, и (задачами 5 и 6) str с format.
+///
 /// Возвращает срез: у строки — её собственные байты в контексте, у числа —
 /// буфер вызывающего, у остальных — статическая строка. В контекст ничего не
 /// кладётся: строка нужна на время одного поиска ключа, и класть её в пул
@@ -81,24 +86,8 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
-    switch (value.kind()) {
-        case Value::Kind::String:
-            *out = ctx.string(value);
-            return true;
-        case Value::Kind::Boolean:
-            *out = value.booleanValue() ? "true" : "false";
-            return true;
-        case Value::Kind::Null:
-            *out = "null";
-            return true;
-        case Value::Kind::Number:
-            *out = formatNumber(value.numberValue(), numberBuffer,
-                                kNumberBufferSize);
-            return true;
-        default:
-            return fail(ast, node, ErrorCode::Type,
-                        "aggregates cannot be converted to string", diag);
-    }
+    return coerceScalarToString(ctx, value, numberBuffer, out,
+                                ast.offset(node), diag);
 }
 
 /// Проверяет индекс массива по правилам §6.1: Number, конечный, целый, не
@@ -335,6 +324,17 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // (спека §5.3): здесь это утверждение, а не диагностика.
             assert(known && "дерево обязано пройти check");
             (void)known;
+
+            // format вариадичен, и буфер аргументов ниже на него не рассчитан:
+            // он вычисляет аргументы по мере надобности и придёт своим путём
+            // (core/src/eval.cpp, задача 6). assert тут не годится — в
+            // релизной сборке он исчезает, а переполнение буфера остаётся:
+            // check пропускает format с любым числом аргументов, и
+            // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
+            if (id == Builtin::Format) {
+                return fail(ast, node, ErrorCode::Type,
+                            "builtin is not implemented yet", diag);
+            }
 
             // Арность гарантирована проходом, поэтому буфер по самой широкой
             // невариадической функции — двум аргументам.

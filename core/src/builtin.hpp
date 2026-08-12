@@ -52,4 +52,18 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
                   Diagnostic &diag);
 
+/// Приводит скаляр к строке по docs/semantics.md §4. Агрегат — ошибка.
+///
+/// Одна функция на всех потребителей: ключ объекта (§4.1, has, индексация
+/// объекта), str и format (задачи 5 и 6), приведение в обходе (eval.cpp).
+/// Правило §4 записано один раз.
+///
+/// Возвращает срез: у строки — её собственные байты в контексте, у числа —
+/// numberBuffer вызывающего (обязан быть размером не меньше
+/// kNumberBufferSize, core/src/text.hpp), у остальных — статическая строка.
+/// offset — место, куда указывает диагностика при отказе.
+bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
+                          std::string_view *out, std::uint32_t offset,
+                          Diagnostic &diag);
+
 }  // namespace CS

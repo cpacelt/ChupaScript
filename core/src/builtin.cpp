@@ -74,24 +74,28 @@ bool failType(std::uint32_t offset, const char *message, Diagnostic &diag) {
     return false;
 }
 
-/// Приводит скаляр к строке ключа по docs/semantics.md §4; агрегат — ошибка.
-bool keyOf(const Context &ctx, Value v, char *buffer, std::string_view *out,
-          std::uint32_t offset, Diagnostic &diag) {
+}  // namespace
+
+bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
+                          std::string_view *out, std::uint32_t offset,
+                          Diagnostic &diag) {
     switch (v.kind()) {
         case Value::Kind::String: *out = ctx.string(v); return true;
         case Value::Kind::Number:
-            *out = formatNumber(v.numberValue(), buffer, kNumberBufferSize);
+            *out = formatNumber(v.numberValue(), numberBuffer, kNumberBufferSize);
             return true;
         case Value::Kind::Boolean:
             *out = v.booleanValue() ? "true" : "false";
             return true;
         case Value::Kind::Null: *out = "null"; return true;
         default:
-            return failType(offset, "aggregate cannot be used as a key", diag);
+            // Одно сообщение на все позиции, требующие String (§4): ключ
+            // объекта, str, format и приведение в обходе — это одно и то же
+            // нарушение, а не частный случай ключа.
+            return failType(offset, "aggregates cannot be converted to string",
+                            diag);
     }
 }
-
-}  // namespace
 
 bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
@@ -139,7 +143,9 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!keyOf(ctx, args[1], buffer, &key, offset, diag)) { return false; }
+            if (!coerceScalarToString(ctx, args[1], buffer, &key, offset, diag)) {
+                return false;
+            }
             *out = Value::boolean(ctx.objectHas(args[0], key));
             return true;
         }

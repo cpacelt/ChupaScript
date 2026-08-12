@@ -446,15 +446,19 @@ TEST(EvalOperators, OperandsComeFromTheContext) {
 
 TEST(EvalOperators, ErrorInTheLeftOperandStopsEvaluation) {
     Context ctx;
-    // Ошибка — Type через 1 + 'a', не неизвестное имя: статический проход
+    put(ctx, "items", "[1]");
+    // Ошибка — Range через items[-1], не неизвестное имя: статический проход
     // (core/src/check.hpp) отсеял бы неизвестное имя ещё до вычисления, и
-    // пробой «дошли ли мы сюда вычислением» оно уже быть не может.
-    EXPECT_EQ(evalError(ctx, "(1 + 'a') + 1").code, CS::ErrorCode::Type);
+    // пробой «дошли ли мы сюда вычислением» оно уже быть не может. Range —
+    // код, которого сам '+' не порождает, поэтому от штатного результата
+    // отличим по коду, а не только по факту отказа.
+    EXPECT_EQ(evalError(ctx, "items[-1] + 1").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalOperators, ErrorInTheRightOperandStopsEvaluation) {
     Context ctx;
-    EXPECT_EQ(evalError(ctx, "1 + (2 + 'b')").code, CS::ErrorCode::Type);
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(evalError(ctx, "1 + items[-1]").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalOperators, LeftOperandIsEvaluatedBeforeTheRight) {
@@ -490,9 +494,11 @@ TEST(EvalShortCircuit, AndDoesNotEvaluateTheRightOperand) {
 
 TEST(EvalShortCircuit, AndEvaluatesTheRightOperandWhenNeeded) {
     Context ctx;
+    put(ctx, "items", "[1]");
     EXPECT_FALSE(evaluate(ctx, "true && false").booleanValue());
     EXPECT_TRUE(evaluate(ctx, "true && true").booleanValue());
-    EXPECT_EQ(evalError(ctx, "true && (1 + 'a')").code, CS::ErrorCode::Type);
+    // Range через items[-1]: код, которого && сам не порождает.
+    EXPECT_EQ(evalError(ctx, "true && items[-1]").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalShortCircuit, OrDoesNotEvaluateTheRightOperand) {
@@ -502,18 +508,23 @@ TEST(EvalShortCircuit, OrDoesNotEvaluateTheRightOperand) {
 
 TEST(EvalShortCircuit, OrEvaluatesTheRightOperandWhenNeeded) {
     Context ctx;
+    put(ctx, "items", "[1]");
     EXPECT_TRUE(evaluate(ctx, "false || true").booleanValue());
     EXPECT_FALSE(evaluate(ctx, "false || false").booleanValue());
-    EXPECT_EQ(evalError(ctx, "false || (1 + 'a')").code, CS::ErrorCode::Type);
+    // Range через items[-1]: код, которого || сам не порождает.
+    EXPECT_EQ(evalError(ctx, "false || items[-1]").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalShortCircuit, ErrorOnTheLeftIsNotSwallowed) {
     Context ctx;
+    put(ctx, "items", "[1]");
     // docs/semantics.md §5.5: ошибка && false — ошибка. Левый операнд обязан
     // быть булевым по грамматике оператора, поэтому пробу берём такую, что
-    // сама по себе даёт Type ещё до проверки булевости (1 + 'a').
-    EXPECT_EQ(evalError(ctx, "(1 + 'a') && false").code, CS::ErrorCode::Type);
-    EXPECT_EQ(evalError(ctx, "(1 + 'a') || true").code, CS::ErrorCode::Type);
+    // сама по себе даёт Range ещё до проверки булевости (items[-1]): код,
+    // которого ни +, ни && / || не порождают, и коллизии с их штатной
+    // ошибкой типа не возникает.
+    EXPECT_EQ(evalError(ctx, "items[-1] && false").code, CS::ErrorCode::Range);
+    EXPECT_EQ(evalError(ctx, "items[-1] || true").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalShortCircuit, TypeOfTheUnevaluatedOperandIsNotChecked) {
@@ -708,13 +719,16 @@ TEST(EvalScript, EmptyScriptSucceeds) {
     run(ctx, ";;;");
 }
 
-// EvalScript.CallStatementIsNotSupportedYet удалён: он проверял, что
-// CallStatement попадал в защитную ветку default с сообщением "statement
-// form is not supported". CallStatement теперь исполняется по-настоящему
-// (core/src/eval.cpp), и то же выражение push(items, 1) даёт другую ошибку —
-// Type "builtin is not implemented yet" из applyBuiltin, потому что push
-// приходит отдельной задачей. Возможность вызывать билтин-стейтмент из
-// вычислителя покрывают тесты EvalCall ниже.
+TEST(EvalScript, CallStatementReachesTheEvaluator) {
+    Context ctx;
+    put(ctx, "items", "[1]");
+    // push придёт задачей 4; сейчас важно, что стейтмент-вызов вообще
+    // доходит до applyBuiltin, а не отвергается формой (было бы "statement
+    // form is not supported", если бы ветка CallStatement не исполнялась).
+    const Diagnostic diag = runError(ctx, "push(items, 1);");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_STREQ(diag.message, "builtin is not implemented yet");
+}
 
 TEST(EvalAssignIndex, ArrayElementIsReplaced) {
     Context ctx;
@@ -1087,10 +1101,19 @@ TEST(EvalCall, NestedCallsWork) {
 
 TEST(EvalCall, ArgumentsAreEvaluatedLeftToRight) {
     Context ctx;
-    put(ctx, "o", "{'k': 1}");
     put(ctx, "items", "[1]");
-    // Первый аргумент негоден, второй тоже — побеждает первая ошибка.
-    EXPECT_EQ(evalError(ctx, "has(items, [1])").code, CS::ErrorCode::Type);
+    // Оба аргумента негодны, но по-разному: код ошибки называет, который из
+    // них вычислялся первым.
+    EXPECT_EQ(evalError(ctx, "has(items[-1], 2 + 'b')").code,
+              CS::ErrorCode::Range);
+}
+
+TEST(EvalCall, VariadicFormatDoesNotOverflowTheArgumentBuffer) {
+    Context ctx;
+    // format проходит проверки с любым числом аргументов, а буфер ветки Call
+    // рассчитан на два: аргументы обязаны не попадать в него вовсе.
+    EXPECT_EQ(evalError(ctx, "format('${}${}${}${}${}', 1, 2, 3, 4, 5)").code,
+              CS::ErrorCode::Type);
 }
 
 }  // namespace

@@ -449,4 +449,118 @@ TEST(EvalOperators, AggregateEqualityIsByIdentityThroughTheWalk) {
     EXPECT_FALSE(evaluate(ctx, "items == [1, 2]").booleanValue());
 }
 
+TEST(EvalShortCircuit, AndDoesNotEvaluateTheRightOperand) {
+    Context ctx;
+    // Побочных эффектов в выражениях нет, поэтому невычисление наблюдается
+    // единственным способом: ошибка справа не всплывает.
+    EXPECT_FALSE(evaluate(ctx, "false && usre").booleanValue());
+}
+
+TEST(EvalShortCircuit, AndEvaluatesTheRightOperandWhenNeeded) {
+    Context ctx;
+    EXPECT_FALSE(evaluate(ctx, "true && false").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "true && true").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, OrDoesNotEvaluateTheRightOperand) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "true || usre").booleanValue());
+}
+
+TEST(EvalShortCircuit, OrEvaluatesTheRightOperandWhenNeeded) {
+    Context ctx;
+    EXPECT_TRUE(evaluate(ctx, "false || true").booleanValue());
+    EXPECT_FALSE(evaluate(ctx, "false || false").booleanValue());
+    EXPECT_EQ(evalError(ctx, "false || usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, ErrorOnTheLeftIsNotSwallowed) {
+    Context ctx;
+    // docs/semantics.md §5.5: ошибка && false — ошибка.
+    EXPECT_EQ(evalError(ctx, "usre && false").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "usre || true").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalShortCircuit, TypeOfTheUnevaluatedOperandIsNotChecked) {
+    Context ctx;
+    // Самая точная проверка правила: тип правого операнда проверяется тогда и
+    // только тогда, когда его пришлось вычислить. Поодиночке ни одна из двух
+    // строк ничего не доказывает.
+    EXPECT_FALSE(evaluate(ctx, "false && 5").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && 5").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalShortCircuit, LogicalOperatorsRequireBooleanOnTheLeft) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 && true").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "'a' || true").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalShortCircuit, GuardIdiomProtectsTheRightSide) {
+    Context ctx;
+    put(ctx, "state", "{'items': []}");
+    // Ради этого короткое замыкание и существует. Правая часть без защиты
+    // слева даёт ошибку типа: строковый индекс массива запрещён. Настоящая
+    // идиома из §5.5 пользуется count(), который придёт с частью 3, — здесь
+    // та же форма на доступных средствах.
+    //
+    // Обе строки обязательны: одна показывает, что справа не пошли, вторая —
+    // что там действительно есть на что наткнуться.
+    EXPECT_FALSE(evaluate(ctx, "false && state.items['0'] == 1").booleanValue());
+    EXPECT_EQ(evalError(ctx, "true && state.items['0'] == 1").code,
+              CS::ErrorCode::Type);
+}
+
+TEST(EvalNilCoalesce, TakesTheLeftWhenItIsNotNull) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "1 ?? usre").numberValue(), 1.0);
+}
+
+TEST(EvalNilCoalesce, TakesTheRightWhenTheLeftIsNull) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "null ?? 2").numberValue(), 2.0);
+}
+
+TEST(EvalNilCoalesce, DoesNotSwallowErrors) {
+    Context ctx;
+    // docs/semantics.md §5.6: ?? перехватывает только null. Соблазнительно
+    // принять его за «если что-то пойдёт не так, подставь запасное»; он делает
+    // не это.
+    EXPECT_EQ(evalError(ctx, "usre ?? 0").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evalError(ctx, "(1 + 'a') ?? 0").code, CS::ErrorCode::Type);
+    // И справа тоже: если левый null, правый вычисляется по-настоящему.
+    EXPECT_EQ(evalError(ctx, "null ?? usre").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalNilCoalesce, OperandTypesNeedNotMatch) {
+    Context ctx;
+    EXPECT_EQ(ctx.string(evaluate(ctx, "null ?? 'запасное'")), "запасное");
+}
+
+TEST(EvalNilCoalesce, ChainsRightAssociatively) {
+    Context ctx;
+    put(ctx, "user", "{'nickname': null}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "user.nickname ?? user.name ?? 'Гость'")),
+              "Гость");
+}
+
+TEST(EvalTernary, EvaluatesOnlyTheSelectedBranch) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "true ? 1 : usre").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "false ? usre : 2").numberValue(), 2.0);
+}
+
+TEST(EvalTernary, ConditionMustBeBoolean) {
+    Context ctx;
+    EXPECT_EQ(evalError(ctx, "1 ? 1 : 2").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "null ? 1 : 2").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalTernary, BranchesNeedNotShareAType) {
+    Context ctx;
+    EXPECT_EQ(evaluate(ctx, "true ? 1 : 'a'").numberValue(), 1.0);
+    EXPECT_EQ(ctx.string(evaluate(ctx, "false ? 1 : 'a'")), "a");
+}
+
 }  // namespace

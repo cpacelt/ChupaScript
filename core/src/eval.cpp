@@ -237,11 +237,47 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
         case NodeKind::Binary: {
             const TokenKind op = ast.op(node);
             // Короткое замыкание решает, вычислять ли правый операнд, поэтому
-            // в applyBinary не попадает. Его ветки приходят следующей задачей.
-            if (op == TokenKind::AndAnd || op == TokenKind::OrOr ||
-                op == TokenKind::QuestionQuestion) {
-                return fail(ast, node, ErrorCode::Type,
-                            "expression form is not supported", diag);
+            // applyBinary этими операторами не занимается: к моменту его
+            // вызова оба операнда уже вычислены, а тут именно этого делать
+            // нельзя.
+            if (op == TokenKind::AndAnd || op == TokenKind::OrOr) {
+                Value lhs = Value::null();
+                if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+                if (lhs.kind() != Value::Kind::Boolean) {
+                    return fail(ast, node, ErrorCode::Type,
+                                "logical operators require booleans", diag);
+                }
+
+                // Левый определил результат — правый не вычисляется, а значит и
+                // не проверяется: проверять нечего. Поэтому false && 5 даёт
+                // false, а true && 5 — ошибку.
+                const bool left = lhs.booleanValue();
+                if ((op == TokenKind::AndAnd && !left) ||
+                    (op == TokenKind::OrOr && left)) {
+                    *out = Value::boolean(left);
+                    return true;
+                }
+
+                Value rhs = Value::null();
+                if (!eval(ast, ast.child(node, 1), ctx, &rhs, diag)) { return false; }
+                if (rhs.kind() != Value::Kind::Boolean) {
+                    return fail(ast, node, ErrorCode::Type,
+                                "logical operators require booleans", diag);
+                }
+                *out = Value::boolean(rhs.booleanValue());
+                return true;
+            }
+
+            if (op == TokenKind::QuestionQuestion) {
+                Value lhs = Value::null();
+                if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+                // Перехватывает только null: ошибка слева уже вернулась выше и
+                // не гасится.
+                if (lhs.kind() != Value::Kind::Null) {
+                    *out = lhs;
+                    return true;
+                }
+                return eval(ast, ast.child(node, 1), ctx, out, diag);
             }
 
             // Слева направо: порядок зафиксирован (docs/semantics.md §3.3).
@@ -250,6 +286,18 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             Value rhs = Value::null();
             if (!eval(ast, ast.child(node, 1), ctx, &rhs, diag)) { return false; }
             return applyBinary(op, lhs, rhs, ctx, ast.offset(node), out, diag);
+        }
+
+        case NodeKind::Conditional: {
+            Value condition = Value::null();
+            if (!eval(ast, ast.child(node, 0), ctx, &condition, diag)) { return false; }
+            if (condition.kind() != Value::Kind::Boolean) {
+                return fail(ast, node, ErrorCode::Type,
+                            "ternary condition must be a boolean", diag);
+            }
+            // Вычисляется только выбранная ветвь (docs/semantics.md §5.7).
+            const NodeId branch = ast.child(node, condition.booleanValue() ? 1 : 2);
+            return eval(ast, branch, ctx, out, diag);
         }
 
         default:

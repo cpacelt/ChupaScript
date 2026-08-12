@@ -1,5 +1,6 @@
 add_executable(chupascript_tests
     ast_test.cpp
+    builtin_test.cpp
     context_test.cpp
     data_test.cpp
     eval_test.cpp

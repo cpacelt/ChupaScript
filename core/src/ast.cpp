@@ -16,6 +16,8 @@ void Ast::reset(const char *source) {
     nodes_.clear();
     children_.clear();
     nodes_.push_back(Node{});  // индекс kNoNode
+    // Дерево выброшено — отметка уходит вместе с ним.
+    checked_ = false;
 }
 
 void Ast::setRoot(NodeId node) noexcept { root_ = node; }

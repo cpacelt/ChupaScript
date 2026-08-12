@@ -54,6 +54,14 @@ class Ast {
     /// Объявляет узел корнем дерева.
     void setRoot(NodeId node) noexcept;
 
+    /// Помечает дерево прошедшим статические проверки (core/src/check.hpp).
+    ///
+    /// Ставит её только check при нуле находок; вычислитель требует её
+    /// утверждением. Так «забыли проверить» падает на первом же тесте, а в
+    /// релизе не стоит ничего.
+    void markChecked() noexcept { checked_ = true; }
+    [[nodiscard]] bool isChecked() const noexcept { return checked_; }
+
     // ─── строитель: единственный способ создать узел ───
 
     NodeId number(const Token &token);
@@ -124,6 +132,7 @@ class Ast {
 
     const char *src_ = nullptr;
     NodeId root_ = kNoNode;
+    bool checked_ = false;
     std::vector<Node> nodes_;      // TODO(B7): переехать в арену контекста
     std::vector<NodeId> children_; // TODO(B10): боковой пул детей
 };

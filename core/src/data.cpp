@@ -7,6 +7,7 @@
 #include "ast.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
+#include "text.hpp"
 #include "token.hpp"
 
 namespace CS {
@@ -39,43 +40,6 @@ bool isRootName(std::string_view name) noexcept {
     Token tail;
     if (!lexer.next(tail, ignored)) { return false; }
     return tail.kind == TokenKind::End;
-}
-
-/// Раскодирует экранирование строкового литерала.
-///
-/// Набор — из docs/grammar.md §A: \\ \' \" \n \t. Неизвестной
-/// последовательности здесь быть не может: её отверг лексер.
-void decodeEscapes(std::string_view raw, std::string &out) {
-    out.clear();
-    out.reserve(raw.size());
-    for (std::size_t i = 0; i < raw.size(); ++i) {
-        if (raw[i] != '\\') {
-            out.push_back(raw[i]);
-            continue;
-        }
-        assert(i + 1 < raw.size() && "лексер не пропустил бы висячий слэш");
-        ++i;
-        switch (raw[i]) {
-            case 'n': out.push_back('\n'); break;
-            case 't': out.push_back('\t'); break;
-            case '\\': out.push_back('\\'); break;
-            case '\'': out.push_back('\''); break;
-            case '"': out.push_back('"'); break;
-            default: assert(false && "лексер отверг бы такую последовательность");
-        }
-    }
-}
-
-/// Содержимое строкового литерала: срез исходника, если экранирования нет,
-/// иначе раскодированное в scratch.
-///
-/// Флаг hasEscape избавляет от временного буфера в подавляющем большинстве
-/// случаев: экранирование в данных редкость.
-std::string_view literalText(const Ast &ast, NodeId node, std::string &scratch) {
-    assert(ast.kind(node) == NodeKind::String);
-    if (!ast.hasEscape(node)) { return ast.text(node); }
-    decodeEscapes(ast.text(node), scratch);
-    return scratch;
 }
 
 bool materialize(const Ast &ast, NodeId node, Context &ctx,

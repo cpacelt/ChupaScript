@@ -2,8 +2,10 @@ add_library(chupascript STATIC
     src/ast.cpp
     src/context.cpp
     src/data.cpp
+    src/eval.cpp
     src/lexer.cpp
     src/parser.cpp
+    src/text.cpp
     src/version.cpp
 )
 

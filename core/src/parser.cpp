@@ -9,13 +9,19 @@
 namespace CS {
 namespace {
 
-/// Предел глубины рекурсии парсера.
+/// Предел высоты дерева разбора.
 ///
-/// Вход недоверенный, а без предела тексты вида "((((((…", "!!!!!!…" и
-/// "1 ?? 1 ?? 1 ?? …" роняют процесс переполнением стека. Счётчик растёт в
-/// трёх самотрекурсивных правилах — ternary, nilCoalesce, unary, — поэтому
-/// один уровень вложенности скобок стоит трёх единиц, а цепочка из '!' или
-/// '??' — одной за звено.
+/// Вход недоверенный, а без предела тексты вида "((((((…", "!!!!!!…",
+/// "1 ?? 1 ?? 1 ?? …" и "a.b.b.b…" роняют процесс переполнением стека — либо
+/// в самом парсере, либо потом в вычислителе, который спускается по дереву
+/// рекурсивно. Счётчик растёт в трёх саморекурсивных правилах — ternary,
+/// nilCoalesce, unary — и на каждом звене постфиксной цепочки ('.' и '[]'),
+/// поэтому один уровень вложенности скобок стоит трёх единиц, а цепочка из
+/// '!', '??' или '.k' — одной за звено.
+///
+/// Звено цепочки тратит тот же бюджет, что и вложенность, именно потому, что
+/// предел обязан ограничивать высоту дерева целиком. Отдельный предел на
+/// длину цепочки перемножился бы с вложенностью и высоту не ограничил.
 ///
 /// 96 единиц — это около 320 кадров стека в худшем случае, то есть меньше
 /// сотни килобайт. Двадцати уровней вложенности в макете не бывает.
@@ -74,6 +80,25 @@ class Parser {
         std::uint32_t &depth_;
     };
 
+    /// Возвращает бюджет, занятый звеньями постфиксной цепочки, — весь разом
+    /// и только при выходе из postfix().
+    ///
+    /// Освобождать по единице на каждой итерации цикла нельзя: выражение
+    /// внутри '[...]' обязано видеть глубину, накопленную предыдущими
+    /// звеньями, иначе вложенность и цепочки перестают складываться.
+    class ChainGuard {
+       public:
+        ChainGuard(std::uint32_t &depth, const std::uint32_t &links) noexcept
+            : depth_(depth), links_(links) {}
+        ~ChainGuard() { depth_ -= links_; }
+        ChainGuard(const ChainGuard &) = delete;
+        ChainGuard &operator=(const ChainGuard &) = delete;
+
+       private:
+        std::uint32_t &depth_;
+        const std::uint32_t &links_;
+    };
+
     bool advance();
     [[nodiscard]] bool at(TokenKind kind) const noexcept {
         return cur_.kind == kind;
@@ -95,6 +120,10 @@ class Parser {
     NodeId unary();
     NodeId postfix();
     NodeId primary();
+
+    /// Занимает единицу бюджета глубины под очередное звено цепочки.
+    /// false — предел исчерпан, отказ уже записан.
+    bool takeChainLink(std::uint32_t &links);
 
     NodeId callArguments(const Token &name);
     NodeId arrayLiteral();
@@ -325,13 +354,34 @@ NodeId Parser::unary() {
     return postfix();
 }
 
+bool Parser::takeChainLink(std::uint32_t &links) {
+    if (depth_ >= kMaxDepth) {
+        fail(cur_.offset, "expression nesting too deep");
+        return false;
+    }
+    ++depth_;
+    ++links;
+    return true;
+}
+
 NodeId Parser::postfix() {
     NodeId base = primary();
     if (base == kNoNode) {
         return kNoNode;
     }
+
+    // Каждое звено цепочки — уровень дерева, по которому потом спускается
+    // вычислитель, поэтому звено стоит единицы того же бюджета, что и
+    // вложенность (см. kMaxDepth). Цикл здесь только про форму разбора: высоту
+    // дерева он наращивает ровно так же, как рекурсия.
+    std::uint32_t links = 0;
+    const ChainGuard chain(depth_, links);
+
     for (;;) {
         if (at(TokenKind::Dot)) {
+            if (!takeChainLink(links)) {
+                return kNoNode;
+            }
             if (!advance()) {
                 return kNoNode;
             }
@@ -345,6 +395,11 @@ NodeId Parser::postfix() {
             base = ast_.member(base, name);
         } else if (at(TokenKind::LBracket)) {
             const std::uint32_t offset = cur_.offset;
+            // Единица берётся до разбора подвыражения: оно обязано видеть
+            // глубину, уже накопленную цепочкой.
+            if (!takeChainLink(links)) {
+                return kNoNode;
+            }
             if (!advance()) {
                 return kNoNode;
             }

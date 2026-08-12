@@ -117,4 +117,57 @@ TEST(EvalNames, UnknownRootIsAnError) {
     EXPECT_EQ(diag.offset, 0u);
 }
 
+TEST(EvalMember, ExistingKeyIsRead) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася', 'age': 30}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "user.name")), "Вася");
+    EXPECT_EQ(evaluate(ctx, "user.age").numberValue(), 30.0);
+}
+
+TEST(EvalMember, MissingKeyReadsAsNull) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §6.2: отсутствующий ключ читается как null.
+    EXPECT_EQ(evaluate(ctx, "user.nickname").kind(), Value::Kind::Null);
+}
+
+TEST(EvalMember, ReadingThroughNullGivesNull) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §6.3: путь любой глубины безопасен, а опечатка глубже
+    // первого сегмента не диагностируется — это цена правила.
+    EXPECT_EQ(evaluate(ctx, "user.prfoile.avatar").kind(), Value::Kind::Null);
+    EXPECT_EQ(evaluate(ctx, "user.a.b.c.d.e").kind(), Value::Kind::Null);
+}
+
+TEST(EvalMember, ReadingKeyOffANonObjectIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "name", "'Вася'");
+    put(ctx, "flag", "true");
+    put(ctx, "items", "[1, 2]");
+    // docs/semantics.md §6.4: доступ по ключу определён для Object, чтение у
+    // null — правилом §6.3, прочее — ошибка.
+    EXPECT_EQ(evalError(ctx, "count.x").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "name.x").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "flag.x").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "items.x").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalMember, KeyIsTakenLiterallyNotAsAName) {
+    Context ctx;
+    put(ctx, "o", "{'name': 'ключ'}");
+    put(ctx, "name", "'корень'");
+    // docs/semantics.md §6.2: в форме obj.k ключом является имя k буквально, а
+    // не значение корня, который случайно называется так же.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o.name")), "ключ");
+}
+
+TEST(EvalMember, OffsetPointsAtTheFailingNode) {
+    Context ctx;
+    put(ctx, "count", "3");
+    // Место ошибки — там, где чинить, а не в начале выражения.
+    EXPECT_GT(evalError(ctx, "count.a.b").offset, 0u);
+}
+
 }  // namespace

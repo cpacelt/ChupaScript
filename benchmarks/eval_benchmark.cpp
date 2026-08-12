@@ -98,6 +98,31 @@ void BM_Eval_FormatNumber(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_FormatNumber);
 
+/// Арифметика: четыре операции над числами из контекста.
+void BM_Eval_Arithmetic(benchmark::State &state) {
+    runEval(state, "user.profile.city.code.zip * 2 + 1 - 3");
+}
+BENCHMARK(BM_Eval_Arithmetic);
+
+/// Цепочка сравнений, соединённая && — типичная защита в props.
+void BM_Eval_LogicalChain(benchmark::State &state) {
+    runEval(state, "1 < 2 && 2 < 3 && 3 < 4");
+}
+BENCHMARK(BM_Eval_LogicalChain);
+
+/// ?? по короткому пути: слева не null, правый операнд не вычисляется.
+void BM_Eval_NilCoalesceShort(benchmark::State &state) {
+    runEval(state, "user.name ?? 'Гость'");
+}
+BENCHMARK(BM_Eval_NilCoalesceShort);
+
+/// ?? по длинному пути: слева null, правый вычисляется. Разница с коротким —
+/// то, что видно на экране: ?? самый частый оператор в props.
+void BM_Eval_NilCoalesceLong(benchmark::State &state) {
+    runEval(state, "user.nickname ?? 'Гость'");
+}
+BENCHMARK(BM_Eval_NilCoalesceLong);
+
 }  // namespace
 
 static void BM_Version(benchmark::State &state) {

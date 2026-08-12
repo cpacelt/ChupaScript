@@ -904,9 +904,16 @@ TEST(EvalIndex, ArrayReadBeyondEndGivesNull) {
 TEST(EvalIndex, FractionalAndNegativeIndicesAreErrors) {
     Context ctx;
     put(ctx, "items", "[10, 20]");
-    // Означают намерение, которого в языке нет: приведения к целому тоже нет.
+    put(ctx, "minusOne", "-1");
+    put(ctx, "huge", std::string(400, '9'));
+    // Дробный и отрицательный индекс означают намерение, которого в языке нет:
+    // приведения к целому тоже нет. Отрицательное значение и бесконечность
+    // берутся из данных — унарный минус это оператор, а операторов в части 1
+    // нет; четыреста девяток переполняют double и дают inf. Без последней
+    // строки проверка !isfinite в readIndex не покрыта ничем.
     EXPECT_EQ(evalError(ctx, "items[0.5]").code, CS::ErrorCode::Range);
-    EXPECT_EQ(evalError(ctx, "items[-1]").code, CS::ErrorCode::Range);
+    EXPECT_EQ(evalError(ctx, "items[minusOne]").code, CS::ErrorCode::Range);
+    EXPECT_EQ(evalError(ctx, "items[huge]").code, CS::ErrorCode::Range);
 }
 
 TEST(EvalIndex, NonNumberArrayIndexIsAnError) {
@@ -940,9 +947,12 @@ TEST(EvalIndex, ScalarKeysAreCoercedToString) {
 TEST(EvalIndex, NegativeZeroAndZeroAreDifferentKeys) {
     Context ctx;
     put(ctx, "o", "{'0': 'plus', '-0': 'minus'}");
-    // docs/semantics.md §4.3: -0 == 0 истинно, но ключи разные.
+    put(ctx, "minusZero", "-0");
+    // docs/semantics.md §4.3: -0 == 0 истинно, но ключи разные, потому что
+    // представление числа сохраняет знак нуля. Отрицательный ноль приходит из
+    // данных по той же причине, что и в тесте выше.
     EXPECT_EQ(ctx.string(evaluate(ctx, "o[0]")), "plus");
-    EXPECT_EQ(ctx.string(evaluate(ctx, "o[-0]")), "minus");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[minusZero]")), "minus");
 }
 
 TEST(EvalIndex, AggregateKeyIsAnError) {
@@ -987,6 +997,8 @@ TEST(EvalIndex, ChainedAccessWorks) {
     EXPECT_EQ(evaluate(ctx, "state.items[1].id").numberValue(), 2.0);
 }
 ```
+
+Отрицательные значения в двух тестах выше приходят из данных, а не из выражения, и это не обходной приём: унарный минус — оператор (`docs/semantics.md` §5.1), а часть 1 операторов не знает. Проверяемые же свойства принадлежат индексации и приведению, а не минусу, поэтому проверять их надо здесь. Слой данных умеет отрицательные литералы, потому что там минус — запись значения, а не вычисление.
 
 - [ ] **Шаг 2: Убедиться, что тесты падают**
 

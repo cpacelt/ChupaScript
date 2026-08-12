@@ -8,6 +8,8 @@
 
 #include "chupascript/chupascript.h"
 #include "ast.hpp"
+#include "check.hpp"
+#include "compile.hpp"
 #include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
@@ -44,10 +46,12 @@ void runEval(benchmark::State &state, std::string_view source) {
     Ast ast;
     Diagnostic diag;
     // Срез строкового литерала: данные статические, дерево хранит их срезами.
-    if (!CS::parseExpression(source.data(),
-                             static_cast<std::uint32_t>(source.size()), ast,
-                             diag)) {
-        state.SkipWithError("parseExpression failed");
+    // compileExpression вместо parseExpression: evalExpression утверждением
+    // требует отметку прохода, а разбор без проверки её не ставит.
+    if (CS::compileExpression(source.data(),
+                              static_cast<std::uint32_t>(source.size()), ast,
+                              ctx, &diag, 1) != 0) {
+        state.SkipWithError("compileExpression failed");
         return;
     }
 
@@ -144,10 +148,17 @@ BENCHMARK(BM_Eval_NilCoalesceLong);
 void runScriptBench(benchmark::State &state, std::string_view source) {
     Ast ast;
     Diagnostic diag;
-    if (!CS::parseProgram(source.data(),
+    // Контекст для проверки имён нужен до цикла: runScript требует отметку
+    // прохода, а проходу довольно состава имён — значения роли не играют.
+    Context checkCtx;
+    if (!fill(checkCtx)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    if (CS::compileScript(source.data(),
                           static_cast<std::uint32_t>(source.size()), ast,
-                          diag)) {
-        state.SkipWithError("parseProgram failed");
+                          checkCtx, &diag, 1) != 0) {
+        state.SkipWithError("compileScript failed");
         return;
     }
 
@@ -185,6 +196,75 @@ void BM_Eval_Script(benchmark::State &state) {
                    " user.e = 5;");
 }
 BENCHMARK(BM_Eval_Script);
+
+/// Дешёвый билтин: один аргумент, ничего не выделяет.
+void BM_Eval_CallCount(benchmark::State &state) { runEval(state, "count(items)"); }
+BENCHMARK(BM_Eval_CallCount);
+
+/// Выделяющий билтин: создаёт массив на каждый вызов.
+void BM_Eval_CallKeys(benchmark::State &state) { runEval(state, "keys(map)"); }
+BENCHMARK(BM_Eval_CallKeys);
+
+/// Сборка строки: единственный билтин, растящий текстовый пул.
+void BM_Eval_Format(benchmark::State &state) {
+    runEval(state, "format('${} из ${}', 1, 2)");
+}
+BENCHMARK(BM_Eval_Format);
+
+/// Вызов внутри выражения, какие и бывают в props.
+void BM_Eval_CallInProps(benchmark::State &state) {
+    runEval(state, "count(items) > 0 ? items[0] : 0");
+}
+BENCHMARK(BM_Eval_CallInProps);
+
+/// Общая часть для прохода: разобрать один раз, мерить только проверки.
+void runCheck(benchmark::State &state, std::string_view source, bool program) {
+    Context ctx;
+    if (!fill(ctx)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    Ast ast;
+    Diagnostic diag;
+    const bool parsed =
+        program ? CS::parseProgram(source.data(),
+                                   static_cast<std::uint32_t>(source.size()),
+                                   ast, diag)
+                : CS::parseExpression(source.data(),
+                                      static_cast<std::uint32_t>(source.size()),
+                                      ast, diag);
+    if (!parsed) {
+        state.SkipWithError("parse failed");
+        return;
+    }
+    for (auto _ : state) {
+        Diagnostic found[1];
+        std::uint32_t errors = CS::check(ast, ctx, found, 1);
+        benchmark::DoNotOptimize(errors);
+    }
+}
+
+/// Проход по дереву props. Сравнивать эту строку надо с BM_Parse_Props,
+/// делённым на сто: решение делать проход обязательным стоит на том, что он
+/// заметно дешевле разбора.
+void BM_Check_Props(benchmark::State &state) {
+    runCheck(state,
+             "user.profile.city.code.zip > 0"
+             " ? format('${}', user.name)"
+             " : 'нет'",
+             false);
+}
+BENCHMARK(BM_Check_Props);
+
+/// Проход по дереву обработчика.
+void BM_Check_Handler(benchmark::State &state) {
+    runCheck(state,
+             "push(items, 1);"
+             "user.badge = count(items);"
+             "user.label = format('${} шт.', count(items));",
+             true);
+}
+BENCHMARK(BM_Check_Handler);
 
 }  // namespace
 

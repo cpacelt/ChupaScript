@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -80,9 +81,9 @@ TEST(EvalLiterals, StringEscapesAreDecoded) {
 
 TEST(EvalUnsupported, CallsAreNotSupportedYet) {
     Context ctx;
-    // Вызовы приходят с частью 3. После них в ветке default останутся только
-    // Program, Assign и CallStatement — узлы, которых в дереве от
-    // parseExpression быть не может, — и она станет защитной окончательно.
+    // Вызовы приходят с частью 3b. До тех пор NodeKind::Call ловит защитная
+    // ветка default вместе с Program, Assign и CallStatement — узлами,
+    // которых в дереве от parseExpression быть не может.
     const Diagnostic diag = evalError(ctx, "count(items)");
     EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     EXPECT_STREQ(diag.message, "expression form is not supported");
@@ -599,6 +600,394 @@ TEST(EvalTernary, BranchesNeedNotShareAType) {
     Context ctx;
     EXPECT_EQ(evaluate(ctx, "true ? 1 : 'a'").numberValue(), 1.0);
     EXPECT_EQ(ctx.string(evaluate(ctx, "false ? 1 : 'a'")), "a");
+}
+
+/// Разбирает и выполняет скрипт; требует успеха обоих шагов.
+void run(Context &ctx, std::string_view text) {
+    Ast ast;
+    Diagnostic diag;
+    ASSERT_TRUE(CS::parseProgram(text.data(),
+                                 static_cast<std::uint32_t>(text.size()), ast,
+                                 diag))
+        << diag.message;
+    ASSERT_TRUE(CS::runScript(ast, ctx, diag)) << diag.message;
+}
+
+/// Разбирает успешно, выполняет с отказом; возвращает диагностику выполнения.
+Diagnostic runError(Context &ctx, std::string_view text) {
+    Ast ast;
+    Diagnostic diag;
+    EXPECT_TRUE(CS::parseProgram(text.data(),
+                                 static_cast<std::uint32_t>(text.size()), ast,
+                                 diag))
+        << diag.message;
+    EXPECT_FALSE(CS::runScript(ast, ctx, diag));
+    return diag;
+}
+
+TEST(EvalAssign, ExistingKeyIsReplaced) {
+    Context ctx;
+    put(ctx, "state", "{'count': 1}");
+    run(ctx, "state.count = 42;");
+    EXPECT_EQ(evaluate(ctx, "state.count").numberValue(), 42.0);
+}
+
+TEST(EvalAssign, MissingKeyIsCreated) {
+    Context ctx;
+    put(ctx, "state", "{}");
+    // docs/semantics.md §6.2: запись создаёт ключ, если его нет.
+    run(ctx, "state.fresh = 'значение';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "state.fresh")), "значение");
+}
+
+TEST(EvalAssign, ValueMayBeAnyExpression) {
+    Context ctx;
+    put(ctx, "state", "{'a': 2, 'b': 3}");
+    run(ctx, "state.sum = state.a * state.b + 1;");
+    EXPECT_EQ(evaluate(ctx, "state.sum").numberValue(), 7.0);
+}
+
+TEST(EvalAssign, DeepPathIsWritable) {
+    Context ctx;
+    put(ctx, "user", "{'profile': {'city': {}}}");
+    run(ctx, "user.profile.city.name = 'Москва';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "user.profile.city.name")), "Москва");
+}
+
+TEST(EvalAssign, WritingIntoNullIsAnError) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §7.2: мягкость §6.3 распространяется только на чтение.
+    // Обе половины обязательны: без второй правило вырождается.
+    EXPECT_EQ(evaluate(ctx, "user.profile.name").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "user.profile.name = 'Вася';").code,
+              CS::ErrorCode::Type);
+}
+
+TEST(EvalAssign, WritingAKeyOffANonObjectIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(runError(ctx, "count.x = 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "items.x = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssign, AssigningToANameIsAnError) {
+    Context ctx;
+    put(ctx, "state", "{'a': 1}");
+    // Имя — входной слот от хоста, а не переменная скрипта: состав имён
+    // программе неподвластен (§7.1), а замена значения целиком порвала бы
+    // алиасы, которые §2.3 обещает наблюдаемыми.
+    EXPECT_EQ(runError(ctx, "state = 1;").code, CS::ErrorCode::Name);
+    // А путь внутрь — работает.
+    run(ctx, "state.a = 2;");
+    EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 2.0);
+}
+
+TEST(EvalAssign, UnknownNameIsAnError) {
+    Context ctx;
+    EXPECT_EQ(runError(ctx, "usre.a = 1;").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalAssign, ErrorInTheValueLeavesTheTargetUntouched) {
+    Context ctx;
+    put(ctx, "state", "{'a': 1}");
+    EXPECT_EQ(runError(ctx, "state.a = usre;").code, CS::ErrorCode::Name);
+    EXPECT_EQ(evaluate(ctx, "state.a").numberValue(), 1.0);
+}
+
+TEST(EvalAssign, TargetCheckLosesToValueErrorWhenBothFail) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §7.2: цель проверяется после вычисления правой части.
+    // Запись в null сама по себе даёт Type (WritingIntoNullIsAnError), но
+    // здесь неисправна и правая часть, и её ошибка вычисляется раньше —
+    // побеждает Name.
+    EXPECT_EQ(runError(ctx, "user.profile.name = usre;").code,
+              CS::ErrorCode::Name);
+}
+
+TEST(EvalScript, EmptyScriptSucceeds) {
+    Context ctx;
+    run(ctx, "");
+    run(ctx, ";;;");
+}
+
+TEST(EvalScript, CallStatementIsNotSupportedYet) {
+    Context ctx;
+    put(ctx, "items", "[]");
+    // Вызовы приходят с частью 3b. Сообщение говорит про стейтмент, а не про
+    // выражение: цикл по стейтментам различает виды сам.
+    const Diagnostic diag = runError(ctx, "push(items, 1);");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    EXPECT_STREQ(diag.message, "statement form is not supported");
+}
+
+TEST(EvalAssignIndex, ArrayElementIsReplaced) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    run(ctx, "items[1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "items[1]").numberValue(), 99.0);
+    EXPECT_EQ(evaluate(ctx, "items[0]").numberValue(), 10.0);
+}
+
+TEST(EvalAssignIndex, WritingBeyondTheEndIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[10]");
+    // docs/semantics.md §6.1: чтение за границей штатно, запись за границу —
+    // намерение создать элемент, для чего существует push. Обе половины
+    // обязательны.
+    EXPECT_EQ(evaluate(ctx, "items[1]").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "items[1] = 1;").code, CS::ErrorCode::Range);
+    EXPECT_EQ(runError(ctx, "items[1000000] = 1;").code, CS::ErrorCode::Range);
+    // 2^32: приведение к uint32_t усекло бы индекс в ноль, попав в границы.
+    EXPECT_EQ(runError(ctx, "items[4294967296] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalAssignIndex, FractionalAndNegativeIndicesAreErrors) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    put(ctx, "minusOne", "-1");
+    EXPECT_EQ(runError(ctx, "items[0.5] = 1;").code, CS::ErrorCode::Range);
+    EXPECT_EQ(runError(ctx, "items[minusOne] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalAssignIndex, NonNumberArrayIndexIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    EXPECT_EQ(runError(ctx, "items['0'] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, ObjectKeyIsWritten) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1}");
+    run(ctx, "o['a'] = 2;");
+    run(ctx, "o['fresh'] = 3;");
+    EXPECT_EQ(evaluate(ctx, "o.a").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "o.fresh").numberValue(), 3.0);
+}
+
+TEST(EvalAssignIndex, ScalarKeysAreCoercedToString) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    // docs/semantics.md §4.1: ключ объекта — одна из трёх позиций, требующих
+    // String; правила приведения те же, что при чтении.
+    run(ctx, "o[0] = 'ноль';");
+    run(ctx, "o[true] = 'да';");
+    run(ctx, "o[null] = 'ничего';");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['0']")), "ноль");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['true']")), "да");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['null']")), "ничего");
+}
+
+TEST(EvalAssignIndex, AggregateKeyIsAnError) {
+    Context ctx;
+    put(ctx, "o", "{}");
+    put(ctx, "items", "[1]");
+    EXPECT_EQ(runError(ctx, "o[items] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, WritingIntoNullIsAnError) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    EXPECT_EQ(evaluate(ctx, "user.missing[0]").kind(), Value::Kind::Null);
+    EXPECT_EQ(runError(ctx, "user.missing[0] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, WritingIntoANonAggregateIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "name", "'Вася'");
+    EXPECT_EQ(runError(ctx, "count[0] = 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "name[0] = 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalAssignIndex, ChainedTargetWorks) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'cells': [1, 2]}]}");
+    run(ctx, "state.rows[0].cells[1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].cells[1]").numberValue(), 99.0);
+}
+
+TEST(EvalAssignIndex, SubscriptMayBeAnExpression) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    put(ctx, "i", "1");
+    run(ctx, "items[i + 1] = 99;");
+    EXPECT_EQ(evaluate(ctx, "items[2]").numberValue(), 99.0);
+}
+
+TEST(EvalCompound, FourOperatorsWorkOnAKey) {
+    Context ctx;
+    put(ctx, "s", "{'n': 10}");
+    run(ctx, "s.n += 5;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 15.0);
+    run(ctx, "s.n -= 3;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 12.0);
+    run(ctx, "s.n *= 2;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 24.0);
+    run(ctx, "s.n /= 4;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 6.0);
+}
+
+TEST(EvalCompound, WorksOnAnArrayElement) {
+    Context ctx;
+    put(ctx, "items", "[1, 2, 3]");
+    run(ctx, "items[1] += 10;");
+    EXPECT_EQ(evaluate(ctx, "items[1]").numberValue(), 12.0);
+}
+
+TEST(EvalCompound, WorksOnAnObjectKeyByIndex) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1}");
+    run(ctx, "o['a'] += 1;");
+    EXPECT_EQ(evaluate(ctx, "o.a").numberValue(), 2.0);
+}
+
+TEST(EvalCompound, TypeMismatchIsAnError) {
+    Context ctx;
+    put(ctx, "s", "{'text': 'а'}");
+    // Операция берётся из applyBinary, поэтому правила типов те же, что у
+    // обычного оператора: конкатенации строк через + нет.
+    EXPECT_EQ(runError(ctx, "s.text += 'б';").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCompound, MissingKeyReadsAsNullAndThenFails) {
+    Context ctx;
+    put(ctx, "s", "{}");
+    // Чтение отсутствующего ключа даёт null (§6.2), а null + 1 — ошибка типа.
+    EXPECT_EQ(runError(ctx, "s.missing += 1;").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalCompound, BeyondTheEndGivesTypeNotRange) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    // docs/semantics.md §7.3: x += e есть x = x + e. Сначала читается items[5],
+    // что штатно даёт null, затем вычисляется null + 1 — ошибка типа. До
+    // проверки границы записи дело не доходит, поэтому Type, а не Range.
+    // Простое присваивание туда же даёт Range — обе строки обязательны.
+    EXPECT_EQ(runError(ctx, "items[5] += 1;").code, CS::ErrorCode::Type);
+    EXPECT_EQ(runError(ctx, "items[5] = 1;").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalCompound, ErrorLeavesTheTargetUntouched) {
+    Context ctx;
+    put(ctx, "s", "{'n': 10}");
+    EXPECT_EQ(runError(ctx, "s.n += 'а';").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 10.0);
+}
+
+TEST(EvalCompound, TargetCheckLosesToValueErrorWhenBothFail) {
+    Context ctx;
+    put(ctx, "items", "[1, 2, 3]");
+    // §7.3 говорит про результат ('x += e' есть 'x = x + e'), а не про
+    // порядок проверок: цель проверяется после вычисления правой части
+    // (docs/semantics.md §7.2). Индекс -1 сам по себе дал бы Range
+    // (FractionalAndNegativeIndicesAreErrors), но правая часть неисправна, и
+    // её Name побеждает первым.
+    EXPECT_EQ(runError(ctx, "items[-1] += usre;").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalCompound, DivisionByZeroFollowsIEEE) {
+    Context ctx;
+    put(ctx, "s", "{'n': 1}");
+    // Деление на ноль даёт бесконечность, а не ошибку (§5.2).
+    run(ctx, "s.n /= 0;");
+    EXPECT_TRUE(std::isinf(evaluate(ctx, "s.n").numberValue()));
+}
+
+TEST(EvalCompound, DeepTargetWorks) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'n': 1}]}");
+    put(ctx, "i", "0");
+    // Однократность вычисления цели (docs/grammar.md §6.4) в этом языке
+    // ненаблюдаема: выражения чисты, поэтому повторное вычисление дало бы тот
+    // же результат. Тест проверяет лишь, что сложная цель вообще работает;
+    // само требование держится устройством кода, а не этой проверкой.
+    run(ctx, "state.rows[i].n += 41;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].n").numberValue(), 42.0);
+}
+
+TEST(EvalScriptBehaviour, StatementsApplyInOrder) {
+    Context ctx;
+    put(ctx, "s", "{'n': 0}");
+    // Каждый стейтмент читает результат предыдущего, поэтому 13 получается
+    // только если применились все три и именно в этом порядке: пропуск первого
+    // даёт 3, второго — 4, третьего — 10, перестановка — иное число.
+    run(ctx, "s.n = s.n + 1; s.n = s.n * 10; s.n = s.n + 3;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 13.0);
+}
+
+TEST(EvalScriptBehaviour, LaterStatementsSeeEarlierWrites) {
+    Context ctx;
+    put(ctx, "s", "{'a': 1}");
+    run(ctx, "s.b = s.a + 1; s.c = s.b + 1;");
+    EXPECT_EQ(evaluate(ctx, "s.c").numberValue(), 3.0);
+}
+
+TEST(EvalScriptBehaviour, ErrorStopsTheScriptAndKeepsWhatWasDone) {
+    Context ctx;
+    put(ctx, "s", "{'a': 0, 'b': 0, 'c': 0}");
+    // docs/superpowers/specs/2026-08-10-chupascript-c-api-design.md: откатывать
+    // нечего, предыдущих состояний хранилище не держит. Обработчик, упавший на
+    // третьем присваивании из пяти, оставит первые два применёнными.
+    const Diagnostic diag =
+        runError(ctx, "s.a = 1; s.b = 2; s.x = usre; s.c = 3;");
+    EXPECT_EQ(diag.code, CS::ErrorCode::Name);
+    EXPECT_EQ(evaluate(ctx, "s.a").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "s.b").numberValue(), 2.0);
+    EXPECT_EQ(evaluate(ctx, "s.c").numberValue(), 0.0);
+    EXPECT_FALSE(ctx.objectHas(ctx.root("s"), "x"));
+}
+
+TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
+    Context ctx;
+    // Хост кладёт один агрегат под двумя именами: значения — хендлы, поэтому
+    // это тот же массив (docs/semantics.md §2.3).
+    put(ctx, "state", "{'items': [1, 2]}");
+    const Value items = ctx.objectGet(ctx.root("state"), "items");
+    ctx.setRoot("shortcut", items);
+
+    run(ctx, "state.items[0] = 99;");
+    EXPECT_EQ(evaluate(ctx, "shortcut[0]").numberValue(), 99.0);
+}
+
+TEST(EvalScriptBehaviour, AssignmentCreatesAnAliasJustLikeTheHostDoes) {
+    Context ctx;
+    // §2.3, первое предложение: «присваивание... копии не создаёт». Здесь, в
+    // отличие от MutationIsVisibleThroughAnotherName выше, второе имя для
+    // массива ставит не хост, а само присваивание скрипта.
+    put(ctx, "state", "{'a': [1, 2], 'b': null}");
+    run(ctx, "state.b = state.a; state.a[0] = 9;");
+    EXPECT_EQ(evaluate(ctx, "state.b[0]").numberValue(), 9.0);
+}
+
+TEST(EvalScriptBehaviour, SelfReferenceIsAValidProgram) {
+    Context ctx;
+    // §2.3: 'obj[\'self\'] = obj;' — корректная программа, ссылочность
+    // допускает циклы. Запись не обходит значение и потому не зацикливается;
+    // повторное чтение через self подтверждает, что цикл остался невредимым.
+    put(ctx, "obj", "{}");
+    // 'self' — зарезервированное слово (docs/grammar.md §4.5), поэтому чтение
+    // назад идёт через '[]', как и запись; через '.' этот ключ недостижим.
+    run(ctx, "obj['self'] = obj;");
+    EXPECT_TRUE(evaluate(ctx, "obj['self'] == obj").booleanValue());
+    EXPECT_TRUE(evaluate(ctx, "obj['self']['self']['self'] == obj").booleanValue());
+}
+
+TEST(EvalScriptBehaviour, EmptyStatementsAreSkipped) {
+    Context ctx;
+    put(ctx, "s", "{'n': 0}");
+    run(ctx, ";; s.n = 1 ;;");
+    EXPECT_EQ(evaluate(ctx, "s.n").numberValue(), 1.0);
+}
+
+TEST(EvalScriptBehaviour, DeepPathInsideAScript) {
+    Context ctx;
+    put(ctx, "state", "{'rows': [{'cells': [0]}, {'cells': [0]}]}");
+    run(ctx, "state.rows[0].cells[0] = 1; state.rows[1].cells[0] = 2;");
+    EXPECT_EQ(evaluate(ctx, "state.rows[0].cells[0]").numberValue(), 1.0);
+    EXPECT_EQ(evaluate(ctx, "state.rows[1].cells[0]").numberValue(), 2.0);
 }
 
 }  // namespace

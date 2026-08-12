@@ -135,6 +135,57 @@ void BM_Eval_NilCoalesceLong(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_NilCoalesceLong);
 
+/// Общая часть для скриптов: наполнить контекст, разобрать, мерить выполнение.
+///
+/// Контекст создаётся заново на каждой итерации: скрипт меняет данные, и без
+/// пересоздания вторая итерация работала бы уже на изменённых. Цена создания
+/// входит в измерение — читать эти строки имеет смысл в сравнении друг с
+/// другом, а не с BM_Eval_* для выражений.
+void runScriptBench(benchmark::State &state, std::string_view source) {
+    Ast ast;
+    Diagnostic diag;
+    if (!CS::parseProgram(source.data(),
+                          static_cast<std::uint32_t>(source.size()), ast,
+                          diag)) {
+        state.SkipWithError("parseProgram failed");
+        return;
+    }
+
+    for (auto _ : state) {
+        Context ctx;
+        if (!fill(ctx)) {
+            state.SkipWithError("setVariable failed");
+            return;
+        }
+        bool ok = CS::runScript(ast, ctx, diag);
+        if (!ok) {
+            state.SkipWithError("runScript failed");
+            return;
+        }
+        benchmark::DoNotOptimize(ok);
+    }
+}
+
+/// Присваивание в путь из двух сегментов — самая частая форма в обработчике.
+void BM_Eval_Assign(benchmark::State &state) {
+    runScriptBench(state, "user.name = 'Петя';");
+}
+BENCHMARK(BM_Eval_Assign);
+
+/// Составное присваивание туда же: чтение, операция, запись.
+void BM_Eval_CompoundAssign(benchmark::State &state) {
+    runScriptBench(state, "user.profile.city.code.zip += 1;");
+}
+BENCHMARK(BM_Eval_CompoundAssign);
+
+/// Скрипт из пяти присваиваний — цена обхода Program.
+void BM_Eval_Script(benchmark::State &state) {
+    runScriptBench(state,
+                   "user.a = 1; user.b = 2; user.c = 3; user.d = 4;"
+                   " user.e = 5;");
+}
+BENCHMARK(BM_Eval_Script);
+
 }  // namespace
 
 static void BM_Version(benchmark::State &state) {

@@ -58,9 +58,23 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 ///
 /// Срез из ветки String действителен лишь до ближайшей мутации контекста — с
 /// тем же сроком жизни и по той же причине, что и результат Context::string.
-/// Сегодня единственный потребитель, const objectGet, успевает раньше любой
-/// мутации; в части 3 format будет приводить аргументы и звать makeString, то
-/// есть ровно ту форму, которая это ломает.
+/// У потребителей этой ветки два разных пути с этим сроком: readKey (через
+/// const objectGet) обращается к срезу до всякой мутации, а assignToIndex
+/// передаёт его дальше в мутирующий ctx.objectSet. Второй путь безопасен по
+/// двум причинам, и обе обязаны выполняться разом:
+///
+/// - Context::appendText (core/src/context.cpp) явно распознаёт срез,
+///   указывающий внутрь пула text_, и после роста пула копирует из нового
+///   расположения по запомненному смещению, а не по повисшему указателю —
+///   это поведение закреплено тестом в core/tests/context_test.cpp;
+/// - между вызовом coerceToString и вызовом objectSet контекст не мутирует,
+///   потому что applyBinary принимает `const Context &` (core/src/operator.hpp)
+///   и залезть в text_ не может.
+///
+/// Вторая опора хрупкая: если applyBinary когда-нибудь получит изменяемый
+/// контекст, срез повиснет ещё до вызова objectSet, и защита appendText уже
+/// не поможет — она признаёт срез, указывающий в актуальный пул, а не чинит
+/// произвольно устаревший указатель.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
 bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
@@ -86,9 +100,11 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
     }
 }
 
-/// Чтение элемента массива (docs/semantics.md §6.1).
-bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
-               Value subscript, Value *out, Diagnostic &diag) {
+/// Проверяет индекс массива по правилам §6.1: Number, конечный, целый, не
+/// отрицательный. Решение про границу остаётся вызывающему — оно у чтения и
+/// записи разное: чтение за границей штатно даёт null, запись — ошибка Range.
+bool checkArrayIndex(const Ast &ast, NodeId node, Value subscript, double *out,
+                     Diagnostic &diag) {
     if (subscript.kind() != Value::Kind::Number) {
         return fail(ast, node, ErrorCode::Type, "array index must be a number",
                     diag);
@@ -101,6 +117,15 @@ bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
         return fail(ast, node, ErrorCode::Range,
                     "array index must be a non-negative integer", diag);
     }
+    *out = index;
+    return true;
+}
+
+/// Чтение элемента массива (docs/semantics.md §6.1).
+bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
+               Value subscript, Value *out, Diagnostic &diag) {
+    double index = 0.0;
+    if (!checkArrayIndex(ast, node, subscript, &index, diag)) { return false; }
 
     // За границей — штатное чтение. Сравнение в double, потому что индекс
     // может превышать всё, что влезает в uint32.
@@ -303,11 +328,195 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
         }
 
         default:
-            // Часть 1 не знает операторов и вызовов. С приходом частей 2 и 3
-            // ветка сузится до Program, Assign и CallStatement — узлов, которых
-            // в дереве от parseExpression быть не может, — и станет защитной.
+            // Операторы и цепочки доступа разобраны выше отдельными ветками.
+            // Сюда попадают узлы, которых в дереве от parseExpression быть не
+            // может: Program, Assign, CallStatement — стейтменты, а не
+            // выражения, — и NodeKind::Call, который придёт вместе с вызовами
+            // билтинов в части 3b. До тех пор ветка защитная.
             return fail(ast, node, ErrorCode::Type,
                         "expression form is not supported", diag);
+    }
+}
+
+/// Соответствие составного оператора обычному (docs/semantics.md §7.3).
+///
+/// Операции %= в языке нет (docs/grammar.md §5.2).
+TokenKind compoundOperation(TokenKind op) {
+    switch (op) {
+        case TokenKind::PlusAssign: return TokenKind::Plus;
+        case TokenKind::MinusAssign: return TokenKind::Minus;
+        case TokenKind::StarAssign: return TokenKind::Star;
+        case TokenKind::SlashAssign: return TokenKind::Slash;
+        default:
+            assert(false && "не составной оператор присваивания");
+            return TokenKind::Plus;
+    }
+}
+
+/// Присваивание по имени поля: base.k = v.
+///
+/// Порядок вычисления — подвыражения цели, затем правая часть
+/// (docs/semantics.md §7.2).
+bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+                 Diagnostic &diag) {
+    Value base = Value::null();
+    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+
+    Value value = Value::null();
+    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+
+    // Запись в null — ошибка: мягкость §6.3 распространяется только на чтение,
+    // а молчаливо пропущенная запись потеряла бы данные без следа.
+    if (base.kind() != Value::Kind::Object) {
+        return fail(ast, target, ErrorCode::Type, "only objects have keys",
+                    diag);
+    }
+
+    // Имя поля берётся из узла буквально, как при чтении (§6.2).
+    const std::string_view key = ast.text(target);
+
+    const TokenKind op = ast.op(node);
+    if (op != TokenKind::Assign) {
+        // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
+        // поэтому подвыражения цели вычислены ровно один раз
+        // (docs/grammar.md §6.4).
+        const Value current = ctx.objectGet(base, key);
+        Value combined = Value::null();
+        if (!applyBinary(compoundOperation(op), current, value, ctx,
+                         ast.offset(node), &combined, diag)) {
+            return false;
+        }
+        value = combined;
+    }
+
+    ctx.objectSet(base, key, value);
+    return true;
+}
+
+/// Присваивание по индексу: base[i] = v.
+bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+                   Diagnostic &diag) {
+    // Порядок: база, индекс, затем правая часть (docs/semantics.md §7.2).
+    Value base = Value::null();
+    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+    Value subscript = Value::null();
+    if (!eval(ast, ast.child(target, 1), ctx, &subscript, diag)) { return false; }
+
+    Value value = Value::null();
+    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+
+    switch (base.kind()) {
+        case Value::Kind::Array: {
+            // Требования к индексу те же, что при чтении (§6.1).
+            double index = 0.0;
+            if (!checkArrayIndex(ast, target, subscript, &index, diag)) {
+                return false;
+            }
+
+            const TokenKind op = ast.op(node);
+            if (op != TokenKind::Assign) {
+                // Чтение за границей штатно даёт null, поэтому items[5] += 1
+                // упирается не в границу записи, а в сложение с null: Type, а
+                // не Range (§7.3).
+                Value current = Value::null();
+                if (!readIndex(ast, target, ctx, base, subscript, &current,
+                               diag)) {
+                    return false;
+                }
+                Value combined = Value::null();
+                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                                 ast.offset(node), &combined, diag)) {
+                    return false;
+                }
+                value = combined;
+            }
+
+            // Запись за границу — ошибка: расширяет только push (§6.1).
+            // Сравнение в double, потому что индекс может превышать uint32.
+            if (index >= static_cast<double>(ctx.arrayCount(base))) {
+                return fail(ast, target, ErrorCode::Range,
+                            "array index is out of bounds", diag);
+            }
+            // Границу проверили выше, поэтому запись не отказывает.
+            static_cast<void>(
+                ctx.arraySet(base, static_cast<std::uint32_t>(index), value));
+            return true;
+        }
+
+        case Value::Kind::Object: {
+            char buffer[kNumberBufferSize];
+            std::string_view key;
+            if (!coerceToString(ast, target, ctx, subscript, buffer, &key,
+                                diag)) {
+                return false;
+            }
+
+            const TokenKind op = ast.op(node);
+            if (op != TokenKind::Assign) {
+                const Value current = ctx.objectGet(base, key);
+                Value combined = Value::null();
+                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                                 ast.offset(node), &combined, diag)) {
+                    return false;
+                }
+                value = combined;
+            }
+
+            ctx.objectSet(base, key, value);
+            return true;
+        }
+
+        default:
+            // Запись в null — ошибка, как и по имени поля.
+            return fail(ast, target, ErrorCode::Type,
+                        "only arrays and objects can be assigned by index",
+                        diag);
+    }
+}
+
+/// Присваивание: разбирает форму цели и передаёт дальше.
+bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+    const NodeId target = ast.child(node, 0);
+    switch (ast.kind(target)) {
+        case NodeKind::Member:
+            return assignToKey(ast, node, target, ctx, diag);
+
+        case NodeKind::Index:
+            return assignToIndex(ast, node, target, ctx, diag);
+
+        case NodeKind::Identifier:
+            // Имя — входной слот от хоста, а не переменная скрипта. Состав
+            // имён программе неподвластен (§7.1), а замена значения целиком
+            // порвала бы алиасы, которые §2.3 обещает наблюдаемыми.
+            //
+            // Проверка решается по дереву, без данных контекста, и по
+            // устройству — статическая (docs/grammar.md §6). Живёт здесь, а
+            // не в статическом проходе, потому что того прохода ещё нет.
+            // TODO(B27): перенести в статический проход, когда он появится.
+            return fail(ast, target, ErrorCode::Name,
+                        "cannot assign to a variable name", diag);
+
+        default:
+            // Грамматика строит целью только Identifier, Member и Index
+            // (docs/grammar.md §5.2); все три разобраны выше — ветка
+            // защитная.
+            return fail(ast, target, ErrorCode::Type,
+                        "invalid assignment target", diag);
+    }
+}
+
+/// Выполняет один стейтмент.
+bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+    switch (ast.kind(node)) {
+        case NodeKind::Assign:
+            return assign(ast, node, ctx, diag);
+
+        default:
+            // Сегодня сюда попадает только CallStatement: вызовы приходят с
+            // части 3b. Отдавать его в eval нельзя — вышло бы сообщение про
+            // выражение там, где речь о стейтменте.
+            return fail(ast, node, ErrorCode::Type,
+                        "statement form is not supported", diag);
     }
 }
 
@@ -317,6 +526,21 @@ bool evalExpression(const Ast &ast, Context &ctx, Value *out,
                     Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     return eval(ast, ast.root(), ctx, out, diag);
+}
+
+bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag) {
+    assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    const NodeId program = ast.root();
+    assert(ast.kind(program) == NodeKind::Program &&
+           "runScript ждёт дерево от parseProgram");
+
+    const std::uint32_t count = ast.childCount(program);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        // Ошибка прерывает выполнение, а сделанное остаётся сделанным:
+        // откатывать нечего.
+        if (!execute(ast, ast.child(program, i), ctx, diag)) { return false; }
+    }
+    return true;
 }
 
 }  // namespace CS

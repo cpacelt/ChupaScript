@@ -180,4 +180,114 @@ TEST(EvalMember, UnknownRootIsAnErrorAtAnyDepth) {
     EXPECT_EQ(evalError(ctx, "usre.a.b").code, CS::ErrorCode::Name);
 }
 
+TEST(EvalIndex, ArrayElementIsRead) {
+    Context ctx;
+    put(ctx, "items", "[10, 20, 30]");
+    EXPECT_EQ(evaluate(ctx, "items[0]").numberValue(), 10.0);
+    EXPECT_EQ(evaluate(ctx, "items[2]").numberValue(), 30.0);
+}
+
+TEST(EvalIndex, ArrayReadBeyondEndGivesNull) {
+    Context ctx;
+    put(ctx, "items", "[10]");
+    // docs/semantics.md §6.1: чтение за границей штатно — данные неполны.
+    EXPECT_EQ(evaluate(ctx, "items[1]").kind(), Value::Kind::Null);
+    EXPECT_EQ(evaluate(ctx, "items[1000000]").kind(), Value::Kind::Null);
+}
+
+TEST(EvalIndex, FractionalAndNegativeIndicesAreErrors) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    put(ctx, "minusOne", "-1");
+    put(ctx, "huge", std::string(400, '9'));
+    // Дробный и отрицательный индекс означают намерение, которого в языке нет:
+    // приведения к целому тоже нет. Отрицательное значение и бесконечность
+    // берутся из данных — унарный минус это оператор, а операторов в части 1
+    // нет; четыреста девяток переполняют double и дают inf.
+    EXPECT_EQ(evalError(ctx, "items[0.5]").code, CS::ErrorCode::Range);
+    EXPECT_EQ(evalError(ctx, "items[minusOne]").code, CS::ErrorCode::Range);
+    EXPECT_EQ(evalError(ctx, "items[huge]").code, CS::ErrorCode::Range);
+}
+
+TEST(EvalIndex, NonNumberArrayIndexIsAnError) {
+    Context ctx;
+    put(ctx, "items", "[10, 20]");
+    // docs/semantics.md §6.1: приведения к Number нет, поэтому items['0']
+    // не работает.
+    EXPECT_EQ(evalError(ctx, "items['0']").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "items[true]").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "items[null]").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalIndex, ObjectKeyIsRead) {
+    Context ctx;
+    put(ctx, "o", "{'name': 'Вася'}");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o['name']")), "Вася");
+    EXPECT_EQ(evaluate(ctx, "o['missing']").kind(), Value::Kind::Null);
+}
+
+TEST(EvalIndex, ScalarKeysAreCoercedToString) {
+    Context ctx;
+    put(ctx, "o", "{'0': 'zero', 'true': 'yes', 'null': 'nothing', '1.5': 'half'}");
+    // docs/semantics.md §4.1: ключ объекта — одна из трёх позиций, требующих
+    // String, и приведение туда одностороннее.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[0]")), "zero");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[true]")), "yes");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[null]")), "nothing");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[1.5]")), "half");
+}
+
+TEST(EvalIndex, NegativeZeroAndZeroAreDifferentKeys) {
+    Context ctx;
+    put(ctx, "o", "{'0': 'plus', '-0': 'minus'}");
+    put(ctx, "minusZero", "-0");
+    // docs/semantics.md §4.3: -0 == 0 истинно, но ключи разные, потому что
+    // представление числа сохраняет знак нуля. Отрицательный ноль приходит из
+    // данных по той же причине, что и в тесте выше.
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[0]")), "plus");
+    EXPECT_EQ(ctx.string(evaluate(ctx, "o[minusZero]")), "minus");
+}
+
+TEST(EvalIndex, AggregateKeyIsAnError) {
+    Context ctx;
+    put(ctx, "o", "{'a': 1}");
+    put(ctx, "items", "[1]");
+    // Агрегат не приводится никуда (docs/semantics.md §4).
+    EXPECT_EQ(evalError(ctx, "o[items]").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalIndex, ReadingThroughNullGivesNull) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    EXPECT_EQ(evaluate(ctx, "user.missing[0]").kind(), Value::Kind::Null);
+    EXPECT_EQ(evaluate(ctx, "user.missing['k']").kind(), Value::Kind::Null);
+}
+
+TEST(EvalIndex, SubscriptIsEvaluatedEvenWhenTheBaseIsNull) {
+    Context ctx;
+    put(ctx, "user", "{'name': 'Вася'}");
+    // docs/semantics.md §3.3: порядок зафиксирован, короткое замыкание есть
+    // только у логических, ?? и тернарного. Ошибка в индексе обязана всплыть,
+    // а не быть съеденной null-базой. Побочных эффектов в выражениях нет, так
+    // что наблюдать порядок можно только через ошибку.
+    EXPECT_EQ(evalError(ctx, "user.missing[usre]").code, CS::ErrorCode::Name);
+}
+
+TEST(EvalIndex, IndexingANonAggregateIsAnError) {
+    Context ctx;
+    put(ctx, "count", "3");
+    put(ctx, "name", "'Вася'");
+    put(ctx, "flag", "true");
+    // docs/semantics.md §6.4: 'abc'[0] — ошибка, строка не индексируется.
+    EXPECT_EQ(evalError(ctx, "count[0]").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "name[0]").code, CS::ErrorCode::Type);
+    EXPECT_EQ(evalError(ctx, "flag[0]").code, CS::ErrorCode::Type);
+}
+
+TEST(EvalIndex, ChainedAccessWorks) {
+    Context ctx;
+    put(ctx, "state", "{'items': [{'id': 1}, {'id': 2}]}");
+    EXPECT_EQ(evaluate(ctx, "state.items[1].id").numberValue(), 2.0);
+}
+
 }  // namespace

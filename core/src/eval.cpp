@@ -1,6 +1,8 @@
 #include "eval.hpp"
 
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -39,6 +41,63 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
             return fail(ast, node, ErrorCode::Type, "only objects have keys",
                         diag);
     }
+}
+
+/// Приведение скаляра к строке (docs/semantics.md §4).
+///
+/// Возвращает срез: у строки — её собственные байты в контексте, у числа —
+/// буфер вызывающего, у остальных — статическая строка. В контекст ничего не
+/// кладётся: строка нужна на время одного поиска ключа, и класть её в пул
+/// значило бы копить мусор на каждом чтении.
+///
+/// numberBuffer обязан быть размером не меньше kNumberBufferSize.
+bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
+                    char *numberBuffer, std::string_view *out,
+                    Diagnostic &diag) {
+    switch (value.kind()) {
+        case Value::Kind::String:
+            *out = ctx.string(value);
+            return true;
+        case Value::Kind::Boolean:
+            *out = value.booleanValue() ? "true" : "false";
+            return true;
+        case Value::Kind::Null:
+            *out = "null";
+            return true;
+        case Value::Kind::Number:
+            *out = formatNumber(value.numberValue(), numberBuffer,
+                                kNumberBufferSize);
+            return true;
+        default:
+            return fail(ast, node, ErrorCode::Type,
+                        "aggregates cannot be converted to string", diag);
+    }
+}
+
+/// Чтение элемента массива (docs/semantics.md §6.1).
+bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
+               Value subscript, Value *out, Diagnostic &diag) {
+    if (subscript.kind() != Value::Kind::Number) {
+        return fail(ast, node, ErrorCode::Type, "array index must be a number",
+                    diag);
+    }
+
+    const double index = subscript.numberValue();
+    // Дробный и отрицательный индекс — ошибка автора, а не неполнота данных:
+    // приведения к целому в языке нет.
+    if (!std::isfinite(index) || index < 0.0 || index != std::floor(index)) {
+        return fail(ast, node, ErrorCode::Range,
+                    "array index must be a non-negative integer", diag);
+    }
+
+    // За границей — штатное чтение. Сравнение в double, потому что индекс
+    // может превышать всё, что влезает в uint32.
+    if (index >= static_cast<double>(ctx.arrayCount(array))) {
+        *out = Value::null();
+        return true;
+    }
+    *out = ctx.arrayAt(array, static_cast<std::uint32_t>(index));
+    return true;
 }
 
 /// Обход дерева. Рекурсия, а не цикл: короткому замыканию нужен пропуск
@@ -84,6 +143,37 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             if (!eval(ast, ast.child(node, 0), ctx, &base, diag)) { return false; }
             // Имя поля берётся из узла буквально, без приведения.
             return readKey(ast, node, ctx, base, ast.text(node), out, diag);
+        }
+
+        case NodeKind::Index: {
+            Value base = Value::null();
+            if (!eval(ast, ast.child(node, 0), ctx, &base, diag)) { return false; }
+            // Индекс вычисляется даже при базе null: порядок зафиксирован
+            // (docs/semantics.md §3.3), а короткого замыкания у индексации нет.
+            Value subscript = Value::null();
+            if (!eval(ast, ast.child(node, 1), ctx, &subscript, diag)) {
+                return false;
+            }
+
+            switch (base.kind()) {
+                case Value::Kind::Array:
+                    return readIndex(ast, node, ctx, base, subscript, out, diag);
+                case Value::Kind::Object: {
+                    char buffer[kNumberBufferSize];
+                    std::string_view key;
+                    if (!coerceToString(ast, node, ctx, subscript, buffer, &key,
+                                        diag)) {
+                        return false;
+                    }
+                    return readKey(ast, node, ctx, base, key, out, diag);
+                }
+                case Value::Kind::Null:
+                    *out = Value::null();
+                    return true;
+                default:
+                    return fail(ast, node, ErrorCode::Type,
+                                "only arrays and objects can be indexed", diag);
+            }
         }
 
         default:

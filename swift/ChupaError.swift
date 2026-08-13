@@ -1,4 +1,5 @@
 import Foundation
+import ChupaScriptC
 
 /// Error from ChupaScript engine.
 public struct ChupaError: Error, CustomStringConvertible {

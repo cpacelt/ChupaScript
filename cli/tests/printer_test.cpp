@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "context.hpp"
 #include "data.hpp"
@@ -94,6 +96,27 @@ TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
     // Один агрегат под двумя ключами — не цикл. Отслеживается путь печати, а
     // не всё виденное, поэтому оба вхождения печатаются целиком.
     EXPECT_EQ(chupa::printValue(ctx, holder), "{'a': [1, 2], 'b': [1, 2]}");
+}
+
+TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
+    Context ctx;
+    // Не цикл: каждый массив содержит следующий ровно один раз, ни один
+    // агрегат не встречается на собственном пути печати. Путь его не
+    // поймает — глубина ловится отдельным счётчиком (cli/printer.cpp,
+    // kMaxPrintDepth). Без него печать такого дерева переполнила бы стек.
+    constexpr int kCount = 200;
+    std::vector<Value> arrays;
+    arrays.reserve(kCount);
+    for (int i = 0; i < kCount; ++i) {
+        arrays.push_back(put(ctx, "r" + std::to_string(i), "[]"));
+    }
+    for (int i = 0; i + 1 < kCount; ++i) {
+        ctx.arrayPush(arrays[static_cast<std::size_t>(i)],
+                      arrays[static_cast<std::size_t>(i + 1)]);
+    }
+    const std::string printed = chupa::printValue(ctx, arrays[0]);
+    // Печать обязана завершиться (не упасть по стеку) и оборваться меткой.
+    EXPECT_NE(printed.find("[...]"), std::string::npos);
 }
 
 TEST(PrintValue, MutualCycleTerminates) {

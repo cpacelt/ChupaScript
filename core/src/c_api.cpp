@@ -27,6 +27,8 @@ struct ChupaContext {
     CS::Context engine;
     std::vector<std::string> sources;                    // copied source texts
     std::vector<std::unique_ptr<CS::Ast>> asts;          // compiled trees
+    std::vector<std::unique_ptr<ChupaExpression>> expressions;  // wrapper structs
+    std::vector<std::unique_ptr<ChupaScript>> scripts;          // wrapper structs
     CS::Diagnostic lastError;
     ChupaRedrawListener redrawListener = nullptr;
     void* redrawUserData = nullptr;
@@ -195,9 +197,11 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
     }
 
     c->clearError();
-    ChupaExpression* expr = new ChupaExpression{ast.get()};
+    auto expr = std::make_unique<ChupaExpression>(ChupaExpression{ast.get()});
+    ChupaExpression* raw = expr.get();
+    c->expressions.push_back(std::move(expr));
     c->asts.push_back(std::move(ast));
-    return reinterpret_cast<ChupaExpression*>(expr);
+    return reinterpret_cast<ChupaExpression*>(raw);
 }
 
 ChupaScript* chupa_compile_script(ChupaContext* ctx,
@@ -219,9 +223,11 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
     }
 
     c->clearError();
-    ChupaScript* script = new ChupaScript{ast.get()};
+    auto script = std::make_unique<ChupaScript>(ChupaScript{ast.get()});
+    ChupaScript* raw = script.get();
+    c->scripts.push_back(std::move(script));
     c->asts.push_back(std::move(ast));
-    return reinterpret_cast<ChupaScript*>(script);
+    return reinterpret_cast<ChupaScript*>(raw);
 }
 
 // ─── Eval ───
@@ -242,6 +248,7 @@ ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
         return CHUPA_NULL;
     }
     if (value.kind() != CS::Value::Kind::Number) {
+        c->setError({CS::ErrorCode::Type, 0, "eval_number: value is not a number"});
         return CHUPA_ERROR;
     }
     *out = value.numberValue();
@@ -264,6 +271,7 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
         return CHUPA_NULL;
     }
     if (value.kind() != CS::Value::Kind::Boolean) {
+        c->setError({CS::ErrorCode::Type, 0, "eval_bool: value is not a boolean"});
         return CHUPA_ERROR;
     }
     *out = value.booleanValue();
@@ -286,6 +294,7 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
         return CHUPA_NULL;
     }
     if (value.kind() != CS::Value::Kind::String) {
+        c->setError({CS::ErrorCode::Type, 0, "eval_string: value is not a string"});
         return CHUPA_ERROR;
     }
     std::string_view sv = c->engine.string(value);

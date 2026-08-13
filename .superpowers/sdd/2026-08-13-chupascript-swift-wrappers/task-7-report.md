@@ -111,3 +111,75 @@ entirely, leaving only a blockquote note acknowledging deferral.
 This preserves the signal for downstream wrapper authors that these
 functions are planned, without referencing the removed `ChupaValue`
 type.
+
+## Final whole-branch review fixes
+
+Three Important findings from the final whole-branch code review were addressed.
+
+### Finding 1: Memory leak — ChupaExpression/ChupaScript wrapper structs never freed
+
+File: `core/src/c_api.cpp`
+
+`chupa_compile_expression` and `chupa_compile_script` allocated wrapper structs with
+`new` but nothing ever deleted them. The context only tracked the `std::vector<std::unique_ptr<CS::Ast>> asts`,
+not the wrapper structs, so they leaked on every compile call and were not freed at
+context destruction.
+
+**Fix:** Added two new vectors to the `ChupaContext` struct:
+- `std::vector<std::unique_ptr<ChupaExpression>> expressions`
+- `std::vector<std::unique_ptr<ChupaScript>> scripts`
+
+The compile functions now wrap the freshly-created struct in a `std::make_unique`,
+push it into the corresponding vector, then return the raw pointer obtained via
+`.get()`. The wrappers are now owned by the context and freed when the context is
+destroyed, satisfying the spec's "all memory freed with context destruction" promise.
+
+### Finding 2: Wrong-type CHUPA_ERROR did not set lastError
+
+File: `core/src/c_api.cpp`
+
+In `chupa_eval_number`, `chupa_eval_bool`, and `chupa_eval_string`, when
+`evalExpression` succeeded but the resulting value kind did not match the requested
+type, the function returned `CHUPA_ERROR` after `clearError()` had already been
+called. As a result `chupa_context_error_code(ctx)` returned `CHUPA_ERR_NONE` and
+the Swift wrapper could not distinguish `CHUPA_NULL` from `CHUPA_ERROR`.
+
+**Fix:** Before returning `CHUPA_ERROR` for a kind mismatch, each function now calls
+`c->setError({CS::ErrorCode::Type, 0, "<fn>: value is not a <kind>"})` with an
+appropriate message:
+- `eval_number: value is not a number`
+- `eval_bool: value is not a boolean`
+- `eval_string: value is not a string`
+
+Test assertion added in `core/tests/c_api_test.cpp` to the existing
+`EvalNumberOnStringExpressionReturnsError` test:
+```cpp
+EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+```
+
+### Finding 3: Empty ChupaScript module in modulemap conflicts with Swift
+
+File: `ChupaScript.modulemap`
+
+The modulemap defined an empty `ChupaScript` module. When CocoaPods compiles Swift
+files in a pod named `ChupaScript`, it auto-generates a module of the same name,
+causing a "redefinition of module 'ChupaScript'" error.
+
+**Fix:** Removed the `ChupaScript` module block. Also removed the
+`module * { export * }` line from `ChupaScriptC` (noise for a single-header module).
+The final modulemap is:
+```
+module ChupaScriptC {
+    umbrella header "chupascript.h"
+    export *
+}
+```
+
+### Verification
+
+Command:
+```
+cmake -B build && cmake --build build && cd build && ctest --output-on-failure
+```
+
+Result: **536/536 tests passed** (0 failures), total time 3.67s.

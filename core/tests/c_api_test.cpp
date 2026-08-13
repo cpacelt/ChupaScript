@@ -175,6 +175,7 @@ TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
     ASSERT_NE(e, nullptr);
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_ERROR);
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
     chupa_context_destroy(ctx);
 }
 

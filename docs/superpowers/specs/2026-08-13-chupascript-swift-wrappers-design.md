@@ -402,16 +402,35 @@ extension WidgetProperty where T: RawRepresentable, T.RawValue == String {
 }
 ```
 
-Декодинг — префикс `$$` триггерит компиляцию:
+Декодинг — префикс `$$` триггерит компиляцию. Способ создания literal зависит
+от типа T и решается на стороне BDUI (init из строки, rawValue и т.п.).
+Спека обёрток не фиксирует сигнатуру init — это ответственность OKBDUI.
+
+Пример паттерна:
 
 ```swift
+// В BDUI: WidgetProperty<String>
 init(raw: String, context: ChupaContext) {
     if raw.hasPrefix("$$") {
         let source = String(raw.dropFirst(2))
-        self = (try? context.compile(expression: source)).map { .expression($0) }
-            ?? .literal(raw as! T)  // fallback на.literal при ошибке компиляции
+        if let expr = try? context.compile(expression: source) {
+            self = .expression(expr)
+        } else {
+            self = .literal(raw)  // fallback при ошибке компиляции
+        }
     } else {
-        self = .literal(raw as! T)
+        self = .literal(raw)
+    }
+}
+
+// В BDUI: WidgetProperty<Visibility> где Visibility: RawRepresentable, RawValue == String
+init(raw: String, context: ChupaContext) {
+    if raw.hasPrefix("$$"), let expr = try? context.compile(expression: String(raw.dropFirst(2))) {
+        self = .expression(expr)
+    } else if let val = Visibility(rawValue: raw) {
+        self = .literal(val)
+    } else {
+        self = .literal(.visible)  // дефолт
     }
 }
 ```

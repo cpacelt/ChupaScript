@@ -1,5 +1,8 @@
 add_library(chupascript STATIC
     src/ast.cpp
+    src/builtin.cpp
+    src/check.cpp
+    src/compile.cpp
     src/context.cpp
     src/data.cpp
     src/eval.cpp

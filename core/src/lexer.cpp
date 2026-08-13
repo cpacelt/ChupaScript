@@ -46,7 +46,8 @@ TokenKind keywordKind(const char *text, std::uint32_t length) noexcept {
             }
             if (sameAs(text, "else", 4) || sameAs(text, "func", 4) ||
                 sameAs(text, "this", 4) || sameAs(text, "self", 4) ||
-                sameAs(text, "case", 4) || sameAs(text, "void", 4)) {
+                sameAs(text, "case", 4) || sameAs(text, "void", 4) ||
+                sameAs(text, "type", 4)) {
                 return TokenKind::Reserved;
             }
             break;

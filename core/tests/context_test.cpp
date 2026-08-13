@@ -540,4 +540,65 @@ TEST(ContextRoots, EnumerationYieldsEveryName) {
     EXPECT_EQ(seen, "state user ");
 }
 
+TEST(ContextStringBuilder, AssemblesFromParts) {
+    Context ctx;
+    const std::uint32_t mark = ctx.beginString();
+    ctx.appendToString("Привет");
+    ctx.appendToString(", ");
+    ctx.appendToString("мир");
+    const Value built = ctx.endString(mark);
+    EXPECT_EQ(ctx.string(built), "Привет, мир");
+}
+
+TEST(ContextStringBuilder, EmptyBuildGivesEmptyString) {
+    Context ctx;
+    const std::uint32_t mark = ctx.beginString();
+    const Value built = ctx.endString(mark);
+    EXPECT_EQ(ctx.string(built), "");
+}
+
+TEST(ContextStringBuilder, AbortLeavesNothingBehind) {
+    Context ctx;
+    // Сборка идёт в собственном буфере, отдельном от пула текста (§ context.hpp
+    // «сборка строки по частям»), поэтому bytesUsed() её не видит вовсе — до
+    // endString пул текста не трогается. Наблюдаем через то, что действительно
+    // меняется: прежняя строка цела, а следующая сборка не видит отменённого
+    // хвоста.
+    const Value before = ctx.makeString("уже в пуле");
+
+    const std::uint32_t mark = ctx.beginString();
+    ctx.appendToString("это будет выброшено");
+    ctx.abortString(mark);
+
+    EXPECT_EQ(ctx.string(before), "уже в пуле");
+
+    const std::uint32_t nextMark = ctx.beginString();
+    ctx.appendToString("новая сборка");
+    EXPECT_EQ(ctx.string(ctx.endString(nextMark)), "новая сборка");
+}
+
+TEST(ContextStringBuilder, SurvivesPoolGrowth) {
+    Context ctx;
+    // Кусков заведомо больше, чем влезет без переезда пула: сборка обязана
+    // держаться на смещениях, а не на указателях.
+    const std::uint32_t mark = ctx.beginString();
+    std::string expected;
+    for (int i = 0; i < 500; ++i) {
+        ctx.appendToString("кусок");
+        expected += "кусок";
+    }
+    EXPECT_EQ(ctx.string(ctx.endString(mark)), expected);
+}
+
+TEST(ContextStringBuilder, NestedAbortLeavesTheOuterAssemblyIntact) {
+    Context ctx;
+    const std::uint32_t outer = ctx.beginString();
+    ctx.appendToString("внешнее ");
+    const std::uint32_t inner = ctx.beginString();
+    ctx.appendToString("выброшенное");
+    ctx.abortString(inner);
+    ctx.appendToString("продолжение");
+    EXPECT_EQ(ctx.string(ctx.endString(outer)), "внешнее продолжение");
+}
+
 }  // namespace

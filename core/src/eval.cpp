@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "builtin.hpp"
 #include "operator.hpp"
 #include "text.hpp"
 
@@ -51,6 +52,11 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 
 /// Приведение скаляра к строке (docs/semantics.md §4).
 ///
+/// Тонкая обёртка над builtin.hpp::coerceScalarToString, которая знает про
+/// узел дерева ровно настолько, чтобы взять из него смещение для диагностики
+/// — правило §4 записано один раз, в builtin.cpp, и обслуживает и ключ
+/// объекта, и has, и (задачами 5 и 6) str с format.
+///
 /// Возвращает срез: у строки — её собственные байты в контексте, у числа —
 /// буфер вызывающего, у остальных — статическая строка. В контекст ничего не
 /// кладётся: строка нужна на время одного поиска ключа, и класть её в пул
@@ -80,24 +86,92 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
-    switch (value.kind()) {
-        case Value::Kind::String:
-            *out = ctx.string(value);
-            return true;
-        case Value::Kind::Boolean:
-            *out = value.booleanValue() ? "true" : "false";
-            return true;
-        case Value::Kind::Null:
-            *out = "null";
-            return true;
-        case Value::Kind::Number:
-            *out = formatNumber(value.numberValue(), numberBuffer,
-                                kNumberBufferSize);
-            return true;
-        default:
-            return fail(ast, node, ErrorCode::Type,
-                        "aggregates cannot be converted to string", diag);
+    return coerceScalarToString(ctx, value, numberBuffer, out,
+                                ast.offset(node), diag);
+}
+
+/// Собирает строку по шаблону (docs/semantics.md §8.8).
+///
+/// Живёт здесь, а не в builtin.cpp, потому что format вариадичен: буфер под
+/// заранее вычисленные аргументы потребовал бы верхней границы их числа,
+/// которой §8.8 не устанавливает. Шаблон потребляет аргументы строго слева
+/// направо, по одному на плейсхолдер, поэтому лениво выходит и проще, и без
+/// придуманного предела.
+///
+/// Разбор шаблона — через nextFormatPiece (builtin.hpp): это та же функция,
+/// которой статический проход (check.cpp) считает плейсхолдеры у литерального
+/// шаблона, так что правило «$${} — литерал, ${} — плейсхолдер» записано один
+/// раз и держит обоих потребителей синхронными не по договорённости, а по
+/// устройству.
+///
+/// ctx.string(tmpl) берётся заново на каждый вызов nextFormatPiece, а не
+/// один раз до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе
+/// само писать в пул текста — строковый литерал зовёт makeString, вложенный
+/// format завершает свою сборку в тот же пул, — и это может переселить text_
+/// в новую память. Смещение, на которое указывает tmpl, при переезде
+/// остаётся верным (Context::string пересчитывает срез из смещения и длины),
+/// а вот кэшированный указатель — уже нет. Свежий вызов ctx.string(tmpl)
+/// перед каждым обращением к шаблону — единственный способ не держать такой
+/// указатель через границу, за которой могла случиться запись.
+bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
+                Diagnostic &diag) {
+    const std::uint32_t argCount = ast.childCount(node);
+
+    Value tmpl = Value::null();
+    if (!eval(ast, ast.child(node, 0), ctx, &tmpl, diag)) { return false; }
+    if (tmpl.kind() != Value::Kind::String) {
+        return fail(ast, node, ErrorCode::Type,
+                    "format expects a string template", diag);
     }
+
+    const std::uint32_t mark = ctx.beginString();
+    std::uint32_t next = 1;  // следующий аргумент
+    FormatCursor cursor;
+
+    for (;;) {
+        FormatPiece kind = FormatPiece::Literal;
+        std::string_view chunk;
+        if (!nextFormatPiece(ctx.string(tmpl), cursor, &kind, &chunk)) { break; }
+
+        if (kind == FormatPiece::Literal) {
+            ctx.appendToString(chunk);
+            continue;
+        }
+        if (kind == FormatPiece::Escaped) {
+            ctx.appendToString("${}");
+            continue;
+        }
+
+        // FormatPiece::Placeholder — потребляет следующий аргумент.
+        if (next >= argCount) {
+            ctx.abortString(mark);
+            return fail(ast, node, ErrorCode::Type,
+                        "format placeholder count does not match arguments",
+                        diag);
+        }
+        Value argument = Value::null();
+        if (!eval(ast, ast.child(node, next), ctx, &argument, diag)) {
+            ctx.abortString(mark);
+            return false;
+        }
+        ++next;
+
+        char buffer[kNumberBufferSize];
+        std::string_view text;
+        if (!coerceToString(ast, node, ctx, argument, buffer, &text, diag)) {
+            ctx.abortString(mark);
+            return false;
+        }
+        ctx.appendToString(text);
+    }
+
+    if (next != argCount) {
+        ctx.abortString(mark);
+        return fail(ast, node, ErrorCode::Type,
+                    "format placeholder count does not match arguments", diag);
+    }
+    *out = ctx.endString(mark);
+    return true;
 }
 
 /// Проверяет индекс массива по правилам §6.1: Number, конечный, целый, не
@@ -327,12 +401,49 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             return eval(ast, branch, ctx, out, diag);
         }
 
+        case NodeKind::Call: {
+            Builtin id = Builtin::Count;
+            const bool known = findBuiltin(ast.text(node), &id);
+            // Неизвестное имя отсеял статический проход, а дереву мы доверяем
+            // (спека §5.3): здесь это утверждение, а не диагностика.
+            assert(known && "дерево обязано пройти check");
+            (void)known;
+
+            // format вариадичен, и буфер аргументов ниже на него не рассчитан:
+            // он вычисляет аргументы по мере надобности и придёт своим путём
+            // (core/src/eval.cpp, задача 6). assert тут не годится — в
+            // релизной сборке он исчезает, а переполнение буфера остаётся:
+            // check пропускает format с любым числом аргументов, и
+            // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
+            if (id == Builtin::Format) { return evalFormat(ast, node, ctx, out, diag); }
+
+            // Арность гарантирована проходом, а размер буфера — таблицей
+            // билтинов (core/src/builtin.hpp::kMaxFixedArgs), а не догадкой:
+            // static_assert в builtin.cpp не даст завести функцию с большей
+            // фиксированной арностью, не расширив следом и этот буфер.
+            // Инициализатор ниже перечисляет ровно kMaxFixedArgs элементов
+            // явно: у Value фабрики закрыты (value.hpp), заполнить массив
+            // циклом или {} снаружи класса нечем. static_assert ниже не даёт
+            // списку молча разойтись со значением kMaxFixedArgs, если оно
+            // когда-нибудь изменится.
+            static_assert(kMaxFixedArgs == 2,
+                          "kMaxFixedArgs изменился — дополните список "
+                          "инициализаторов args ниже до того же числа элементов");
+            Value args[kMaxFixedArgs] = {Value::null(), Value::null()};
+            const std::uint32_t count = ast.childCount(node);
+            for (std::uint32_t i = 0; i < count; ++i) {
+                if (!eval(ast, ast.child(node, i), ctx, &args[i], diag)) {
+                    return false;
+                }
+            }
+            return applyBuiltin(id, ctx, args, count, ast.offset(node), out, diag);
+        }
+
         default:
             // Операторы и цепочки доступа разобраны выше отдельными ветками.
             // Сюда попадают узлы, которых в дереве от parseExpression быть не
             // может: Program, Assign, CallStatement — стейтменты, а не
-            // выражения, — и NodeKind::Call, который придёт вместе с вызовами
-            // билтинов в части 3b. До тех пор ветка защитная.
+            // выражения.
             return fail(ast, node, ErrorCode::Type,
                         "expression form is not supported", diag);
     }
@@ -484,22 +595,12 @@ bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
         case NodeKind::Index:
             return assignToIndex(ast, node, target, ctx, diag);
 
-        case NodeKind::Identifier:
-            // Имя — входной слот от хоста, а не переменная скрипта. Состав
-            // имён программе неподвластен (§7.1), а замена значения целиком
-            // порвала бы алиасы, которые §2.3 обещает наблюдаемыми.
-            //
-            // Проверка решается по дереву, без данных контекста, и по
-            // устройству — статическая (docs/grammar.md §6). Живёт здесь, а
-            // не в статическом проходе, потому что того прохода ещё нет.
-            // TODO(B27): перенести в статический проход, когда он появится.
-            return fail(ast, target, ErrorCode::Name,
-                        "cannot assign to a variable name", diag);
-
         default:
-            // Грамматика строит целью только Identifier, Member и Index
-            // (docs/grammar.md §5.2); все три разобраны выше — ветка
-            // защитная.
+            // Грамматика строит целью Identifier, Member и Index
+            // (docs/grammar.md §5.2). Identifier как цель отсеян статическим
+            // проходом (core/src/check.hpp, docs/semantics.md §7.2) — дерево,
+            // дошедшее до вычислителя, эту форму содержать не может, и
+            // защитная ветка покрывает её наравне с прочими невозможными.
             return fail(ast, target, ErrorCode::Type,
                         "invalid assignment target", diag);
     }
@@ -511,10 +612,17 @@ bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
         case NodeKind::Assign:
             return assign(ast, node, ctx, diag);
 
+        case NodeKind::CallStatement: {
+            // Вызов в позиции стейтмента возвращает Void, поэтому результат
+            // читать нечего и незачем (docs/semantics.md §2.2).
+            Value discarded = Value::null();
+            return eval(ast, ast.child(node, 0), ctx, &discarded, diag);
+        }
+
         default:
-            // Сегодня сюда попадает только CallStatement: вызовы приходят с
-            // части 3b. Отдавать его в eval нельзя — вышло бы сообщение про
-            // выражение там, где речь о стейтменте.
+            // Грамматика строит стейтмент только как Assign либо
+            // CallStatement (docs/grammar.md §5.1); обе разобраны выше —
+            // ветка защитная.
             return fail(ast, node, ErrorCode::Type,
                         "statement form is not supported", diag);
     }
@@ -525,11 +633,13 @@ bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
 bool evalExpression(const Ast &ast, Context &ctx, Value *out,
                     Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
     return eval(ast, ast.root(), ctx, out, diag);
 }
 
 bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
+    assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
     const NodeId program = ast.root();
     assert(ast.kind(program) == NodeKind::Program &&
            "runScript ждёт дерево от parseProgram");

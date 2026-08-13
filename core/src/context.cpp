@@ -75,6 +75,28 @@ std::string_view Context::string(Value v) const noexcept {
     return textAt(v.index(), v.length());
 }
 
+std::uint32_t Context::beginString() noexcept {
+    assert(build_.size() <= 0xffffffffu && "буфер сборки строки перерос uint32");
+    return static_cast<std::uint32_t>(build_.size());
+}
+
+void Context::appendToString(std::string_view bytes) {
+    build_.append(bytes);
+}
+
+Value Context::endString(std::uint32_t mark) noexcept {
+    // makeString копирует из build_ в text_; алиас-проверка в appendText
+    // сравнивает источник с диапазоном text_, а build_ — другое хранилище,
+    // поэтому спутать их не может.
+    const Value result = makeString(std::string_view(build_).substr(mark));
+    build_.resize(mark);
+    return result;
+}
+
+void Context::abortString(std::uint32_t mark) noexcept {
+    build_.resize(mark);
+}
+
 // Парная функция — growObject: правку в одной надо повторять в другой.
 void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }
@@ -301,7 +323,8 @@ std::size_t Context::bytesReserved() const noexcept {
     return pool_.capacity() * sizeof(Value) +
            arrays_.capacity() * sizeof(detail::ArrayRep) +
            objects_.capacity() * sizeof(detail::ObjectRep) +
-           entries_.capacity() * sizeof(detail::Entry) + text_.capacity();
+           entries_.capacity() * sizeof(detail::Entry) + text_.capacity() +
+           build_.capacity();
 }
 
 }  // namespace CS

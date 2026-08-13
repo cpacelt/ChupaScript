@@ -227,10 +227,11 @@ TEST(LexerIdentifier, ActiveKeywords) {
 TEST(LexerIdentifier, EveryReservedWordIsReserved) {
     const char *const reserved[] = {
         "let",   "var",     "val",      "const",  "void",   "typeof",
-        "if",    "else",    "while",    "for",    "in",     "break",
-        "continue", "do",   "function", "func",   "return", "this",
-        "self",  "new",     "delete",   "switch", "case",   "default",
-        "try",   "catch",   "throw",    "import", "export", "class"};
+        "type",  "if",      "else",     "while",  "for",    "in",
+        "break", "continue", "do",      "function", "func", "return",
+        "this",  "self",    "new",      "delete", "switch", "case",
+        "default", "try",   "catch",    "throw",  "import", "export",
+        "class"};
     for (const char *word : reserved) {
         const Lexed lexed = lexAll(word);
         ASSERT_TRUE(lexed.ok) << word;

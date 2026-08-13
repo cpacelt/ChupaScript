@@ -47,7 +47,7 @@ TEST(BuiltinTable, ArityMatchesTheSpecification) {
         EXPECT_EQ(CS::builtinInfo(id).minArgs, 2);
         EXPECT_EQ(CS::builtinInfo(id).maxArgs, 2);
     }
-    // format — от одного шаблона и сколько угодно аргументов (§8.9).
+    // format — от одного шаблона и сколько угодно аргументов (§8.8).
     EXPECT_EQ(CS::builtinInfo(Builtin::Format).minArgs, 1);
     EXPECT_EQ(CS::builtinInfo(Builtin::Format).maxArgs, CS::kVariadic);
 }
@@ -87,7 +87,7 @@ TEST(BuiltinTable, TypeofIsReservedAndThereforeNotBuiltin) {
 }
 
 TEST(PlaceholderCount, CountsAndRespectsEscaping) {
-    // docs/semantics.md §8.9: плейсхолдер ${}, последовательность $${} даёт
+    // docs/semantics.md §8.8: плейсхолдер ${}, последовательность $${} даёт
     // литеральное ${} и плейсхолдером не является.
     EXPECT_EQ(CS::countPlaceholders(""), 0u);
     EXPECT_EQ(CS::countPlaceholders("без подстановок"), 0u);

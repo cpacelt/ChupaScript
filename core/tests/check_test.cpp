@@ -63,6 +63,11 @@ TEST(Check, UnknownFunctionIsACompileError) {
     const auto found = checkExpr(ctx, "cnt(items)");
     ASSERT_EQ(found.size(), 1u);
     EXPECT_EQ(found[0].code, CS::ErrorCode::Name);
+    // Смещение указывает на сам вызов: узел Call несёт смещение своего имени
+    // (core/src/ast.cpp, Ast::call), а "cnt" стоит в самом начале строки. Для
+    // валидатора в CLI смещение — единственное, что можно показать автору
+    // макета, поэтому проход обязан давать его верным, а не только код.
+    EXPECT_EQ(found[0].offset, 0u);
 }
 
 TEST(Check, WrongArgumentCountIsACompileError) {
@@ -104,13 +109,25 @@ TEST(Check, UsingTheResultOfAVoidBuiltinIsAnError) {
 TEST(Check, FormatPlaceholderMismatchIsCaughtWhenTheTemplateIsLiteral) {
     Context ctx;
     put(ctx, "user", "{'name': 'Вася'}");
-    // docs/semantics.md §8.9: при литеральном шаблоне несовпадение — ошибка
+    // docs/semantics.md §8.8: при литеральном шаблоне несовпадение — ошибка
     // компиляции.
     EXPECT_EQ(checkExpr(ctx, "format('${} и ${}', user.name)").size(), 1u);
     EXPECT_EQ(checkExpr(ctx, "format('нет', user.name)").size(), 1u);
     EXPECT_TRUE(checkExpr(ctx, "format('${}', user.name)").empty());
     // $${} плейсхолдером не является, поэтому аргументов не требует.
     EXPECT_TRUE(checkExpr(ctx, "format('цена $${}')").empty());
+}
+
+TEST(Check, VoidBuiltinAsAWholeExpressionIsRejected) {
+    Context ctx;
+    put(ctx, "items", "[1, 2]");
+    // Корень дерева выражения — вызов, и его результат есть значение props,
+    // то есть употреблён. Void-функция здесь запрещена, иначе выражение
+    // изменило бы данные, что docs/semantics.md §3.2 обещает невозможным.
+    EXPECT_EQ(checkExpr(ctx, "pop(items)").size(), 1u);
+    EXPECT_EQ(checkExpr(ctx, "push(items, 3)").size(), 1u);
+    // Возвращающая значение в той же позиции — на месте.
+    EXPECT_TRUE(checkExpr(ctx, "count(items)").empty());
 }
 
 TEST(Check, FormatWithANonLiteralTemplateIsNotCheckedHere) {

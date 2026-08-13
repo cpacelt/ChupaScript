@@ -12,6 +12,13 @@
 #include "context.hpp"
 #include "report.hpp"
 
+#include "ast.hpp"
+#include "compile.hpp"
+#include "diagnostic.hpp"
+#include "eval.hpp"
+#include "printer.hpp"
+#include "value.hpp"
+
 namespace {
 
 constexpr std::string_view kExprPrefix = "expr:";
@@ -19,6 +26,62 @@ constexpr std::string_view kScriptPrefix = "script:";
 
 /// Что делать после разобранной строки.
 enum class After { Continue, Quit };
+
+/// Ширина приглашения: на неё сдвинута всякая колонка, потому что исходник
+/// человек набирал после него.
+constexpr std::uint32_t kPromptWidth = 2;
+
+/// Сколько ошибок статического прохода помещается в один отчёт.
+///
+/// Проход возвращает, сколько нашлось всего, поэтому о непоместившихся есть что
+/// сказать. Строка в оболочке короткая, и восьми хватает с запасом.
+constexpr std::uint32_t kMaxReported = 8;
+
+/// Компилирует и выполняет строку кода.
+///
+/// source — то, что осталось после префикса режима; indent — ширина всего, что
+/// напечатано до него.
+void runCode(CS::Context &ctx, std::string_view source, std::uint32_t indent,
+             bool asScript) {
+    CS::Ast ast;
+    CS::Diagnostic found[kMaxReported];
+    const std::uint32_t length = static_cast<std::uint32_t>(source.size());
+    const std::uint32_t errors =
+        asScript ? CS::compileScript(source.data(), length, ast, ctx, found,
+                                     kMaxReported)
+                 : CS::compileExpression(source.data(), length, ast, ctx, found,
+                                         kMaxReported);
+
+    if (errors != 0) {
+        // Печатаются все, а не первая: проход отдаёт их массивом именно затем.
+        const std::uint32_t shown =
+            errors < kMaxReported ? errors : kMaxReported;
+        for (std::uint32_t i = 0; i < shown; ++i) {
+            chupa::reportDiagnostic(std::cout, source, indent, found[i]);
+        }
+        if (errors > shown) {
+            std::cout << "error: " << (errors - shown) << " more not shown\n";
+        }
+        return;
+    }
+
+    CS::Diagnostic diag;
+    if (asScript) {
+        // Скрипт при успехе молчит: значения у него нет, а результат виден
+        // через :vars.
+        if (!CS::runScript(ast, ctx, diag)) {
+            chupa::reportDiagnostic(std::cout, source, indent, diag);
+        }
+        return;
+    }
+
+    CS::Value out = CS::Value::null();
+    if (!CS::evalExpression(ast, ctx, &out, diag)) {
+        chupa::reportDiagnostic(std::cout, source, indent, diag);
+        return;
+    }
+    std::cout << chupa::printValue(ctx, out) << "\n";
+}
 
 void printUsage(std::ostream &out) {
     out << "chupa " << chupascript_version() << "\n"
@@ -68,9 +131,23 @@ After handleLine(CS::Context &ctx, std::string_view line) {
         return After::Continue;
     }
 
-    if (text.substr(0, kExprPrefix.size()) == kExprPrefix ||
-        text.substr(0, kScriptPrefix.size()) == kScriptPrefix) {
-        std::cout << "error: not implemented yet\n";
+    const bool isExpr = text.substr(0, kExprPrefix.size()) == kExprPrefix;
+    const bool isScript = text.substr(0, kScriptPrefix.size()) == kScriptPrefix;
+    if (isExpr || isScript) {
+        const std::size_t prefixSize =
+            isExpr ? kExprPrefix.size() : kScriptPrefix.size();
+        const std::string_view rest = text.substr(prefixSize);
+        const std::string_view source = trim(rest);
+
+        // Отступ считается по исходной строке, а не по обрезанной: человек
+        // видит на экране приглашение, префикс и те пробелы, что набрал сам.
+        const std::size_t sourceStart =
+            static_cast<std::size_t>(source.data() - line.data());
+        const std::uint32_t indent =
+            kPromptWidth + chupa::columnOf(line, static_cast<std::uint32_t>(
+                                                     sourceStart));
+
+        runCode(ctx, source, indent, isScript);
         return After::Continue;
     }
 

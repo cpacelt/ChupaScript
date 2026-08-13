@@ -42,6 +42,11 @@ Replace entire contents of `core/include/chupascript/chupascript.h` with the hea
 #include <stddef.h>
 #include <stdint.h>
 
+/* Version macros — used by chupa_version() and available to hosts. */
+#define CHUPASCRIPT_VERSION_MAJOR 0
+#define CHUPASCRIPT_VERSION_MINOR 1
+#define CHUPASCRIPT_VERSION_PATCH 0
+
 #if defined(__clang__)
 #  define CHUPA_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
 #  define CHUPA_NONNULL_END   _Pragma("clang assume_nonnull end")
@@ -1153,7 +1158,7 @@ public struct ChupaError: Error, CustomStringConvertible {
     public let offset: Int
 
     public var description: String {
-        "ChupaError(\(code)): \(message) at offset \(offset)"
+        "\(code) at \(offset): \(message)"
     }
 }
 ```
@@ -1182,6 +1187,13 @@ import ChupaScriptC
 
 /// Owns a ChupaScript engine context.
 /// All expressions, scripts, and values live until this context is deallocated.
+///
+/// Thread safety: one context = one thread at a time. The context MUST be
+/// deallocated on the same thread it was last used on — `deinit` calls
+/// `chupa_context_destroy` which unregisters the redraw callback, and a
+/// callback in flight on another thread during destruction is a race.
+/// If the context was used on a background queue, capture it in a
+/// `DispatchQueue.async` block on that queue and let it release there.
 public final class ChupaContext {
 
     internal let handle: OpaquePointer

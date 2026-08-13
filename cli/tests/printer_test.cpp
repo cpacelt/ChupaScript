@@ -42,7 +42,7 @@ TEST(PrintValue, StringsAreQuoted) {
 TEST(PrintValue, StringsAreEscapedBackToSource) {
     Context ctx;
     // Напечатанное обязано быть тем, что можно набрать обратно: набор
-    // escape-последовательностей из docs/grammar.md §4.3.
+    // escape-последовательностей из docs/grammar.md §4.7.
     EXPECT_EQ(chupa::printValue(ctx, put(ctx, "q", "'it\\'s'")), "'it\\'s'");
     EXPECT_EQ(chupa::printValue(ctx, put(ctx, "b", "'a\\\\b'")), "'a\\\\b'");
     EXPECT_EQ(chupa::printValue(ctx, put(ctx, "n", "'a\\nb'")), "'a\\nb'");

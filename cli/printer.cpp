@@ -8,7 +8,7 @@ namespace chupa {
 namespace {
 
 /// Строковый литерал языка: одинарные кавычки и пять escape-последовательностей
-/// из docs/grammar.md §4.3. Напечатанное обязано набираться обратно.
+/// из docs/grammar.md §4.7. Напечатанное обязано набираться обратно.
 void appendQuoted(std::string &out, std::string_view text) {
     out += '\'';
     for (const char c : text) {
@@ -24,6 +24,18 @@ void appendQuoted(std::string &out, std::string_view text) {
 }
 
 /// path — агрегаты, печатаемые прямо сейчас: путь от корня до текущего места.
+///
+/// Инвариант глубины: append рекурсивен по высоте дерева значения и сам её не
+/// ограничивает. Она ограничена высотой дерева значений, унаследованной от
+/// высоты дерева разбора, — а ту держит `kMaxDepth` в `core/src/parser.cpp`.
+/// Цепочка держится ровно на том, что единственный путь данных в Context —
+/// `setVariable` (`core/src/data.cpp`, `setVariable → parseExpression →
+/// materialize`): materialize строит агрегат на каждый уровень AST один в
+/// один, поэтому дерево значений не может быть выше, чем позволил парсер.
+/// Появление другого канала загрузки данных в Context в обход парсера (скажем,
+/// материализация макета из JSON) этот предел снимает и потребует от печатника
+/// собственного — как и от любого другого потребителя дерева, тратящего
+/// ресурс на уровень (docs/backlog.md B5).
 void append(std::string &out, const CS::Context &ctx, CS::Value value,
             std::vector<CS::Value> &path) {
     switch (value.kind()) {

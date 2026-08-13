@@ -4,8 +4,11 @@
 `CS::Context` for the session and lets you put data into it, evaluate
 expressions against it, and run scripts that mutate it — without writing a
 host program or a test file. It is meant for poking at the language and its
-error messages, not for production embedding: it wraps the same public
-interface (`core/include`) any host would use.
+error messages, not for production embedding: it links against the core's
+internal layer (`core/src`), not the public interface (`core/include`) a host
+would use, because there is no C API yet — `core/include` is a stub with one
+function, the version. When the C API is written, the shell will become its
+first real consumer.
 
 ## Building and running
 

@@ -102,15 +102,17 @@ void printHelp(std::ostream &out) {
 }
 
 /// Обрезает пробелы с обоих концов.
+///
+/// `\r` снимается наравне с пробелом и табуляцией: `std::getline` режет только
+/// по `\n`, поэтому файл, набранный на Windows (`\r\n`), оставляет `\r`
+/// последним символом каждой строки. Без этого `:quit\r` не совпадает с
+/// `"quit"`, и оболочка не выходит, ожидая конца ввода.
 std::string_view trim(std::string_view text) {
+    auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
     std::size_t first = 0;
-    while (first < text.size() && (text[first] == ' ' || text[first] == '\t')) {
-        ++first;
-    }
+    while (first < text.size() && isSpace(text[first])) { ++first; }
     std::size_t last = text.size();
-    while (last > first && (text[last - 1] == ' ' || text[last - 1] == '\t')) {
-        --last;
-    }
+    while (last > first && isSpace(text[last - 1])) { --last; }
     return text.substr(first, last - first);
 }
 

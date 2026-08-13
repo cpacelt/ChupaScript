@@ -25,6 +25,20 @@ constexpr std::size_t kCount = sizeof kTable / sizeof kTable[0];
 static_assert(kCount == static_cast<std::size_t>(Builtin::Str) + 1,
               "таблица и enum обязаны совпадать по составу");
 
+/// Стережёт соответствие таблицы буферу вычислителя: функция с большей
+/// фиксированной арностью переполнила бы его, пройдя все проверки.
+constexpr bool fixedArityFitsBuffer() {
+    for (const BuiltinInfo &info : kTable) {
+        if (info.maxArgs != kVariadic && info.maxArgs > kMaxFixedArgs) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(fixedArityFitsBuffer(),
+              "фиксированная арность превышает kMaxFixedArgs: "
+              "буфер аргументов вычислителя придётся расширить");
+
 }  // namespace
 
 bool findBuiltin(std::string_view name, Builtin *out) noexcept {
@@ -271,13 +285,18 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             if (!numbersOnly(args, 1, "round expects a number", offset, diag)) {
                 return false;
             }
-            // От нуля, а не к чётному (§8.11): ровно то, что делает std::round.
+            // От нуля, а не к чётному (§8.10): ровно то, что делает std::round.
             *out = Value::number(std::round(args[0].numberValue()));
             return true;
 
-        default:
-            // Остальные функции приходят следующими задачами.
-            return failType(offset, "builtin is not implemented yet", diag);
+        case Builtin::Format:
+            // Сюда не приходят: format вариадичен, и буфер под заранее
+            // вычисленные аргументы потребовал бы верхней границы их числа,
+            // которой §8.8 не устанавливает. Поэтому его цикл живёт прямо в
+            // вычислителе (core/src/eval.cpp, evalFormat) и applyBuiltin не
+            // достигает.
+            assert(false && "format обрабатывается вычислителем, не applyBuiltin");
+            return failType(offset, "format is not handled here", diag);
     }
 }
 

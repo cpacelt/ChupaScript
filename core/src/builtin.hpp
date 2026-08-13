@@ -15,8 +15,14 @@ enum class Builtin : std::uint8_t {
     Abs, Count, Format, Has, Keys, Last, Max, Min, Pop, Push, Round, Str
 };
 
-/// Верхняя граница числа аргументов отсутствует. Только у format (§8.9).
+/// Верхняя граница числа аргументов отсутствует. Только у format (§8.8).
 inline constexpr std::uint8_t kVariadic = 255;
+
+/// Наибольшая фиксированная арность среди встроенных функций.
+///
+/// По ней размерен буфер аргументов в вычислителе. format вариадичен и идёт
+/// мимо буфера — его аргументы вычисляются по мере надобности.
+inline constexpr std::uint8_t kMaxFixedArgs = 2;
 
 /// Что проходу и вычислителю нужно знать о функции, не вызывая её.
 struct BuiltinInfo {
@@ -32,7 +38,7 @@ bool findBuiltin(std::string_view name, Builtin *out) noexcept;
 const BuiltinInfo &builtinInfo(Builtin id) noexcept;
 
 /// Вид одного куска, на которые format-шаблон распадается при разборе слева
-/// направо (docs/semantics.md §8.9).
+/// направо (docs/semantics.md §8.8).
 enum class FormatPiece : std::uint8_t {
     Literal,      ///< пробег без плейсхолдеров — копируется как есть
     Placeholder,  ///< ${} — потребляет следующий аргумент
@@ -48,7 +54,7 @@ struct FormatCursor {
 /// cursor. false — шаблон исчерпан; *piece и *text не трогаются.
 ///
 /// Единственное место, где записано правило «$${} даёт литеральное ${} и
-/// плейсхолдером не считается» (docs/semantics.md §8.9): и countPlaceholders
+/// плейсхолдером не считается» (docs/semantics.md §8.8): и countPlaceholders
 /// ниже, и format (core/src/eval.cpp) разбирают шаблон только через эту
 /// функцию — раньше у них было по своей копии этого правила, и совпадение
 /// держалось на аккуратности, а не на устройстве.
@@ -63,7 +69,7 @@ bool nextFormatPiece(std::string_view fmt, FormatCursor &cursor,
                      FormatPiece *piece, std::string_view *text) noexcept;
 
 /// Сколько плейсхолдеров ${} в шаблоне; $${} даёт литеральное ${} и не считается
-/// (docs/semantics.md §8.9).
+/// (docs/semantics.md §8.8).
 ///
 /// Одна функция на два потребителя: статический проход сверяет ею число
 /// аргументов при литеральном шаблоне, вычислитель ею же разбирает шаблон при

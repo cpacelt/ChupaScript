@@ -90,11 +90,11 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
                                 ast.offset(node), diag);
 }
 
-/// Собирает строку по шаблону (docs/semantics.md §8.9).
+/// Собирает строку по шаблону (docs/semantics.md §8.8).
 ///
 /// Живёт здесь, а не в builtin.cpp, потому что format вариадичен: буфер под
 /// заранее вычисленные аргументы потребовал бы верхней границы их числа,
-/// которой §8.9 не устанавливает. Шаблон потребляет аргументы строго слева
+/// которой §8.8 не устанавливает. Шаблон потребляет аргументы строго слева
 /// направо, по одному на плейсхолдер, поэтому лениво выходит и проще, и без
 /// придуманного предела.
 ///
@@ -417,9 +417,19 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
             if (id == Builtin::Format) { return evalFormat(ast, node, ctx, out, diag); }
 
-            // Арность гарантирована проходом, поэтому буфер по самой широкой
-            // невариадической функции — двум аргументам.
-            Value args[2] = {Value::null(), Value::null()};
+            // Арность гарантирована проходом, а размер буфера — таблицей
+            // билтинов (core/src/builtin.hpp::kMaxFixedArgs), а не догадкой:
+            // static_assert в builtin.cpp не даст завести функцию с большей
+            // фиксированной арностью, не расширив следом и этот буфер.
+            // Инициализатор ниже перечисляет ровно kMaxFixedArgs элементов
+            // явно: у Value фабрики закрыты (value.hpp), заполнить массив
+            // циклом или {} снаружи класса нечем. static_assert ниже не даёт
+            // списку молча разойтись со значением kMaxFixedArgs, если оно
+            // когда-нибудь изменится.
+            static_assert(kMaxFixedArgs == 2,
+                          "kMaxFixedArgs изменился — дополните список "
+                          "инициализаторов args ниже до того же числа элементов");
+            Value args[kMaxFixedArgs] = {Value::null(), Value::null()};
             const std::uint32_t count = ast.childCount(node);
             for (std::uint32_t i = 0; i < count; ++i) {
                 if (!eval(ast, ast.child(node, i), ctx, &args[i], diag)) {

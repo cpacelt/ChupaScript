@@ -1,6 +1,7 @@
 # Чистые части оболочки — отдельной библиотекой, чтобы их могли собрать и
 # исполняемый файл, и тесты.
 add_library(chupa_cli_core STATIC
+    printer.cpp
     report.cpp
 )
 

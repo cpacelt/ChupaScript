@@ -1,4 +1,5 @@
 add_executable(chupa_cli_tests
+    printer_test.cpp
     report_test.cpp
 )
 

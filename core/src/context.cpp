@@ -76,6 +76,7 @@ std::string_view Context::string(Value v) const noexcept {
 }
 
 std::uint32_t Context::beginString() noexcept {
+    assert(build_.size() <= 0xffffffffu && "буфер сборки строки перерос uint32");
     return static_cast<std::uint32_t>(build_.size());
 }
 

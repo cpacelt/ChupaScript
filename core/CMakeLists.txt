@@ -11,7 +11,6 @@ add_library(chupascript STATIC
     src/operator.cpp
     src/parser.cpp
     src/text.cpp
-    src/version.cpp
 )
 
 target_include_directories(chupascript PUBLIC include)

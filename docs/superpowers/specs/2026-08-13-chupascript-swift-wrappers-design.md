@@ -299,13 +299,13 @@ private static let trampoline: @convention(c) (
 }
 ```
 
-BDUI-контроллер становится делегатом, диспатчит на main:
+Хост становится делегатом, при необходимости диспатчит на нужный поток:
 
 ```swift
-extension MyViewController: ChupaContextDelegate {
+extension MyController: ChupaContextDelegate {
     func contextNeedsRedraw(_ context: ChupaContext) {
         DispatchQueue.main.async { [weak self] in
-            self?.recalculateProps()
+            self?.recalculate()
         }
     }
 }
@@ -360,108 +360,24 @@ public struct ChupaError: Error, CustomStringConvertible {
 | Тип/механизм | Почему |
 |---|---|
 | `ChupaValue` (struct или opaque) | Чтение — типизированные eval-методы. Запись — `set(text:)` и перегрузки `set(_:Bool/Double/String)`. Массивы/объекты — через `set(text:)`. |
-| `ChupaEvaluable` протокол | BDUI решает типизацию через `extension WidgetProperty where T == ...`. |
+| `ChupaEvaluable` протокол | Избыточный слой. Потребитель решает типизацию сам. |
 | `batch_begin`/`batch_commit` | Внутреннее движка. |
 | `is_dirty` | Внутреннее движка. |
-| Color | Забота BDUI, не ChupaScript. |
+| Color | Забота хоста, не ChupaScript. |
+| RawRepresentable eval | В бэклоге. |
 
-## 7. Интеграция с OKBDUI
+## 7. Потоки
 
-### 7.1. WidgetProperty
-
-```swift
-public enum WidgetProperty<T> {
-    case literal(T)
-    case expression(ChupaExpression)
-
-    public var value: T? {
-        switch self {
-        case .literal(let v): return v
-        case .expression(let e): return Self.eval(e)
-        }
-    }
-}
-```
-
-Типизированный eval через extension по типам:
-
-```swift
-extension WidgetProperty where T == String {
-    static func eval(_ e: ChupaExpression) -> String? { e.evalString() }
-}
-extension WidgetProperty where T == Bool {
-    static func eval(_ e: ChupaExpression) -> Bool? { e.evalBool() }
-}
-extension WidgetProperty where T == Double {
-    static func eval(_ e: ChupaExpression) -> Double? { e.evalNumber() }
-}
-extension WidgetProperty where T: RawRepresentable, T.RawValue == String {
-    static func eval(_ e: ChupaExpression) -> T? {
-        T(rawValue: e.evalString() ?? "")
-    }
-}
-```
-
-Декодинг — префикс `$$` триггерит компиляцию. Способ создания literal зависит
-от типа T и решается на стороне BDUI (init из строки, rawValue и т.п.).
-Спека обёрток не фиксирует сигнатуру init — это ответственность OKBDUI.
-
-Пример паттерна:
-
-```swift
-// В BDUI: WidgetProperty<String>
-init(raw: String, context: ChupaContext) {
-    if raw.hasPrefix("$$") {
-        let source = String(raw.dropFirst(2))
-        if let expr = try? context.compile(expression: source) {
-            self = .expression(expr)
-        } else {
-            self = .literal(raw)  // fallback при ошибке компиляции
-        }
-    } else {
-        self = .literal(raw)
-    }
-}
-
-// В BDUI: WidgetProperty<Visibility> где Visibility: RawRepresentable, RawValue == String
-init(raw: String, context: ChupaContext) {
-    if raw.hasPrefix("$$"), let expr = try? context.compile(expression: String(raw.dropFirst(2))) {
-        self = .expression(expr)
-    } else if let val = Visibility(rawValue: raw) {
-        self = .literal(val)
-    } else {
-        self = .literal(.visible)  // дефолт
-    }
-}
-```
-
-### 7.2. Что удаляется из OKBDUI
-
-| Файл | Чем заменён |
-|---|---|
-| `Expression.swift` | `ChupaExpression` |
-| `Value.swift` | типизированные eval-методы |
-| `VariablesStorage.swift` | `ChupaContext` |
-| `VariableLink.swift` | движок сам тречит зависимости |
-| `MapLink.swift` | тернарный оператор ChupaScript |
-| `FormattedLink.swift` | `format()` builtin |
-| `InterpolatedString.swift` | строковая интерполяция `@{}` |
-| `Variable.swift` | корни в `ChupaContext` |
-| `DynamicVariablesProvider.swift` | не нужен |
-| `VariablesStorageSubscriber` | `ChupaContextDelegate` |
-
-## 8. Потоки
-
-Обёртка без `@MainActor` — ChupaScript универсальный (iOS + Android). BDUI
+Обёртка без `@MainActor` — ChupaScript универсальный (iOS + Android). Хост
 вешает `@MainActor` на своей стороне.
 
-`contextNeedsRedraw` вызывается на потоке, где звали `chupa_run`. BDUI
-диспатчит на main.
+`contextNeedsRedraw` вызывается на потоке, где звали `chupa_run`. Хост
+диспатчит на main при необходимости.
 
 Один контекст — один поток одновременно (см. C API спека §3). Разные
 контексты независимы.
 
-## 9. Поставка
+## 8. Поставка
 
 Podspec компилирует из исходников:
 - `s.source_files` = C++ (`core/src/*.cpp`, `core/src/*.hpp`) + C заголовок
@@ -470,7 +386,7 @@ Podspec компилирует из исходников:
 - Modulemap генерируется CocoaPods
 - Без xcframework, без бинарников
 
-## 10. Открытые вопросы
+## 9. Открытые вопросы
 
 - **B29** (backlog) — инкрементальный пересчёт props: движок кэширует и
   тречит dirty внутренне. Не влияет на C API контракт.
@@ -479,3 +395,7 @@ Podspec компилирует из исходников:
 - **`set(text:)` для программных сложных значений** — если понадобится
   программно создать массив/объект, можно передать текст литерала:
   `ctx.set("items", text: "[1, 2, 3]")`. Достаточно для первого этапа.
+- **RawRepresentable eval** — отложено. Потребитель (BDUI) сам конвертирует
+  строку в rawValue при необходимости.
+- **Интеграция с OKBDUI** — отдельная задача. Эта спека описывает только
+  ChupaScript Swift-обёртки.

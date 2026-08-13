@@ -27,7 +27,15 @@ Value evaluate(Context &ctx, std::string_view text) {
     Diagnostic diag;
     const std::uint32_t errors = CS::compileExpression(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
-    EXPECT_EQ(errors, 0u) << diag.message;
+    if (errors != 0) {
+        // Дерево не прошло check и не помечено проверенным: звать
+        // evalExpression на нём — либо assert в отладочной сборке, либо
+        // хождение по непроверенному дереву прямо в буфер аргументов в
+        // релизной (core/src/eval.cpp, kMaxFixedArgs). Ранний выход не даёт
+        // страховке из builtin.cpp отключить саму себя первой.
+        ADD_FAILURE() << diag.message;
+        return Value::null();
+    }
     Value out = Value::null();
     EXPECT_TRUE(CS::evalExpression(ast, ctx, &out, diag)) << diag.message;
     return out;
@@ -39,7 +47,10 @@ Diagnostic evalError(Context &ctx, std::string_view text) {
     Diagnostic diag;
     const std::uint32_t errors = CS::compileExpression(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
-    EXPECT_EQ(errors, 0u) << diag.message;
+    if (errors != 0) {
+        ADD_FAILURE() << diag.message;
+        return diag;
+    }
     Value out = Value::null();
     EXPECT_FALSE(CS::evalExpression(ast, ctx, &out, diag));
     return diag;
@@ -631,7 +642,10 @@ Diagnostic runError(Context &ctx, std::string_view text) {
     Diagnostic diag;
     const std::uint32_t errors = CS::compileScript(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, ctx, &diag, 1);
-    EXPECT_EQ(errors, 0u) << diag.message;
+    if (errors != 0) {
+        ADD_FAILURE() << diag.message;
+        return diag;
+    }
     EXPECT_FALSE(CS::runScript(ast, ctx, diag));
     return diag;
 }
@@ -1183,7 +1197,7 @@ TEST(EvalCall, MinAndMaxTakeExactlyTwo) {
     EXPECT_EQ(evaluate(ctx, "min(1, 2)").numberValue(), 1.0);
     EXPECT_EQ(evaluate(ctx, "max(1, 2)").numberValue(), 2.0);
     EXPECT_EQ(evaluate(ctx, "min(-1, -2)").numberValue(), -2.0);
-    // Для трёх и более — вложение (§8.10).
+    // Для трёх и более — вложение (§8.9).
     EXPECT_EQ(evaluate(ctx, "min(3, min(1, 2))").numberValue(), 1.0);
 }
 
@@ -1216,7 +1230,7 @@ TEST(EvalCall, AbsIsTheModulus) {
 
 TEST(EvalCall, RoundGoesAwayFromZero) {
     Context ctx;
-    // docs/semantics.md §8.11 перечисляет ровно эти случаи: от нуля, а не к
+    // docs/semantics.md §8.10 перечисляет ровно эти случаи: от нуля, а не к
     // чётному. round(2.5) даёт 3, чего половинное-к-чётному не дало бы.
     EXPECT_EQ(evaluate(ctx, "round(0.5)").numberValue(), 1.0);
     EXPECT_EQ(evaluate(ctx, "round(1.5)").numberValue(), 2.0);
@@ -1253,7 +1267,7 @@ TEST(EvalFormat, SubstitutesLeftToRight) {
 
 TEST(EvalFormat, EscapedPlaceholderIsLiteral) {
     Context ctx;
-    // docs/semantics.md §8.9: $${} даёт литеральное ${} и аргумента не требует.
+    // docs/semantics.md §8.8: $${} даёт литеральное ${} и аргумента не требует.
     EXPECT_EQ(ctx.string(evaluate(ctx, "format('цена $${}')")), "цена ${}");
     EXPECT_EQ(ctx.string(evaluate(ctx, "format('$${} и ${}', 1)")), "${} и 1");
 }
@@ -1287,7 +1301,7 @@ TEST(EvalFormat, NonStringTemplateIsAnError) {
 TEST(EvalFormat, MismatchWithANonLiteralTemplateIsARuntimeError) {
     Context ctx;
     put(ctx, "tpl", "{'two': '${} и ${}', 'none': 'нет'}");
-    // Шаблон не литерал, значит проход сверить не мог — ловится здесь (§8.9).
+    // Шаблон не литерал, значит проход сверить не мог — ловится здесь (§8.8).
     EXPECT_EQ(evalError(ctx, "format(tpl.two, 1)").code, CS::ErrorCode::Type);
     EXPECT_EQ(evalError(ctx, "format(tpl.none, 1)").code, CS::ErrorCode::Type);
     // А совпадающее число проходит.

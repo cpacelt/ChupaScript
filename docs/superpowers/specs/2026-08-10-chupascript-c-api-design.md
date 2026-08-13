@@ -1,7 +1,9 @@
 # ChupaScript: публичный C API
 
 Дата: 2026-08-10
-Статус: состав заголовка зафиксирован
+Статус: состав заголовка зафиксирован; ревизия 2026-08-13 — убран `ChupaValue`,
+добавлены типизированные setter'ы и `chupa_context_on_redraw`, `chupascript_version`
+переименована в `chupa_version` (см. `2026-08-13-chupascript-swift-wrappers-design.md` §4.1).
 
 ## 1. Область документа
 
@@ -201,7 +203,6 @@ CHUPA_NONNULL_BEGIN
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
-typedef struct ChupaValue      ChupaValue;
 
 typedef enum ChupaKind {
     CHUPA_KIND_NULL   = 0,
@@ -231,17 +232,19 @@ typedef enum ChupaErrorCode {
 ```
 
 `CHUPA_MUST_USE` ставится на функции, чей возврат несёт признак успеха: без
-него `chupa_value_number(ctx, v, &w);` без проверки компилируется молча.
+него `chupa_eval_number(ctx, e, &w);` без проверки компилируется молча.
 
 **Ограничение импортёра Swift.** Все три непрозрачных типа Swift покажет одним и
 тем же `OpaquePointer` — различать их он не умеет. Обёртка на Swift обязана
-завернуть их в собственные типы, иначе `chupa_eval(ctx, script)` соберётся. В C
+завернуть их в собственные типы, иначе `chupa_run(ctx, expr)` соберётся. В C
 такая перепутка не собирается.
 
 ## 7. Функции
 
 ```c
-/* Версия библиотеки как "major.minor.patch". Никогда не NULL. */
+/* Версия библиотеки как "major.minor.patch". Никогда не NULL.
+ * Прежнее имя chupascript_version переименовано в chupa_version —
+ * приведение к единому префиксу chupa_. */
 CHUPA_API const char *chupa_version(void);
 
 /* ─── Контекст ─────────────────────────────────────────────────────── */
@@ -260,6 +263,33 @@ CHUPA_API void chupa_context_destroy(ChupaContext *CHUPA_NULLABLE ctx);
 CHUPA_API bool chupa_context_set(ChupaContext *ctx,
                                  const char *name, size_t name_len,
                                  const char *text, size_t text_len);
+
+/* ─── Типизированные setter'ы для скаляров ─────────────────────────── */
+
+/* Ставят значение корня напрямую, без текстового литерала: host уже
+ * знает тип. Заменяют прежние chupa_context_set_value + chupa_value_*
+ * фабрики. Сложные данные (массивы, объекты) поставляются через
+ * chupa_context_set текстом литерала. */
+CHUPA_API void chupa_context_set_bool  (ChupaContext *ctx,
+                                        const char *name, size_t name_len,
+                                        bool value);
+CHUPA_API void chupa_context_set_number(ChupaContext *ctx,
+                                        const char *name, size_t name_len,
+                                        double value);
+CHUPA_API void chupa_context_set_string(ChupaContext *ctx,
+                                        const char *name, size_t name_len,
+                                        const char *text, size_t text_len);
+
+/* ─── Нотификация о перерисовке ────────────────────────────────────── */
+
+/* Регистрирует слушателя, вызываемого при каждой перерисовке экрана.
+ * Передача NULL снимает слушателя. user_data проходит как есть. */
+typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
+                                    void *CHUPA_NULLABLE user_data);
+
+CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
+                                       ChupaRedrawListener listener,
+                                       void *CHUPA_NULLABLE user_data);
 
 /* ─── Последняя неудача на этом контексте ──────────────────────────── */
 
@@ -308,42 +338,24 @@ chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
-                  const char **out, size_t *len);
-
-/* ─── Вычисление: любой тип ────────────────────────────────────────── */
-
-/* Общий путь: агрегаты и случай, когда тип заранее неизвестен.
- * NULL — ошибка; значение null приезжает как CHUPA_KIND_NULL. */
-CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_eval(ChupaContext *ctx, ChupaExpression *e);
-
-/* ─── Доступ к значению ────────────────────────────────────────────── */
-
-CHUPA_API ChupaKind chupa_value_kind(const ChupaContext *ctx, const ChupaValue *v);
-
-CHUPA_API CHUPA_MUST_USE bool chupa_value_bool  (const ChupaContext *ctx, const ChupaValue *v, bool   *out);
-CHUPA_API CHUPA_MUST_USE bool chupa_value_number(const ChupaContext *ctx, const ChupaValue *v, double *out);
-
-CHUPA_API const char *CHUPA_NULLABLE
-chupa_value_string(const ChupaContext *ctx, const ChupaValue *v, size_t *len);
-
-CHUPA_API CHUPA_MUST_USE bool chupa_array_count(const ChupaContext *ctx, const ChupaValue *v, size_t *out);
-CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_array_at(const ChupaContext *ctx, const ChupaValue *v, size_t i);
-
-CHUPA_API CHUPA_MUST_USE bool chupa_object_count(const ChupaContext *ctx, const ChupaValue *v, size_t *out);
-CHUPA_API const char *CHUPA_NULLABLE
-chupa_object_key_at(const ChupaContext *ctx, const ChupaValue *v, size_t i, size_t *len);
-CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_object_value_at(const ChupaContext *ctx, const ChupaValue *v, size_t i);
-CHUPA_API const ChupaValue *CHUPA_NULLABLE
-chupa_object_get(const ChupaContext *ctx, const ChupaValue *v, const char *key, size_t len);
+                  const char *CHUPA_NULLABLE *CHUPA_NULLABLE out, size_t *len);
 ```
+
+> **`ChupaValue` удалён.** В предыдущей редакции спецификации API содержал
+> непрозрачный тип `ChupaValue` с набором фабрик и аксессоров
+> (`chupa_eval`, `chupa_value_kind`, `chupa_value_bool`, `chupa_value_number`,
+> `chupa_value_string`, `chupa_array_*`, `chupa_object_*`,
+> `chupa_context_set_value`). Все они убраны: скаляры ставятся типизированными
+> функциями (`chupa_context_set_bool/number/string`), сложные данные —
+> текстом литерала через `chupa_context_set`, а чтение массивов и объектов
+> из выражений отложено до появления соответствующего слоя (см.
+> `docs/backlog.md`). C++ `CS::Value` остаётся внутренним типом движка и
+> через границу C API не проходит.
 
 **Время жизни результата.**
 
-> Указатель, отданный `chupa_eval_string` или `chupa_eval`, и всё достижимое
-> из него действительны до следующего вычисления на этом контексте.
+> Указатель, отданный `chupa_eval_string`, действителен до следующего
+> вычисления на этом контексте.
 
 Правило описывает реальность буквально. Пулы значений переезжают при росте
 (`2026-08-11-chupascript-values-design.md` §3), поэтому указатель, выданный до
@@ -366,6 +378,26 @@ chupa_object_get(const ChupaContext *ctx, const ChupaValue *v, const char *key, 
 нечего, поскольку хранилище не держит предыдущих состояний. Обработчик, упавший на
 третьем присваивании из пяти, оставит первые два применёнными. Это цена принятой
 модели памяти, а не недосмотр.
+
+### Future API
+
+Следующие функции планируются, но пока не реализованы — их разработка отложена
+до появления потребности в чтении массивов и объектов из результатов вычисления
+(см. `docs/backlog.md`):
+
+- `chupa_eval` — обобщённое вычисление выражения, возвращающее значение
+  произвольного типа (включая массивы и объекты).
+- `chupa_value_kind` — определение типа значения (`bool`, `number`, `string`,
+  `array`, `object`, `null`).
+- `chupa_array_count`, `chupa_array_at` — доступ к элементам массива по индексу.
+- `chupa_object_count`, `chupa_object_key_at`, `chupa_object_value_at`,
+  `chupa_object_get` — перечисление и поиск ключей объекта.
+
+Точные сигнатуры не приведены, потому что все эти функции оперировали бы типом
+`ChupaValue`, который в данной редакции удалён. Когда соответствующий слой
+будет реализован, `ChupaValue` будет повторно введён или заменён другой
+абстракцией — тогда появятся и сигнатуры. До этого момента обёртки могут
+ориентироваться на приведённый список как на roadmap.
 
 ## 8. Ошибки
 
@@ -407,13 +439,13 @@ sqlite и большинство C-библиотек: признак в воз�
 | Диагностика — класс, смещение, сообщение | Класс избавляет хост от разбора текста; смещение позволяет показать место в макете; строку и колонку хост считает сам |
 | Без внутренней синхронизации | Один экран — один поток; контексты независимы, глобального состояния нет |
 | `Value` — тег-юнион, без NaN-boxing | Решение пользователя: используем то, что уже есть в `core/src/value.hpp` |
-| Наружу — непрозрачный `ChupaValue *` с функциями доступа | Раскладка не видна, через границу едут только примитивы и указатели. Обёртки Swift и Kotlin строят поверх этого свои типы |
-| Функции доступа принимают контекст первым параметром | Значение адресует пулы индексами, и разрешить их может только выдавший контекст. Подпись перестаёт врать о времени жизни, а в Swift получается `ctx.string(of: v)` |
-| Не сериализация агрегата в JSON | Разбор на стороне хоста дороже обхода на два порядка: `JSONDecoder` боксит каждое число и строит промежуточные объекты, тогда как обход — прямые вызовы без аллокаций |
+| Наружу — только примитивы и указатели; `ChupaValue` убран | Раскладка не видна; скаляры ставятся и читаются типизированными функциями, сложные данные — текстом литерала. Обёртки Swift и Kotlin строят поверх этого свои типы |
+| Типизированные setter'ы `set_bool/number/string` вместо `set_value` + фабрик | Меньше вызовов, меньше типов на границе; хост уже знает тип скаляра |
+| `chupa_context_on_redraw` — нотификация о перерисовке | Хост должен знать, когда перевычислять props; рантайм уже знает момент |
 | Скаляры возвращаются копией, а не хендлом | У числа наверху нет дома в хранилище: пришлось бы материализовать ячейку ради каждого пересчёта props |
 | Трёхзначный `ChupaStatus` у скалярных вычислений | `null` в props — норма, а не исключение: данные с бэкенда неполные, чтение у `null` даёт `null`. Отличать его от ошибки обязательно |
-| Функции доступа проверяют, а не полагаются на предусловие | Несовпадение типа приходит из данных, а не только из ошибки программиста: макет вправе сказать `"width": "@{ user.name }"`. UB от данных недопустимо |
-| Два соглашения о провале: `NULL` у указателей, признак плюс выходной параметр у остальных | Если у типа есть невозможное значение, признак избыточен. Выходной параметр остаётся у четырёх функций вместо десяти, а в Swift указатель приезжает готовым опционалом |
+| Функции скалярного вычисления проверяют тип, а не полагаются на предусловие | Несовпадение типа приходит из данных, а не только из ошибки программиста: макет вправе сказать `"width": "@{ user.name }"`. UB от данных недопустимо |
+| Два соглашения о провале: `NULL` у указателей, признак плюс выходной параметр у остальных | Если у типа есть невозможное значение, признак избыточен. Выходной параметр остаётся у трёх функций, а в Swift указатель приезжает готовым опционалом |
 
 ## 10. Открытые вопросы
 

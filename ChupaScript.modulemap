@@ -1,0 +1,4 @@
+module ChupaScriptC {
+    umbrella header "chupascript.h"
+    export *
+}

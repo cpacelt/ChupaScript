@@ -270,7 +270,7 @@ BENCHMARK(BM_Check_Handler);
 
 static void BM_Version(benchmark::State &state) {
     for (auto _ : state) {
-        benchmark::DoNotOptimize(chupascript_version());
+        benchmark::DoNotOptimize(chupa_version());
     }
 }
 BENCHMARK(BM_Version);

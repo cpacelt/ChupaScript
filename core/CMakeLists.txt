@@ -1,6 +1,7 @@
 add_library(chupascript STATIC
     src/ast.cpp
     src/builtin.cpp
+    src/c_api.cpp
     src/check.cpp
     src/compile.cpp
     src/context.cpp
@@ -10,7 +11,6 @@ add_library(chupascript STATIC
     src/operator.cpp
     src/parser.cpp
     src/text.cpp
-    src/version.cpp
 )
 
 target_include_directories(chupascript PUBLIC include)

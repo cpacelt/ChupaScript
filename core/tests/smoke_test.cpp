@@ -4,5 +4,5 @@
 #include "chupascript/chupascript.h"
 
 TEST(Smoke, VersionIsReported) {
-    EXPECT_STREQ("0.1.0", chupascript_version());
+    EXPECT_STREQ("0.1.0", chupa_version());
 }

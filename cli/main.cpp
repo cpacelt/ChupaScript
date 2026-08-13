@@ -85,7 +85,7 @@ void runCode(CS::Context &ctx, std::string_view source, std::uint32_t indent,
 }
 
 void printUsage(std::ostream &out) {
-    out << "chupa " << chupascript_version() << "\n"
+    out << "chupa " << chupa_version() << "\n"
         << "\n"
         << "usage:\n"
         << "  chupa -repl    start the interactive shell\n";
@@ -234,7 +234,7 @@ int runRepl() {
     std::optional<CS::Context> ctx;
     ctx.emplace();
 
-    std::cout << "chupa " << chupascript_version() << ", :help for commands\n";
+    std::cout << "chupa " << chupa_version() << ", :help for commands\n";
 
     std::string line;
     while (true) {

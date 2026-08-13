@@ -14,6 +14,7 @@
 
 #include "ast.hpp"
 #include "compile.hpp"
+#include "data.hpp"
 #include "diagnostic.hpp"
 #include "eval.hpp"
 #include "printer.hpp"
@@ -25,7 +26,7 @@ constexpr std::string_view kExprPrefix = "expr:";
 constexpr std::string_view kScriptPrefix = "script:";
 
 /// Что делать после разобранной строки.
-enum class After { Continue, Quit };
+enum class After { Continue, Reset, Quit };
 
 /// Ширина приглашения: на неё сдвинута всякая колонка, потому что исходник
 /// человек набирал после него.
@@ -113,18 +114,79 @@ std::string_view trim(std::string_view text) {
     return text.substr(first, last - first);
 }
 
+/// Кладёт переменную: та же дверь, которой пользуется хост.
+///
+/// setVariable принимает только литерал — данные не вычисляются
+/// (docs/superpowers/specs/2026-08-11-chupascript-data-design.md §3). В
+/// оболочке это ограничение встречается первым, поэтому отказ поясняется.
+void runSet(CS::Context &ctx, std::string_view argument) {
+    const std::size_t equals = argument.find('=');
+    if (equals == std::string_view::npos) {
+        std::cout << "error: usage is :set <name> = <literal>\n";
+        return;
+    }
+    const std::string_view name = trim(argument.substr(0, equals));
+    const std::string_view text = trim(argument.substr(equals + 1));
+    if (name.empty() || text.empty()) {
+        std::cout << "error: usage is :set <name> = <literal>\n";
+        return;
+    }
+
+    CS::Diagnostic diag;
+    if (CS::setVariable(ctx, name, text, diag)) { return; }
+
+    std::cout << "error: " << diag.message << "\n";
+    if (diag.code == CS::ErrorCode::Data) {
+        std::cout << "note: data is set from a literal, not an expression\n";
+    }
+}
+
+/// Печатает состав контекста: имя и значение.
+void runVars(const CS::Context &ctx) {
+    const std::uint32_t count = ctx.rootCount();
+    if (count == 0) {
+        std::cout << "the context is empty\n";
+        return;
+    }
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const std::string_view name = ctx.rootNameAt(i);
+        std::cout << name << " = "
+                  << chupa::printValue(ctx, ctx.root(name)) << "\n";
+    }
+}
+
 /// Выполняет одну строку.
 After handleLine(CS::Context &ctx, std::string_view line) {
-    (void)ctx;
     const std::string_view text = trim(line);
     if (text.empty()) { return After::Continue; }
 
     if (text[0] == ':') {
-        const std::string_view command = trim(text.substr(1));
-        if (command == "quit") { return After::Quit; }
-        if (command == "help") {
+        const std::string_view body = trim(text.substr(1));
+        const std::size_t space = body.find_first_of(" \t");
+        const std::string_view name =
+            space == std::string_view::npos ? body : body.substr(0, space);
+        const std::string_view argument =
+            space == std::string_view::npos ? std::string_view()
+                                            : trim(body.substr(space));
+
+        if (name == "quit") { return After::Quit; }
+        if (name == "help") {
             printHelp(std::cout);
             return After::Continue;
+        }
+        if (name == "vars") {
+            runVars(ctx);
+            return After::Continue;
+        }
+        if (name == "set") {
+            runSet(ctx, argument);
+            return After::Continue;
+        }
+        if (name == "reset") {
+            // Контекст копит мусор — освобождения по одному нет
+            // (docs/backlog.md B1). :reset единственный способ начать чисто,
+            // не выходя из оболочки.
+            return After::Reset;   // сам сброс делает вызывающий, см. runRepl
         }
         std::cout << "error: unknown command\n";
         printHelp(std::cout);
@@ -172,7 +234,12 @@ int runRepl() {
             std::cout << "\n";
             break;
         }
-        if (handleLine(*ctx, line) == After::Quit) { break; }
+        const After after = handleLine(*ctx, line);
+        if (after == After::Quit) { break; }
+        if (after == After::Reset) {
+            ctx.emplace();
+            std::cout << "the context is empty\n";
+        }
     }
     return 0;
 }

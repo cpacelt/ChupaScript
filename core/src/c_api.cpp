@@ -12,9 +12,11 @@
 #include <vector>
 
 #include "ast.hpp"
+#include "compile.hpp"
 #include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
+#include "eval.hpp"
 #include "value.hpp"
 
 // ─── Opaque struct definitions ───
@@ -118,4 +120,120 @@ ChupaErrorCode chupa_context_error_code(const ChupaContext* ctx) {
     if (!ctx) { return CHUPA_ERR_NONE; }
     const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
     return static_cast<ChupaErrorCode>(c->lastError.code);
+}
+
+// ─── Compile ───
+
+ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
+                                          const char* source, size_t len) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    // Copy source — Ast stores string_views into this buffer
+    c->sources.emplace_back(source, len);
+    const char* src = c->sources.back().c_str();
+
+    auto ast = std::make_unique<CS::Ast>();
+    ast->reset(src);
+
+    CS::Diagnostic diag;
+    const std::uint32_t errors = CS::compileExpression(
+        src, static_cast<std::uint32_t>(len), *ast, c->engine, &diag, 1);
+
+    if (errors != 0) {
+        c->setError(diag);
+        return nullptr;
+    }
+
+    ChupaExpression* expr = new ChupaExpression{ast.get()};
+    c->asts.push_back(std::move(ast));
+    return reinterpret_cast<ChupaExpression*>(expr);
+}
+
+ChupaScript* chupa_compile_script(ChupaContext* ctx,
+                                  const char* source, size_t len) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    c->sources.emplace_back(source, len);
+    const char* src = c->sources.back().c_str();
+
+    auto ast = std::make_unique<CS::Ast>();
+    ast->reset(src);
+
+    CS::Diagnostic diag;
+    const std::uint32_t errors = CS::compileScript(
+        src, static_cast<std::uint32_t>(len), *ast, c->engine, &diag, 1);
+
+    if (errors != 0) {
+        c->setError(diag);
+        return nullptr;
+    }
+
+    ChupaScript* script = new ChupaScript{ast.get()};
+    c->asts.push_back(std::move(ast));
+    return reinterpret_cast<ChupaScript*>(script);
+}
+
+// ─── Eval ───
+
+ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
+                              double* out) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+
+    CS::Value value = CS::Value::null();
+    CS::Diagnostic diag;
+    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+        c->setError(diag);
+        return CHUPA_ERROR;
+    }
+    if (value.kind() == CS::Value::Kind::Null) {
+        return CHUPA_NULL;
+    }
+    if (value.kind() != CS::Value::Kind::Number) {
+        return CHUPA_ERROR;
+    }
+    *out = value.numberValue();
+    return CHUPA_OK;
+}
+
+ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
+                            bool* out) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+
+    CS::Value value = CS::Value::null();
+    CS::Diagnostic diag;
+    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+        c->setError(diag);
+        return CHUPA_ERROR;
+    }
+    if (value.kind() == CS::Value::Kind::Null) {
+        return CHUPA_NULL;
+    }
+    if (value.kind() != CS::Value::Kind::Boolean) {
+        return CHUPA_ERROR;
+    }
+    *out = value.booleanValue();
+    return CHUPA_OK;
+}
+
+ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
+                              const char** out, size_t* len) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+
+    CS::Value value = CS::Value::null();
+    CS::Diagnostic diag;
+    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+        c->setError(diag);
+        return CHUPA_ERROR;
+    }
+    if (value.kind() == CS::Value::Kind::Null) {
+        return CHUPA_NULL;
+    }
+    if (value.kind() != CS::Value::Kind::String) {
+        return CHUPA_ERROR;
+    }
+    std::string_view sv = c->engine.string(value);
+    *out = sv.data();
+    *len = sv.size();
+    return CHUPA_OK;
 }

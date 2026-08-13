@@ -239,3 +239,144 @@ TEST(CApiEval, SetStringThenEval) {
     EXPECT_EQ(std::string(out, len), "world");
     chupa_context_destroy(ctx);
 }
+
+// ─── Run ───
+
+TEST(CApiRun, RunScriptSetsVariable) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "state", "{ 'count': 0 }"));
+    ChupaScript* s = chupa_compile_script(ctx, "state.count = 42;", 17);
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    // Verify via eval
+    ChupaExpression* e = chupa_compile_expression(ctx, "state.count", 11);
+    ASSERT_NE(e, nullptr);
+    double out = 0;
+    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_EQ(out, 42.0);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRun, RunScriptWithMemberAccess) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "user", "{ 'name': 'old' }"));
+    ChupaScript* s = chupa_compile_script(ctx, "user.name = 'new';", 18);
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    ChupaExpression* e = chupa_compile_expression(ctx, "user.name", 9);
+    ASSERT_NE(e, nullptr);
+    const char* out = nullptr;
+    size_t len = 0;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
+    EXPECT_EQ(std::string(out, len), "new");
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRun, RunScriptFailsOnTypeError) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "x", "0"));
+    // x is a number, can't assign a string member to it
+    ChupaScript* s = chupa_compile_script(ctx, "x.name = 'bad';", 15);
+    ASSERT_NE(s, nullptr);
+    EXPECT_FALSE(chupa_run(ctx, s));
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    chupa_context_destroy(ctx);
+}
+
+// ─── Error accessors ───
+
+TEST(CApiError, NoErrorAfterSuccess) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NONE);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiError, SyntaxErrorDetails) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    chupa_compile_expression(ctx, "1 +", 3);
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_SYNTAX);
+    size_t len = 0;
+    const char* msg = chupa_context_error(ctx, &len);
+    ASSERT_NE(msg, nullptr);
+    EXPECT_GT(len, 0u);
+    // Offset should point somewhere in the source
+    EXPECT_GE(chupa_context_error_offset(ctx), 0u);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiError, DataErrorOnExpressionAsData) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    // "1 + 2" is an expression, not a literal — setVariable rejects it
+    chupa_context_set(ctx, "x", 1, "1 + 2", 5);
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_DATA);
+    chupa_context_destroy(ctx);
+}
+
+// ─── Redraw ───
+
+namespace {
+int g_redrawCount = 0;
+ChupaContext* g_lastRedrawCtx = nullptr;
+
+void testRedrawListener(ChupaContext* ctx, void* /*user_data*/) {
+    g_redrawCount++;
+    g_lastRedrawCtx = ctx;
+}
+}
+
+TEST(CApiRedraw, FiresAfterSet) {
+    g_redrawCount = 0;
+    g_lastRedrawCtx = nullptr;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_EQ(g_redrawCount, 1);
+    EXPECT_EQ(g_lastRedrawCtx, ctx);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRedraw, FiresAfterRun) {
+    g_redrawCount = 0;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "state", "{ 'count': 0 }"));
+    // set already fired redraw; reset counter
+    g_redrawCount = 0;
+    chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
+    ChupaScript* s = chupa_compile_script(ctx, "state.count = 1;", 16);
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    EXPECT_EQ(g_redrawCount, 1);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRedraw, NoFireWithoutListener) {
+    g_redrawCount = 0;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_EQ(g_redrawCount, 0);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRedraw, UserDataPassedThrough) {
+    g_redrawCount = 0;
+    int marker = 42;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    chupa_context_on_redraw(ctx, [](ChupaContext* ctx, void* user_data) {
+        g_redrawCount++;
+        EXPECT_EQ(*static_cast<int*>(user_data), 42);
+    }, &marker);
+    chupa_context_set_bool(ctx, "flag", 4, true);
+    EXPECT_EQ(g_redrawCount, 1);
+    chupa_context_destroy(ctx);
+}

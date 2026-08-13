@@ -6,6 +6,7 @@
 #include "chupascript/chupascript.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -37,6 +38,12 @@ struct ChupaContext {
     }
 
     void setError(const CS::Diagnostic& diag) { lastError = diag; }
+
+    void clearError() {
+        lastError.code = CS::ErrorCode::None;
+        lastError.offset = 0;
+        lastError.message = "";
+    }
 };
 
 struct ChupaExpression {
@@ -84,6 +91,7 @@ bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
         c->setError(diag);
         return false;
     }
+    c->clearError();
     c->notifyRedraw();
     return true;
 }
@@ -95,6 +103,7 @@ void chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     c->engine.setRoot(std::string_view(name, name_len),
                       CS::Value::boolean(value));
+    c->clearError();
     c->notifyRedraw();
 }
 
@@ -103,6 +112,7 @@ void chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_l
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     c->engine.setRoot(std::string_view(name, name_len),
                       CS::Value::number(value));
+    c->clearError();
     c->notifyRedraw();
 }
 
@@ -111,15 +121,56 @@ void chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     CS::Value str = c->engine.makeString(std::string_view(text, text_len));
     c->engine.setRoot(std::string_view(name, name_len), str);
+    c->clearError();
     c->notifyRedraw();
 }
 
-// ─── Error reporting (partial — full suite in Task 4) ───
+// ─── Error reporting ───
+
+// CS::ErrorCode values intentionally match ChupaErrorCode (diagnostic.hpp).
+// The static_asserts below guard against accidental drift.
+static_assert(static_cast<int>(CS::ErrorCode::None)   == CHUPA_ERR_NONE,   "ErrorCode::None must match CHUPA_ERR_NONE");
+static_assert(static_cast<int>(CS::ErrorCode::Syntax) == CHUPA_ERR_SYNTAX, "ErrorCode::Syntax must match CHUPA_ERR_SYNTAX");
+static_assert(static_cast<int>(CS::ErrorCode::Name)   == CHUPA_ERR_NAME,   "ErrorCode::Name must match CHUPA_ERR_NAME");
+static_assert(static_cast<int>(CS::ErrorCode::Type)   == CHUPA_ERR_TYPE,   "ErrorCode::Type must match CHUPA_ERR_TYPE");
+static_assert(static_cast<int>(CS::ErrorCode::Range)  == CHUPA_ERR_RANGE,  "ErrorCode::Range must match CHUPA_ERR_RANGE");
+static_assert(static_cast<int>(CS::ErrorCode::Data)   == CHUPA_ERR_DATA,   "ErrorCode::Data must match CHUPA_ERR_DATA");
+static_assert(static_cast<int>(CS::ErrorCode::Usage)  == CHUPA_ERR_USAGE,  "ErrorCode::Usage must match CHUPA_ERR_USAGE");
+static_assert(static_cast<int>(CS::ErrorCode::Memory) == CHUPA_ERR_MEMORY, "ErrorCode::Memory must match CHUPA_ERR_MEMORY");
 
 ChupaErrorCode chupa_context_error_code(const ChupaContext* ctx) {
     if (!ctx) { return CHUPA_ERR_NONE; }
     const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
-    return static_cast<ChupaErrorCode>(c->lastError.code);
+    // Map explicitly to guard against future enum drift even though the
+    // values currently match (see static_asserts above).
+    switch (c->lastError.code) {
+        case CS::ErrorCode::None:    return CHUPA_ERR_NONE;
+        case CS::ErrorCode::Syntax:  return CHUPA_ERR_SYNTAX;
+        case CS::ErrorCode::Name:    return CHUPA_ERR_NAME;
+        case CS::ErrorCode::Type:    return CHUPA_ERR_TYPE;
+        case CS::ErrorCode::Range:   return CHUPA_ERR_RANGE;
+        case CS::ErrorCode::Data:    return CHUPA_ERR_DATA;
+        case CS::ErrorCode::Usage:   return CHUPA_ERR_USAGE;
+        case CS::ErrorCode::Memory:  return CHUPA_ERR_MEMORY;
+    }
+    return CHUPA_ERR_NONE;
+}
+
+size_t chupa_context_error_offset(const ChupaContext* ctx) {
+    if (!ctx) { return 0; }
+    const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
+    return c->lastError.offset;
+}
+
+const char* chupa_context_error(const ChupaContext* ctx, size_t* len) {
+    if (!ctx) {
+        if (len) { *len = 0; }
+        return nullptr;
+    }
+    const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
+    const char* msg = c->lastError.message ? c->lastError.message : "";
+    if (len) { *len = std::strlen(msg); }
+    return msg;
 }
 
 // ─── Compile ───
@@ -143,6 +194,7 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
         return nullptr;
     }
 
+    c->clearError();
     ChupaExpression* expr = new ChupaExpression{ast.get()};
     c->asts.push_back(std::move(ast));
     return reinterpret_cast<ChupaExpression*>(expr);
@@ -166,6 +218,7 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
         return nullptr;
     }
 
+    c->clearError();
     ChupaScript* script = new ChupaScript{ast.get()};
     c->asts.push_back(std::move(ast));
     return reinterpret_cast<ChupaScript*>(script);
@@ -184,6 +237,7 @@ ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
         c->setError(diag);
         return CHUPA_ERROR;
     }
+    c->clearError();
     if (value.kind() == CS::Value::Kind::Null) {
         return CHUPA_NULL;
     }
@@ -205,6 +259,7 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
         c->setError(diag);
         return CHUPA_ERROR;
     }
+    c->clearError();
     if (value.kind() == CS::Value::Kind::Null) {
         return CHUPA_NULL;
     }
@@ -226,6 +281,7 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
         c->setError(diag);
         return CHUPA_ERROR;
     }
+    c->clearError();
     if (value.kind() == CS::Value::Kind::Null) {
         return CHUPA_NULL;
     }
@@ -236,4 +292,32 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
     *out = sv.data();
     *len = sv.size();
     return CHUPA_OK;
+}
+
+// ─── Run ───
+
+bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
+    if (!ctx || !script) { return false; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* s = reinterpret_cast<::ChupaScript*>(script);
+
+    CS::Diagnostic diag;
+    if (!CS::runScript(*s->ast, c->engine, diag)) {
+        c->setError(diag);
+        return false;
+    }
+    c->clearError();
+    c->notifyRedraw();
+    return true;
+}
+
+// ─── Redraw ───
+
+void chupa_context_on_redraw(ChupaContext* ctx,
+                             ChupaRedrawListener listener,
+                             void* user_data) {
+    if (!ctx) { return; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    c->redrawListener = listener;
+    c->redrawUserData = user_data;
 }

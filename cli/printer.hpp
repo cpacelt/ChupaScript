@@ -24,7 +24,7 @@ namespace chupa {
 /// особые случаи Number → String (docs/semantics.md §4.3): `1/0` печатает
 /// `inf`, `0/0` — `nan`, число величиной ≥ 1e21 — научную запись (`1e+21`);
 /// грамматика числовых литералов не принимает ни экспоненты, ни ключевых слов
-/// `inf`/`nan` (docs/grammar.md §4.6). Формат числа задаёт `core::formatNumber`,
+/// `inf`/`nan` (docs/grammar.md §4.6). Формат числа задаёт `CS::formatNumber`,
 /// эта ветка ядро не трогает и не чинит эти три случая — только не обещает
 /// большего, чем есть.
 std::string printValue(const CS::Context &ctx, CS::Value value);

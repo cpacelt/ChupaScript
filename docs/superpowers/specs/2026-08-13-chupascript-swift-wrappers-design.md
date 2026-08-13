@@ -49,6 +49,11 @@ CocoaPods автоматически.
 
 ### 4.1. Что изменилось
 
+> **Эта спека — ревизия C API** (`2026-08-10-chupascript-c-api-design.md`).
+> Пункты 1–5 ниже меняют состав заголовка; C API спека должна быть обновлена
+> соответственно. Пока она не обновлена, настоящий документ — единственный
+> источник истины для перечисленных функций.
+
 1. **Добавлены** типизированные setter'ы для скаляров — `chupa_context_set_bool`,
    `chupa_context_set_number`, `chupa_context_set_string`. Заменяют
    `chupa_context_set_value` + `chupa_value_*` фабрики.
@@ -61,6 +66,9 @@ CocoaPods автоматически.
    из спеки — оставлены для будущего (чтение массивов/объектов из eval). Пока
    не реализуются.
 7. `batch_begin`/`batch_commit`, `is_dirty` — внутреннее движка, не в C API.
+8. **Переименована** `chupascript_version` → `chupa_version` — приведение к
+   единому префиксу `chupa_`. Текущий заголовок-заглушка содержит старое имя;
+   переименование — часть реализации этого контракта.
 
 ### 4.2. Итоговый заголовок
 
@@ -71,6 +79,11 @@ CocoaPods автоматически.
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* Version macros — used by chupa_version() and available to hosts. */
+#define CHUPASCRIPT_VERSION_MAJOR 0
+#define CHUPASCRIPT_VERSION_MINOR 1
+#define CHUPASCRIPT_VERSION_PATCH 0
 
 #if defined(__clang__)
 #  define CHUPA_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
@@ -316,6 +329,17 @@ extension MyController: ChupaContextDelegate {
 `final class`, сильная ссылка на контекст. Не может пережить контекст.
 Retain cycle нет — контекст не держит выражения.
 
+Сильная ссылка на контекст — **намеренное усиление** Swift-слоя. C API
+объявляет хендлы невладеющими (C API спека §3), но в Swift отпускание
+контекста при живом выражении привело бы к use-after-free. Ссылка
+гарантирует: пока выражение живо, контекст жив. Хост не должен держать
+выражения дольше контроллера экрана — это время жизни совпадает, и
+усиление не продлевает его на практике.
+
+`deinit` отсутствует: C API не предоставляет функции освобождения для
+выражений и скриптов — они принадлежат контексту и умирают вместе с ним.
+Добавлять `deinit` некуда и нечего.
+
 ```swift
 public final class ChupaExpression {
     internal let handle: OpaquePointer
@@ -329,6 +353,14 @@ public final class ChupaExpression {
 
 `nil` — выражение дало `null` или ошибку. Для дебага — `ctx.error`.
 
+Маппинг `ChupaStatus → Optional`:
+
+| C статус | Swift возврат |
+|---|---|
+| `CHUPA_OK` | значение (`Double` / `Bool` / `String`) |
+| `CHUPA_NULL` | `nil` |
+| `CHUPA_ERROR` | `nil`, подробность в `ctx.error` |
+
 Строка возвращается копией (Swift `String` из `UnsafeBufferPointer`), не
 указателем в пул контекста — правило времени жизни из C API спеки §7
 соблюдено.
@@ -337,6 +369,9 @@ public final class ChupaExpression {
 
 `final class`, сильная ссылка на контекст. Непрозрачный хендл, используется
 только в `ctx.run(_:)`.
+
+`deinit` отсутствует по той же причине, что у `ChupaExpression` (§5.3):
+C API не предоставляет освобождения для скриптов.
 
 ```swift
 public final class ChupaScript {
@@ -352,6 +387,10 @@ public struct ChupaError: Error, CustomStringConvertible {
     public let code: ChupaErrorCode
     public let message: String
     public let offset: Int
+
+    public var description: String {
+        "\(code) at \(offset): \(message)"
+    }
 }
 ```
 
@@ -377,6 +416,14 @@ public struct ChupaError: Error, CustomStringConvertible {
 Один контекст — один поток одновременно (см. C API спека §3). Разные
 контексты независимы.
 
+**Освобождение контекста — на том же потоке, на котором он использовался.**
+`deinit` вызывает `chupa_context_destroy`, которая unregister'ит redraw-каллбэк.
+Если контекст использовался на фоновом потоке, а `deinit` сработал на main
+(Swift ARC не гарантирует поток), между `destroy` и каллбэком, который ещё
+в полёте на фоновом, возможна гонка. Хост обязан обеспечить освобождение
+контекста на потоке последнего использования — например, захватить контекст
+в `DispatchQueue.async` на нужном потоке и отпустить там.
+
 ## 8. Поставка
 
 Podspec компилирует из исходников:
@@ -385,6 +432,14 @@ Podspec компилирует из исходников:
 - `s.public_header_files` = `core/include/chupascript/chupascript.h`
 - Modulemap генерируется CocoaPods
 - Без xcframework, без бинарников
+
+**C++ и Swift в одном target.** CocoaPods поддерживает смешанные target'ы,
+но требует явной конфигурации: `s.pod_target_xcconfig` должен включать
+`SWIFT_OBJC_INTERFACE_HEADER_NAME` и, при необходимости, bridging-настройки
+для доступа Swift к C-заголовку. Modulemap, генерируемый CocoaPods, решает
+большую часть — Swift видит C-функции напрямую. Если возникнут проблемы с
+взаимодействием C++ → Swift (Swift не видит C++ классы), заголовок уже
+C-совместим (`extern "C"`), и необходимости в C++ interop нет.
 
 ## 9. Открытые вопросы
 

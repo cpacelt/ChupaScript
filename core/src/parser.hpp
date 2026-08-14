@@ -16,11 +16,11 @@ namespace CS {
 bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
                      Diagnostic &diag);
 
-/// Разбирает программу — стартовый символ Program, docs/grammar.md §5.1.
+/// Разбирает скрипт — стартовый символ Script, docs/grammar.md §5.1.
 ///
-/// Контракт совпадает с parseExpression. Пустой исходник даёт корень Program
+/// Контракт совпадает с parseExpression. Пустой исходник даёт корень Script
 /// без детей и не является ошибкой.
-bool parseProgram(const char *source, std::uint32_t length, Ast &ast,
+bool parseScript(const char *source, std::uint32_t length, Ast &ast,
                   Diagnostic &diag);
 
 }  // namespace CS

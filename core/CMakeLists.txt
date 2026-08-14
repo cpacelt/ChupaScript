@@ -4,7 +4,7 @@ add_library(chupascript STATIC
     src/c_api.cpp
     src/check.cpp
     src/compile.cpp
-    src/context.cpp
+    src/store.cpp
     src/data.cpp
     src/eval.cpp
     src/lexer.cpp

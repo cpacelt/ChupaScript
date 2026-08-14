@@ -31,7 +31,7 @@ public final class ChupaContext {
 
     // MARK: - Set variables
 
-    /// Set root from a ChupaScript literal text (not JSON).
+    /// Set global from a ChupaScript literal text (not JSON).
     /// Examples: "42", "true", "'hello'", "{ name: 'John', age: 30 }"
     @discardableResult
     public func set(_ name: String, text: String) -> Bool {
@@ -43,21 +43,21 @@ public final class ChupaContext {
         }
     }
 
-    /// Set root to a boolean value.
+    /// Set global to a boolean value.
     public func set(_ name: String, _ value: Bool) {
         name.withCString { ptr in
             chupa_context_set_bool(handle, ptr, name.utf8.count, value)
         }
     }
 
-    /// Set root to a number value.
+    /// Set global to a number value.
     public func set(_ name: String, _ value: Double) {
         name.withCString { ptr in
             chupa_context_set_number(handle, ptr, name.utf8.count, value)
         }
     }
 
-    /// Set root to a string value (raw, no quoting needed).
+    /// Set global to a string value (raw, no quoting needed).
     public func set(_ name: String, _ value: String) {
         name.withCString { namePtr in
             value.withCString { valuePtr in
@@ -70,7 +70,7 @@ public final class ChupaContext {
     // MARK: - Compile
 
     /// Compile a ChupaScript expression.
-    /// Throws on compile error (syntax, unknown root, etc.).
+    /// Throws on compile error (syntax, unknown global, etc.).
     public func compile(expression source: String) throws -> ChupaExpression {
         let h = source.withCString { ptr in
             chupa_compile_expression(handle, ptr, source.utf8.count)

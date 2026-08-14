@@ -24,7 +24,7 @@ bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
 ///
 /// Проверка выполняется лексером, а не своей таблицей: так набор ключевых слов
 /// и ограничение на ASCII заведомо совпадают с языком и не разъедутся с ним.
-bool isRootName(std::string_view name) noexcept {
+bool isGlobalName(std::string_view name) noexcept {
     if (name.empty() || name.size() > 0xffffffffu) { return false; }
 
     Lexer lexer(name.data(), static_cast<std::uint32_t>(name.size()));
@@ -34,7 +34,7 @@ bool isRootName(std::string_view name) noexcept {
     if (!lexer.next(first, ignored)) { return false; }
     if (first.kind != TokenKind::Identifier) { return false; }
     // Токен обязан покрывать имя целиком: иначе " state" и "state " прошли бы,
-    // а обратиться к такому корню нельзя.
+    // а обратиться к такой глобальной переменной нельзя.
     if (first.offset != 0 || first.length != name.size()) { return false; }
 
     Token tail;
@@ -42,7 +42,7 @@ bool isRootName(std::string_view name) noexcept {
     return tail.kind == TokenKind::End;
 }
 
-bool materialize(const Ast &ast, NodeId node, Context &ctx,
+bool materialize(const Ast &ast, NodeId node, Store &store,
                  Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
@@ -59,7 +59,7 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
 
         case NodeKind::String: {
             std::string scratch;
-            *out = ctx.makeString(literalText(ast, node, scratch));
+            *out = store.makeString(literalText(ast, node, scratch));
             return true;
         }
 
@@ -81,13 +81,13 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
             const std::uint32_t count = ast.childCount(node);
             // Размер известен заранее, поэтому ёмкость выделяется точно и
             // построение не оставляет мусора.
-            const Value array = ctx.makeArray(count);
+            const Value array = store.makeArray(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
-                if (!materialize(ast, ast.child(node, i), ctx, &element, diag)) {
+                if (!materialize(ast, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
-                ctx.arrayPush(array, element);
+                store.arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -96,15 +96,15 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
         case NodeKind::Object: {
             // Дети чередуются: ключ, значение, ключ, значение.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = ctx.makeObject(count / 2);
+            const Value object = store.makeObject(count / 2);
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
-                if (!materialize(ast, ast.child(node, i + 1), ctx, &value, diag)) {
+                if (!materialize(ast, ast.child(node, i + 1), store, &value, diag)) {
                     return false;
                 }
                 // Повторный ключ заменяет значение: последний выигрывает.
-                ctx.objectSet(object, literalText(ast, ast.child(node, i), scratch),
+                store.objectSet(object, literalText(ast, ast.child(node, i), scratch),
                               value);
             }
             *out = object;
@@ -118,14 +118,14 @@ bool materialize(const Ast &ast, NodeId node, Context &ctx,
 
 }  // namespace
 
-bool setVariable(Context &ctx, std::string_view name, std::string_view text,
+bool setVariable(Store &store, std::string_view name, std::string_view text,
                  Diagnostic &diag) {
-    if (!isRootName(name)) {
-        diag = Diagnostic{ErrorCode::Name, 0, "root name must be an identifier"};
+    if (!isGlobalName(name)) {
+        diag = Diagnostic{ErrorCode::Name, 0, "global name must be an identifier"};
         return false;
     }
 
-    // Та же защита, что в isRootName: длина обязана влезать в std::uint32_t,
+    // Та же защита, что в isGlobalName: длина обязана влезать в std::uint32_t,
     // иначе приведение ниже молча усечёт text до префикса, а этот префикс
     // способен успешно разобраться как совсем другое значение.
     if (text.size() > 0xffffffffu) {
@@ -140,10 +140,10 @@ bool setVariable(Context &ctx, std::string_view name, std::string_view text,
     }
 
     Value value = Value::null();
-    if (!materialize(ast, ast.root(), ctx, &value, diag)) { return false; }
+    if (!materialize(ast, ast.root(), store, &value, diag)) { return false; }
 
     // Корень заводится только после успеха: отказ не оставляет имени.
-    ctx.setRoot(name, value);
+    store.setGlobal(name, value);
     return true;
 }
 

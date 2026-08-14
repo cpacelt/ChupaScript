@@ -1,18 +1,18 @@
 // База производительности слоя данных: разбор текста литерала и укладка
-// значений в контекст. Измеряется путь, который выполняется один раз на
+// значений в хранилище. Измеряется путь, который выполняется один раз на
 // переменную при сборке экрана.
 #include <benchmark/benchmark.h>
 
 #include <cstdint>
 #include <string>
 
-#include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 
 namespace {
 
-using CS::Context;
+using CS::Store;
 using CS::Diagnostic;
 using CS::Value;
 
@@ -23,9 +23,9 @@ void BM_Data_FlatObject(benchmark::State &state) {
         " 'city': 'Москва', 'tag': null, 'rank': -2, 'level': 7, 'code': 'A1'}";
 
     for (auto _ : state) {
-        Context ctx;
+        Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(ctx, "user", text, diag);
+        bool ok = CS::setVariable(store, "user", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -44,9 +44,9 @@ void BM_Data_NumberArray(benchmark::State &state) {
     text += "]";
 
     for (auto _ : state) {
-        Context ctx;
+        Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(ctx, "items", text, diag);
+        bool ok = CS::setVariable(store, "items", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -59,9 +59,9 @@ BENCHMARK(BM_Data_NumberArray);
 void BM_Data_PlainString(benchmark::State &state) {
     const std::string text = "'" + std::string(200, 'x') + "'";
     for (auto _ : state) {
-        Context ctx;
+        Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(ctx, "s", text, diag);
+        bool ok = CS::setVariable(store, "s", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -74,23 +74,23 @@ void BM_Data_EscapedString(benchmark::State &state) {
     const std::string text = "'" + body + "'";
 
     for (auto _ : state) {
-        Context ctx;
+        Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(ctx, "s", text, diag);
+        bool ok = CS::setVariable(store, "s", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
 }
 BENCHMARK(BM_Data_EscapedString);
 
-/// Поиск корня при разном числе имён.
-void BM_Data_RootLookup(benchmark::State &state) {
+/// Поиск глобальной переменной при разном числе имён.
+void BM_Data_GlobalLookup(benchmark::State &state) {
     const int names = static_cast<int>(state.range(0));
-    Context ctx;
+    Store store;
     Diagnostic diag;
     for (int i = 0; i < names; ++i) {
         const std::string name = "var" + std::to_string(i);
-        if (!CS::setVariable(ctx, name, "1", diag)) {
+        if (!CS::setVariable(store, name, "1", diag)) {
             state.SkipWithError("setVariable failed");
             return;
         }
@@ -98,10 +98,10 @@ void BM_Data_RootLookup(benchmark::State &state) {
     const std::string last = "var" + std::to_string(names - 1);
 
     for (auto _ : state) {
-        Value found = ctx.root(last);
+        Value found = store.global(last);
         benchmark::DoNotOptimize(found);
     }
 }
-BENCHMARK(BM_Data_RootLookup)->Arg(3)->Arg(10)->Arg(30);
+BENCHMARK(BM_Data_GlobalLookup)->Arg(3)->Arg(10)->Arg(30);
 
 }  // namespace

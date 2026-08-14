@@ -14,7 +14,7 @@ namespace CS {
 namespace {
 
 // Предварительное объявление для readKey
-bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
+bool eval(const Ast &ast, NodeId node, Store &store, Value *out,
           Diagnostic &diag);
 
 /// Записывает отказ с местом узла.
@@ -35,11 +35,11 @@ bool fail(const Ast &ast, NodeId node, ErrorCode code, const char *message,
 /// Объект — значение либо null; null — null; прочее — ошибка. Один и тот же
 /// разбор обслуживает и obj.k, и obj[k]: отличаются они только тем, откуда
 /// берётся ключ.
-bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
+bool readKey(const Ast &ast, NodeId node, Store &store, Value base,
              std::string_view key, Value *out, Diagnostic &diag) {
     switch (base.kind()) {
         case Value::Kind::Object:
-            *out = ctx.objectGet(base, key);
+            *out = store.objectGet(base, key);
             return true;
         case Value::Kind::Null:
             *out = Value::null();
@@ -57,36 +57,36 @@ bool readKey(const Ast &ast, NodeId node, Context &ctx, Value base,
 /// — правило §4 записано один раз, в builtin.cpp, и обслуживает и ключ
 /// объекта, и has, и (задачами 5 и 6) str с format.
 ///
-/// Возвращает срез: у строки — её собственные байты в контексте, у числа —
-/// буфер вызывающего, у остальных — статическая строка. В контекст ничего не
+/// Возвращает срез: у строки — её собственные байты в хранилище, у числа —
+/// буфер вызывающего, у остальных — статическая строка. В хранилище ничего не
 /// кладётся: строка нужна на время одного поиска ключа, и класть её в пул
 /// значило бы копить мусор на каждом чтении.
 ///
-/// Срез из ветки String действителен лишь до ближайшей мутации контекста — с
-/// тем же сроком жизни и по той же причине, что и результат Context::string.
+/// Срез из ветки String действителен лишь до ближайшей мутации хранилища — с
+/// тем же сроком жизни и по той же причине, что и результат Store::string.
 /// У потребителей этой ветки два разных пути с этим сроком: readKey (через
 /// const objectGet) обращается к срезу до всякой мутации, а assignToIndex
-/// передаёт его дальше в мутирующий ctx.objectSet. Второй путь безопасен по
+/// передаёт его дальше в мутирующий store.objectSet. Второй путь безопасен по
 /// двум причинам, и обе обязаны выполняться разом:
 ///
-/// - Context::appendText (core/src/context.cpp) явно распознаёт срез,
+/// - Store::appendText (core/src/store.cpp) явно распознаёт срез,
 ///   указывающий внутрь пула text_, и после роста пула копирует из нового
 ///   расположения по запомненному смещению, а не по повисшему указателю —
-///   это поведение закреплено тестом в core/tests/context_test.cpp;
-/// - между вызовом coerceToString и вызовом objectSet контекст не мутирует,
-///   потому что applyBinary принимает `const Context &` (core/src/operator.hpp)
+///   это поведение закреплено тестом в core/tests/store_test.cpp;
+/// - между вызовом coerceToString и вызовом objectSet хранилище не мутирует,
+///   потому что applyBinary принимает `const Store &` (core/src/operator.hpp)
 ///   и залезть в text_ не может.
 ///
 /// Вторая опора хрупкая: если applyBinary когда-нибудь получит изменяемый
-/// контекст, срез повиснет ещё до вызова objectSet, и защита appendText уже
+/// хранилище, срез повиснет ещё до вызова objectSet, и защита appendText уже
 /// не поможет — она признаёт срез, указывающий в актуальный пул, а не чинит
 /// произвольно устаревший указатель.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
-bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
+bool coerceToString(const Ast &ast, NodeId node, Store &store, Value value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
-    return coerceScalarToString(ctx, value, numberBuffer, out,
+    return coerceScalarToString(store, value, numberBuffer, out,
                                 ast.offset(node), diag);
 }
 
@@ -104,73 +104,73 @@ bool coerceToString(const Ast &ast, NodeId node, Context &ctx, Value value,
 /// раз и держит обоих потребителей синхронными не по договорённости, а по
 /// устройству.
 ///
-/// ctx.string(tmpl) берётся заново на каждый вызов nextFormatPiece, а не
+/// store.string(tmpl) берётся заново на каждый вызов nextFormatPiece, а не
 /// один раз до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе
 /// само писать в пул текста — строковый литерал зовёт makeString, вложенный
 /// format завершает свою сборку в тот же пул, — и это может переселить text_
 /// в новую память. Смещение, на которое указывает tmpl, при переезде
-/// остаётся верным (Context::string пересчитывает срез из смещения и длины),
-/// а вот кэшированный указатель — уже нет. Свежий вызов ctx.string(tmpl)
+/// остаётся верным (Store::string пересчитывает срез из смещения и длины),
+/// а вот кэшированный указатель — уже нет. Свежий вызов store.string(tmpl)
 /// перед каждым обращением к шаблону — единственный способ не держать такой
 /// указатель через границу, за которой могла случиться запись.
-bool evalFormat(const Ast &ast, NodeId node, Context &ctx, Value *out,
+bool evalFormat(const Ast &ast, NodeId node, Store &store, Value *out,
                 Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);
 
     Value tmpl = Value::null();
-    if (!eval(ast, ast.child(node, 0), ctx, &tmpl, diag)) { return false; }
+    if (!eval(ast, ast.child(node, 0), store, &tmpl, diag)) { return false; }
     if (tmpl.kind() != Value::Kind::String) {
         return fail(ast, node, ErrorCode::Type,
                     "format expects a string template", diag);
     }
 
-    const std::uint32_t mark = ctx.beginString();
+    const std::uint32_t mark = store.beginString();
     std::uint32_t next = 1;  // следующий аргумент
     FormatCursor cursor;
 
     for (;;) {
         FormatPiece kind = FormatPiece::Literal;
         std::string_view chunk;
-        if (!nextFormatPiece(ctx.string(tmpl), cursor, &kind, &chunk)) { break; }
+        if (!nextFormatPiece(store.string(tmpl), cursor, &kind, &chunk)) { break; }
 
         if (kind == FormatPiece::Literal) {
-            ctx.appendToString(chunk);
+            store.appendToString(chunk);
             continue;
         }
         if (kind == FormatPiece::Escaped) {
-            ctx.appendToString("${}");
+            store.appendToString("${}");
             continue;
         }
 
         // FormatPiece::Placeholder — потребляет следующий аргумент.
         if (next >= argCount) {
-            ctx.abortString(mark);
+            store.abortString(mark);
             return fail(ast, node, ErrorCode::Type,
                         "format placeholder count does not match arguments",
                         diag);
         }
         Value argument = Value::null();
-        if (!eval(ast, ast.child(node, next), ctx, &argument, diag)) {
-            ctx.abortString(mark);
+        if (!eval(ast, ast.child(node, next), store, &argument, diag)) {
+            store.abortString(mark);
             return false;
         }
         ++next;
 
         char buffer[kNumberBufferSize];
         std::string_view text;
-        if (!coerceToString(ast, node, ctx, argument, buffer, &text, diag)) {
-            ctx.abortString(mark);
+        if (!coerceToString(ast, node, store, argument, buffer, &text, diag)) {
+            store.abortString(mark);
             return false;
         }
-        ctx.appendToString(text);
+        store.appendToString(text);
     }
 
     if (next != argCount) {
-        ctx.abortString(mark);
+        store.abortString(mark);
         return fail(ast, node, ErrorCode::Type,
                     "format placeholder count does not match arguments", diag);
     }
-    *out = ctx.endString(mark);
+    *out = store.endString(mark);
     return true;
 }
 
@@ -196,18 +196,18 @@ bool checkArrayIndex(const Ast &ast, NodeId node, Value subscript, double *out,
 }
 
 /// Чтение элемента массива (docs/semantics.md §6.1).
-bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
+bool readIndex(const Ast &ast, NodeId node, Store &store, Value array,
                Value subscript, Value *out, Diagnostic &diag) {
     double index = 0.0;
     if (!checkArrayIndex(ast, node, subscript, &index, diag)) { return false; }
 
     // За границей — штатное чтение. Сравнение в double, потому что индекс
     // может превышать всё, что влезает в uint32.
-    if (index >= static_cast<double>(ctx.arrayCount(array))) {
+    if (index >= static_cast<double>(store.arrayCount(array))) {
         *out = Value::null();
         return true;
     }
-    *out = ctx.arrayAt(array, static_cast<std::uint32_t>(index));
+    *out = store.arrayAt(array, static_cast<std::uint32_t>(index));
     return true;
 }
 
@@ -222,7 +222,7 @@ bool readIndex(const Ast &ast, NodeId node, Context &ctx, Value array,
 /// левоассоциативной цепочки ('||', '&&', '+'/'-', '*'/'/'/'%'). Без этого
 /// цепочка любой длины разбиралась бы успешно и роняла бы вычислитель здесь
 /// (docs/grammar.md Приложение C.1).
-bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
+bool eval(const Ast &ast, NodeId node, Store &store, Value *out,
           Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
@@ -239,52 +239,53 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
 
         case NodeKind::String: {
             std::string scratch;
-            *out = ctx.makeString(literalText(ast, node, scratch));
+            *out = store.makeString(literalText(ast, node, scratch));
             return true;
         }
 
         case NodeKind::Identifier: {
             // docs/semantics.md §7.1: объявлений в языке нет, всякий
-            // идентификатор — чтение из контекста.
+            // идентификатор — чтение из хранилища.
             const std::string_view name = ast.text(node);
-            // Неизвестный корень — ошибка, а не null: состав корней контексту
-            // известен, состав ключей внутри них — нет. Поэтому опечатка в
-            // корне ловится, а опечатка глубже даёт null по §6.3.
-            if (!ctx.hasRoot(name)) {
-                return fail(ast, node, ErrorCode::Name, "unknown root", diag);
+            // Неизвестная глобальная переменная — ошибка, а не null: состав
+            // глобальных имён хранилищу известен, состав ключей внутри них —
+            // нет. Поэтому опечатка в имени глобальной переменной ловится,
+            // а опечатка глубже даёт null по §6.3.
+            if (!store.hasGlobal(name)) {
+                return fail(ast, node, ErrorCode::Name, "unknown global", diag);
             }
-            *out = ctx.root(name);
+            *out = store.global(name);
             return true;
         }
 
         case NodeKind::Member: {
             Value base = Value::null();
-            if (!eval(ast, ast.child(node, 0), ctx, &base, diag)) { return false; }
+            if (!eval(ast, ast.child(node, 0), store, &base, diag)) { return false; }
             // Имя поля берётся из узла буквально, без приведения.
-            return readKey(ast, node, ctx, base, ast.text(node), out, diag);
+            return readKey(ast, node, store, base, ast.text(node), out, diag);
         }
 
         case NodeKind::Index: {
             Value base = Value::null();
-            if (!eval(ast, ast.child(node, 0), ctx, &base, diag)) { return false; }
+            if (!eval(ast, ast.child(node, 0), store, &base, diag)) { return false; }
             // Индекс вычисляется даже при базе null: порядок зафиксирован
             // (docs/semantics.md §3.3), а короткого замыкания у индексации нет.
             Value subscript = Value::null();
-            if (!eval(ast, ast.child(node, 1), ctx, &subscript, diag)) {
+            if (!eval(ast, ast.child(node, 1), store, &subscript, diag)) {
                 return false;
             }
 
             switch (base.kind()) {
                 case Value::Kind::Array:
-                    return readIndex(ast, node, ctx, base, subscript, out, diag);
+                    return readIndex(ast, node, store, base, subscript, out, diag);
                 case Value::Kind::Object: {
                     char buffer[kNumberBufferSize];
                     std::string_view key;
-                    if (!coerceToString(ast, node, ctx, subscript, buffer, &key,
+                    if (!coerceToString(ast, node, store, subscript, buffer, &key,
                                         diag)) {
                         return false;
                     }
-                    return readKey(ast, node, ctx, base, key, out, diag);
+                    return readKey(ast, node, store, base, key, out, diag);
                 }
                 case Value::Kind::Null:
                     *out = Value::null();
@@ -298,13 +299,13 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
         case NodeKind::Array: {
             const std::uint32_t count = ast.childCount(node);
             // Размер известен заранее — точное выделение, без переездов.
-            const Value array = ctx.makeArray(count);
+            const Value array = store.makeArray(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
-                if (!eval(ast, ast.child(node, i), ctx, &element, diag)) {
+                if (!eval(ast, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
-                ctx.arrayPush(array, element);
+                store.arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -314,14 +315,14 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // Дети чередуются: ключ, значение. Ключ — строковый литерал по
             // грамматике, приведение §4 к нему не применяется.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = ctx.makeObject(count / 2);
+            const Value object = store.makeObject(count / 2);
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
-                if (!eval(ast, ast.child(node, i + 1), ctx, &value, diag)) {
+                if (!eval(ast, ast.child(node, i + 1), store, &value, diag)) {
                     return false;
                 }
-                ctx.objectSet(object,
+                store.objectSet(object,
                               literalText(ast, ast.child(node, i), scratch),
                               value);
             }
@@ -331,7 +332,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
 
         case NodeKind::Unary: {
             Value operand = Value::null();
-            if (!eval(ast, ast.child(node, 0), ctx, &operand, diag)) { return false; }
+            if (!eval(ast, ast.child(node, 0), store, &operand, diag)) { return false; }
             return applyUnary(ast.op(node), operand, ast.offset(node), out, diag);
         }
 
@@ -343,7 +344,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // нельзя.
             if (op == TokenKind::AndAnd || op == TokenKind::OrOr) {
                 Value lhs = Value::null();
-                if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+                if (!eval(ast, ast.child(node, 0), store, &lhs, diag)) { return false; }
                 if (lhs.kind() != Value::Kind::Boolean) {
                     return fail(ast, node, ErrorCode::Type,
                                 "logical operators require booleans", diag);
@@ -360,7 +361,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
                 }
 
                 Value rhs = Value::null();
-                if (!eval(ast, ast.child(node, 1), ctx, &rhs, diag)) { return false; }
+                if (!eval(ast, ast.child(node, 1), store, &rhs, diag)) { return false; }
                 if (rhs.kind() != Value::Kind::Boolean) {
                     return fail(ast, node, ErrorCode::Type,
                                 "logical operators require booleans", diag);
@@ -371,34 +372,34 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
 
             if (op == TokenKind::QuestionQuestion) {
                 Value lhs = Value::null();
-                if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+                if (!eval(ast, ast.child(node, 0), store, &lhs, diag)) { return false; }
                 // Перехватывает только null: ошибка слева уже вернулась выше и
                 // не гасится.
                 if (lhs.kind() != Value::Kind::Null) {
                     *out = lhs;
                     return true;
                 }
-                return eval(ast, ast.child(node, 1), ctx, out, diag);
+                return eval(ast, ast.child(node, 1), store, out, diag);
             }
 
             // Слева направо: порядок зафиксирован (docs/semantics.md §3.3).
             Value lhs = Value::null();
-            if (!eval(ast, ast.child(node, 0), ctx, &lhs, diag)) { return false; }
+            if (!eval(ast, ast.child(node, 0), store, &lhs, diag)) { return false; }
             Value rhs = Value::null();
-            if (!eval(ast, ast.child(node, 1), ctx, &rhs, diag)) { return false; }
-            return applyBinary(op, lhs, rhs, ctx, ast.offset(node), out, diag);
+            if (!eval(ast, ast.child(node, 1), store, &rhs, diag)) { return false; }
+            return applyBinary(op, lhs, rhs, store, ast.offset(node), out, diag);
         }
 
         case NodeKind::Conditional: {
             Value condition = Value::null();
-            if (!eval(ast, ast.child(node, 0), ctx, &condition, diag)) { return false; }
+            if (!eval(ast, ast.child(node, 0), store, &condition, diag)) { return false; }
             if (condition.kind() != Value::Kind::Boolean) {
                 return fail(ast, node, ErrorCode::Type,
                             "ternary condition must be a boolean", diag);
             }
             // Вычисляется только выбранная ветвь (docs/semantics.md §5.7).
             const NodeId branch = ast.child(node, condition.booleanValue() ? 1 : 2);
-            return eval(ast, branch, ctx, out, diag);
+            return eval(ast, branch, store, out, diag);
         }
 
         case NodeKind::Call: {
@@ -415,7 +416,7 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             // релизной сборке он исчезает, а переполнение буфера остаётся:
             // check пропускает format с любым числом аргументов, и
             // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
-            if (id == Builtin::Format) { return evalFormat(ast, node, ctx, out, diag); }
+            if (id == Builtin::Format) { return evalFormat(ast, node, store, out, diag); }
 
             // Арность гарантирована проходом, а размер буфера — таблицей
             // билтинов (core/src/builtin.hpp::kMaxFixedArgs), а не догадкой:
@@ -432,17 +433,17 @@ bool eval(const Ast &ast, NodeId node, Context &ctx, Value *out,
             Value args[kMaxFixedArgs] = {Value::null(), Value::null()};
             const std::uint32_t count = ast.childCount(node);
             for (std::uint32_t i = 0; i < count; ++i) {
-                if (!eval(ast, ast.child(node, i), ctx, &args[i], diag)) {
+                if (!eval(ast, ast.child(node, i), store, &args[i], diag)) {
                     return false;
                 }
             }
-            return applyBuiltin(id, ctx, args, count, ast.offset(node), out, diag);
+            return applyBuiltin(id, store, args, count, ast.offset(node), out, diag);
         }
 
         default:
             // Операторы и цепочки доступа разобраны выше отдельными ветками.
             // Сюда попадают узлы, которых в дереве от parseExpression быть не
-            // может: Program, Assign, CallStatement — стейтменты, а не
+            // может: Script, Assign, CallStatement — стейтменты, а не
             // выражения.
             return fail(ast, node, ErrorCode::Type,
                         "expression form is not supported", diag);
@@ -468,13 +469,13 @@ TokenKind compoundOperation(TokenKind op) {
 ///
 /// Порядок вычисления — подвыражения цели, затем правая часть
 /// (docs/semantics.md §7.2).
-bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+bool assignToKey(const Ast &ast, NodeId node, NodeId target, Store &store,
                  Diagnostic &diag) {
     Value base = Value::null();
-    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+    if (!eval(ast, ast.child(target, 0), store, &base, diag)) { return false; }
 
     Value value = Value::null();
-    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+    if (!eval(ast, ast.child(node, 1), store, &value, diag)) { return false; }
 
     // Запись в null — ошибка: мягкость §6.3 распространяется только на чтение,
     // а молчаливо пропущенная запись потеряла бы данные без следа.
@@ -491,30 +492,30 @@ bool assignToKey(const Ast &ast, NodeId node, NodeId target, Context &ctx,
         // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
         // поэтому подвыражения цели вычислены ровно один раз
         // (docs/grammar.md §6.4).
-        const Value current = ctx.objectGet(base, key);
+        const Value current = store.objectGet(base, key);
         Value combined = Value::null();
-        if (!applyBinary(compoundOperation(op), current, value, ctx,
+        if (!applyBinary(compoundOperation(op), current, value, store,
                          ast.offset(node), &combined, diag)) {
             return false;
         }
         value = combined;
     }
 
-    ctx.objectSet(base, key, value);
+    store.objectSet(base, key, value);
     return true;
 }
 
 /// Присваивание по индексу: base[i] = v.
-bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
+bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Store &store,
                    Diagnostic &diag) {
     // Порядок: база, индекс, затем правая часть (docs/semantics.md §7.2).
     Value base = Value::null();
-    if (!eval(ast, ast.child(target, 0), ctx, &base, diag)) { return false; }
+    if (!eval(ast, ast.child(target, 0), store, &base, diag)) { return false; }
     Value subscript = Value::null();
-    if (!eval(ast, ast.child(target, 1), ctx, &subscript, diag)) { return false; }
+    if (!eval(ast, ast.child(target, 1), store, &subscript, diag)) { return false; }
 
     Value value = Value::null();
-    if (!eval(ast, ast.child(node, 1), ctx, &value, diag)) { return false; }
+    if (!eval(ast, ast.child(node, 1), store, &value, diag)) { return false; }
 
     switch (base.kind()) {
         case Value::Kind::Array: {
@@ -530,12 +531,12 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
                 // упирается не в границу записи, а в сложение с null: Type, а
                 // не Range (§7.3).
                 Value current = Value::null();
-                if (!readIndex(ast, target, ctx, base, subscript, &current,
+                if (!readIndex(ast, target, store, base, subscript, &current,
                                diag)) {
                     return false;
                 }
                 Value combined = Value::null();
-                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                if (!applyBinary(compoundOperation(op), current, value, store,
                                  ast.offset(node), &combined, diag)) {
                     return false;
                 }
@@ -544,36 +545,36 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
 
             // Запись за границу — ошибка: расширяет только push (§6.1).
             // Сравнение в double, потому что индекс может превышать uint32.
-            if (index >= static_cast<double>(ctx.arrayCount(base))) {
+            if (index >= static_cast<double>(store.arrayCount(base))) {
                 return fail(ast, target, ErrorCode::Range,
                             "array index is out of bounds", diag);
             }
             // Границу проверили выше, поэтому запись не отказывает.
             static_cast<void>(
-                ctx.arraySet(base, static_cast<std::uint32_t>(index), value));
+                store.arraySet(base, static_cast<std::uint32_t>(index), value));
             return true;
         }
 
         case Value::Kind::Object: {
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceToString(ast, target, ctx, subscript, buffer, &key,
+            if (!coerceToString(ast, target, store, subscript, buffer, &key,
                                 diag)) {
                 return false;
             }
 
             const TokenKind op = ast.op(node);
             if (op != TokenKind::Assign) {
-                const Value current = ctx.objectGet(base, key);
+                const Value current = store.objectGet(base, key);
                 Value combined = Value::null();
-                if (!applyBinary(compoundOperation(op), current, value, ctx,
+                if (!applyBinary(compoundOperation(op), current, value, store,
                                  ast.offset(node), &combined, diag)) {
                     return false;
                 }
                 value = combined;
             }
 
-            ctx.objectSet(base, key, value);
+            store.objectSet(base, key, value);
             return true;
         }
 
@@ -586,14 +587,14 @@ bool assignToIndex(const Ast &ast, NodeId node, NodeId target, Context &ctx,
 }
 
 /// Присваивание: разбирает форму цели и передаёт дальше.
-bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+bool assign(const Ast &ast, NodeId node, Store &store, Diagnostic &diag) {
     const NodeId target = ast.child(node, 0);
     switch (ast.kind(target)) {
         case NodeKind::Member:
-            return assignToKey(ast, node, target, ctx, diag);
+            return assignToKey(ast, node, target, store, diag);
 
         case NodeKind::Index:
-            return assignToIndex(ast, node, target, ctx, diag);
+            return assignToIndex(ast, node, target, store, diag);
 
         default:
             // Грамматика строит целью Identifier, Member и Index
@@ -607,16 +608,16 @@ bool assign(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
 }
 
 /// Выполняет один стейтмент.
-bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
+bool execute(const Ast &ast, NodeId node, Store &store, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Assign:
-            return assign(ast, node, ctx, diag);
+            return assign(ast, node, store, diag);
 
         case NodeKind::CallStatement: {
             // Вызов в позиции стейтмента возвращает Void, поэтому результат
             // читать нечего и незачем (docs/semantics.md §2.2).
             Value discarded = Value::null();
-            return eval(ast, ast.child(node, 0), ctx, &discarded, diag);
+            return eval(ast, ast.child(node, 0), store, &discarded, diag);
         }
 
         default:
@@ -630,25 +631,25 @@ bool execute(const Ast &ast, NodeId node, Context &ctx, Diagnostic &diag) {
 
 }  // namespace
 
-bool evalExpression(const Ast &ast, Context &ctx, Value *out,
+bool evalExpression(const Ast &ast, Store &store, Value *out,
                     Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
-    return eval(ast, ast.root(), ctx, out, diag);
+    return eval(ast, ast.root(), store, out, diag);
 }
 
-bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag) {
+bool runScript(const Ast &ast, Store &store, Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
-    const NodeId program = ast.root();
-    assert(ast.kind(program) == NodeKind::Program &&
-           "runScript ждёт дерево от parseProgram");
+    const NodeId script = ast.root();
+    assert(ast.kind(script) == NodeKind::Script &&
+           "runScript ждёт дерево от parseScript");
 
-    const std::uint32_t count = ast.childCount(program);
+    const std::uint32_t count = ast.childCount(script);
     for (std::uint32_t i = 0; i < count; ++i) {
         // Ошибка прерывает выполнение, а сделанное остаётся сделанным:
         // откатывать нечего.
-        if (!execute(ast, ast.child(program, i), ctx, diag)) { return false; }
+        if (!execute(ast, ast.child(script, i), store, diag)) { return false; }
     }
     return true;
 }

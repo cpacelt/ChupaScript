@@ -5,25 +5,25 @@
 
 #include <string>
 
-#include "context.hpp"
+#include "store.hpp"
 
 namespace {
 
-using CS::Context;
+using CS::Store;
 using CS::Value;
 
 /// Наполнение массива через push: цена удвоений и переездов.
 void BM_Store_ArrayPush(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
-        Context ctx;
-        const Value a = ctx.makeArray();
+        Store store;
+        const Value a = store.makeArray();
         for (int i = 0; i < count; ++i) {
-            ctx.arrayPush(a, Value::number(static_cast<double>(i)));
+            store.arrayPush(a, Value::number(static_cast<double>(i)));
         }
         // Локальная переменная, а не временное значение: DoNotOptimize от
         // rvalue не переживает смены версии Google Benchmark.
-        std::uint32_t filled = ctx.arrayCount(a);
+        std::uint32_t filled = store.arrayCount(a);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * count);
@@ -34,12 +34,12 @@ BENCHMARK(BM_Store_ArrayPush)->Arg(1000);
 void BM_Store_ArrayPushReserved(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
-        Context ctx;
-        const Value a = ctx.makeArray(static_cast<std::uint32_t>(count));
+        Store store;
+        const Value a = store.makeArray(static_cast<std::uint32_t>(count));
         for (int i = 0; i < count; ++i) {
-            ctx.arrayPush(a, Value::number(static_cast<double>(i)));
+            store.arrayPush(a, Value::number(static_cast<double>(i)));
         }
-        std::uint32_t filled = ctx.arrayCount(a);
+        std::uint32_t filled = store.arrayCount(a);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * count);
@@ -48,16 +48,16 @@ BENCHMARK(BM_Store_ArrayPushReserved)->Arg(1000);
 
 /// Обход массива: цена разыменования через индекс.
 void BM_Store_ArrayTraverse(benchmark::State &state) {
-    Context ctx;
-    const Value a = ctx.makeArray(1000);
+    Store store;
+    const Value a = store.makeArray(1000);
     for (int i = 0; i < 1000; ++i) {
-        ctx.arrayPush(a, Value::number(static_cast<double>(i)));
+        store.arrayPush(a, Value::number(static_cast<double>(i)));
     }
 
     for (auto _ : state) {
         double sum = 0.0;
-        for (std::uint32_t i = 0; i < ctx.arrayCount(a); ++i) {
-            sum += ctx.arrayAt(a, i).numberValue();
+        for (std::uint32_t i = 0; i < store.arrayCount(a); ++i) {
+            sum += store.arrayAt(a, i).numberValue();
         }
         benchmark::DoNotOptimize(sum);
     }
@@ -66,10 +66,10 @@ void BM_Store_ArrayTraverse(benchmark::State &state) {
 BENCHMARK(BM_Store_ArrayTraverse);
 
 /// Объект заданного размера с ключами вида "keyNN".
-Value makeFilledObject(Context &ctx, int keys) {
-    const Value o = ctx.makeObject(static_cast<std::uint32_t>(keys));
+Value makeFilledObject(Store &store, int keys) {
+    const Value o = store.makeObject(static_cast<std::uint32_t>(keys));
     for (int i = 0; i < keys; ++i) {
-        ctx.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+        store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
     }
     return o;
 }
@@ -77,12 +77,12 @@ Value makeFilledObject(Context &ctx, int keys) {
 /// Поиск ключа: проверка утверждения «двоичный поиск дешевле хеша на 3–20».
 void BM_Store_ObjectGet(benchmark::State &state) {
     const int keys = static_cast<int>(state.range(0));
-    Context ctx;
-    const Value o = makeFilledObject(ctx, keys);
+    Store store;
+    const Value o = makeFilledObject(store, keys);
     const std::string last = "key" + std::to_string(keys - 1);
 
     for (auto _ : state) {
-        Value found = ctx.objectGet(o, last);
+        Value found = store.objectGet(o, last);
         benchmark::DoNotOptimize(found);
     }
 }
@@ -90,13 +90,13 @@ BENCHMARK(BM_Store_ObjectGet)->Arg(3)->Arg(8)->Arg(20);
 
 /// Вставка keys ключей в объект с заранее выделенной ёмкостью — роста нет,
 /// сдвиг хвоста при каждой вставке есть; в измеряемое время входит и
-/// создание/уничтожение самого Context.
+/// создание/уничтожение самого Store.
 void BM_Store_ObjectInsert(benchmark::State &state) {
     const int keys = static_cast<int>(state.range(0));
     for (auto _ : state) {
-        Context ctx;
-        const Value o = makeFilledObject(ctx, keys);
-        std::uint32_t filled = ctx.objectCount(o);
+        Store store;
+        const Value o = makeFilledObject(store, keys);
+        std::uint32_t filled = store.objectCount(o);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * keys);
@@ -107,9 +107,9 @@ BENCHMARK(BM_Store_ObjectInsert)->Arg(3)->Arg(8)->Arg(20);
 void BM_Store_MakeString(benchmark::State &state) {
     const std::string text(32, 'x');
     for (auto _ : state) {
-        Context ctx;
+        Store store;
         for (int i = 0; i < 100; ++i) {
-            Value made = ctx.makeString(text);
+            Value made = store.makeString(text);
             benchmark::DoNotOptimize(made);
         }
     }

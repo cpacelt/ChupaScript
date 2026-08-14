@@ -10,35 +10,35 @@
 #include "ast.hpp"
 #include "check.hpp"
 #include "compile.hpp"
-#include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "eval.hpp"
 #include "parser.hpp"
+#include "store.hpp"
 #include "text.hpp"
 
 namespace {
 
 using CS::Ast;
-using CS::Context;
+using CS::Store;
 using CS::Diagnostic;
 using CS::Value;
 
-/// Наполняет контекст данными, на которых меряются пути.
-bool fill(Context &ctx) {
+/// Наполняет хранилище данными, на которых меряются пути.
+bool fill(Store &store) {
     Diagnostic diag;
-    return CS::setVariable(ctx, "user",
+    return CS::setVariable(store, "user",
                            "{'name': 'Вася', 'profile': {'city': {'code': "
                            "{'zip': 101000}}}}",
                            diag) &&
-           CS::setVariable(ctx, "items", "[10, 20, 30]", diag) &&
-           CS::setVariable(ctx, "map", "{'0': 'zero', '1': 'one'}", diag);
+           CS::setVariable(store, "items", "[10, 20, 30]", diag) &&
+           CS::setVariable(store, "map", "{'0': 'zero', '1': 'one'}", diag);
 }
 
-/// Общая часть: наполнить контекст, разобрать выражение, мерить вычисление.
+/// Общая часть: наполнить хранилище, разобрать выражение, мерить вычисление.
 void runEval(benchmark::State &state, std::string_view source) {
-    Context ctx;
-    if (!fill(ctx)) {
+    Store store;
+    if (!fill(store)) {
         state.SkipWithError("setVariable failed");
         return;
     }
@@ -50,14 +50,14 @@ void runEval(benchmark::State &state, std::string_view source) {
     // требует отметку прохода, а разбор без проверки её не ставит.
     if (CS::compileExpression(source.data(),
                               static_cast<std::uint32_t>(source.size()), ast,
-                              ctx, &diag, 1) != 0) {
+                              store, &diag, 1) != 0) {
         state.SkipWithError("compileExpression failed");
         return;
     }
 
     for (auto _ : state) {
         Value out = Value::null();
-        bool ok = CS::evalExpression(ast, ctx, &out, diag);
+        bool ok = CS::evalExpression(ast, store, &out, diag);
         if (!ok) {
             state.SkipWithError("evalExpression failed");
             return;
@@ -66,7 +66,7 @@ void runEval(benchmark::State &state, std::string_view source) {
     }
 }
 
-/// Самое частое выражение в props — один сегмент от корня.
+/// Самое частое выражение в props — один сегмент от глобальной переменной.
 void BM_Eval_ShortPath(benchmark::State &state) { runEval(state, "user.name"); }
 BENCHMARK(BM_Eval_ShortPath);
 
@@ -85,7 +85,7 @@ void BM_Eval_CoercedKey(benchmark::State &state) { runEval(state, "map[1]"); }
 BENCHMARK(BM_Eval_CoercedKey);
 
 /// Построение агрегата: десять элементов, точное выделение.
-/// Контекст создан снаружи цикла и не освобождает элементы поштучно, поэтому
+/// Хранилище создано снаружи цикла и не освобождает элементы поштучно, поэтому
 /// куча растёт от итерации к итерации, а строка шумнее прочих (см. B24).
 void BM_Eval_ArrayLiteral(benchmark::State &state) {
     runEval(state, "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]");
@@ -128,8 +128,8 @@ BENCHMARK(BM_Eval_NilCoalesceShort);
 /// то, что видно на экране: ?? самый частый оператор в props.
 ///
 /// Правый операнд — число, а не строковый литерал, именно чтобы разница мерила
-/// заявленное. Строковый литерал зовёт ctx.makeString и дописывает в пул текста
-/// контекста, а поштучного освобождения нет: пул рос бы на каждой итерации весь
+/// заявленное. Строковый литерал зовёт store.makeString и дописывает в пул текста
+/// хранилища, а поштучного освобождения нет: пул рос бы на каждой итерации весь
 /// прогон, с переездами внутри измеряемого цикла (та же беда, что у
 /// BM_Eval_ArrayLiteral, см. B24). Короткий путь не выделяет ничего, и разница
 /// оказалась бы ценой вычисления правого операнда плюс неограниченным
@@ -139,36 +139,36 @@ void BM_Eval_NilCoalesceLong(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_NilCoalesceLong);
 
-/// Общая часть для скриптов: наполнить контекст, разобрать, мерить выполнение.
+/// Общая часть для скриптов: наполнить хранилище, разобрать, мерить выполнение.
 ///
-/// Контекст создаётся заново на каждой итерации: скрипт меняет данные, и без
+/// Хранилище создаётся заново на каждой итерации: скрипт меняет данные, и без
 /// пересоздания вторая итерация работала бы уже на изменённых. Цена создания
 /// входит в измерение — читать эти строки имеет смысл в сравнении друг с
 /// другом, а не с BM_Eval_* для выражений.
 void runScriptBench(benchmark::State &state, std::string_view source) {
     Ast ast;
     Diagnostic diag;
-    // Контекст для проверки имён нужен до цикла: runScript требует отметку
+    // Хранилище для проверки имён нужен до цикла: runScript требует отметку
     // прохода, а проходу довольно состава имён — значения роли не играют.
-    Context checkCtx;
-    if (!fill(checkCtx)) {
+    Store checkStore;
+    if (!fill(checkStore)) {
         state.SkipWithError("setVariable failed");
         return;
     }
     if (CS::compileScript(source.data(),
                           static_cast<std::uint32_t>(source.size()), ast,
-                          checkCtx, &diag, 1) != 0) {
+                          checkStore, &diag, 1) != 0) {
         state.SkipWithError("compileScript failed");
         return;
     }
 
     for (auto _ : state) {
-        Context ctx;
-        if (!fill(ctx)) {
+        Store store;
+        if (!fill(store)) {
             state.SkipWithError("setVariable failed");
             return;
         }
-        bool ok = CS::runScript(ast, ctx, diag);
+        bool ok = CS::runScript(ast, store, diag);
         if (!ok) {
             state.SkipWithError("runScript failed");
             return;
@@ -189,7 +189,7 @@ void BM_Eval_CompoundAssign(benchmark::State &state) {
 }
 BENCHMARK(BM_Eval_CompoundAssign);
 
-/// Скрипт из пяти присваиваний — цена обхода Program.
+/// Скрипт из пяти присваиваний — цена обхода Script.
 void BM_Eval_Script(benchmark::State &state) {
     runScriptBench(state,
                    "user.a = 1; user.b = 2; user.c = 3; user.d = 4;"
@@ -218,16 +218,16 @@ void BM_Eval_CallInProps(benchmark::State &state) {
 BENCHMARK(BM_Eval_CallInProps);
 
 /// Общая часть для прохода: разобрать один раз, мерить только проверки.
-void runCheck(benchmark::State &state, std::string_view source, bool program) {
-    Context ctx;
-    if (!fill(ctx)) {
+void runCheck(benchmark::State &state, std::string_view source, bool script) {
+    Store store;
+    if (!fill(store)) {
         state.SkipWithError("setVariable failed");
         return;
     }
     Ast ast;
     Diagnostic diag;
     const bool parsed =
-        program ? CS::parseProgram(source.data(),
+        script ? CS::parseScript(source.data(),
                                    static_cast<std::uint32_t>(source.size()),
                                    ast, diag)
                 : CS::parseExpression(source.data(),
@@ -239,7 +239,7 @@ void runCheck(benchmark::State &state, std::string_view source, bool program) {
     }
     for (auto _ : state) {
         Diagnostic found[1];
-        std::uint32_t errors = CS::check(ast, ctx, found, 1);
+        std::uint32_t errors = CS::check(ast, store, found, 1);
         benchmark::DoNotOptimize(errors);
     }
 }

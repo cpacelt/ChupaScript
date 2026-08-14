@@ -9,8 +9,8 @@
 #include <string_view>
 
 #include "chupascript/chupascript.h"
-#include "context.hpp"
 #include "report.hpp"
+#include "store.hpp"
 
 #include "ast.hpp"
 #include "compile.hpp"
@@ -42,15 +42,15 @@ constexpr std::uint32_t kMaxReported = 8;
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runCode(CS::Context &ctx, std::string_view source, std::uint32_t indent,
+void runCode(CS::Store &store, std::string_view source, std::uint32_t indent,
              bool asScript) {
     CS::Ast ast;
     CS::Diagnostic found[kMaxReported];
     const std::uint32_t length = static_cast<std::uint32_t>(source.size());
     const std::uint32_t errors =
-        asScript ? CS::compileScript(source.data(), length, ast, ctx, found,
+        asScript ? CS::compileScript(source.data(), length, ast, store, found,
                                      kMaxReported)
-                 : CS::compileExpression(source.data(), length, ast, ctx, found,
+                 : CS::compileExpression(source.data(), length, ast, store, found,
                                          kMaxReported);
 
     if (errors != 0) {
@@ -70,18 +70,18 @@ void runCode(CS::Context &ctx, std::string_view source, std::uint32_t indent,
     if (asScript) {
         // Скрипт при успехе молчит: значения у него нет, а результат виден
         // через :vars.
-        if (!CS::runScript(ast, ctx, diag)) {
+        if (!CS::runScript(ast, store, diag)) {
             chupa::reportDiagnostic(std::cout, source, indent, diag);
         }
         return;
     }
 
     CS::Value out = CS::Value::null();
-    if (!CS::evalExpression(ast, ctx, &out, diag)) {
+    if (!CS::evalExpression(ast, store, &out, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }
-    std::cout << chupa::printValue(ctx, out) << "\n";
+    std::cout << chupa::printValue(store, out) << "\n";
 }
 
 void printUsage(std::ostream &out) {
@@ -121,7 +121,7 @@ std::string_view trim(std::string_view text) {
 /// setVariable принимает только литерал — данные не вычисляются
 /// (docs/superpowers/specs/2026-08-11-chupascript-data-design.md §3). В
 /// оболочке это ограничение встречается первым, поэтому отказ поясняется.
-void runSet(CS::Context &ctx, std::string_view argument) {
+void runSet(CS::Store &store, std::string_view argument) {
     const std::size_t equals = argument.find('=');
     if (equals == std::string_view::npos) {
         std::cout << "error: usage is :set <name> = <literal>\n";
@@ -135,7 +135,7 @@ void runSet(CS::Context &ctx, std::string_view argument) {
     }
 
     CS::Diagnostic diag;
-    if (CS::setVariable(ctx, name, text, diag)) { return; }
+    if (CS::setVariable(store, name, text, diag)) { return; }
 
     std::cout << "error: " << diag.message << "\n";
     if (diag.code == CS::ErrorCode::Data) {
@@ -143,22 +143,22 @@ void runSet(CS::Context &ctx, std::string_view argument) {
     }
 }
 
-/// Печатает состав контекста: имя и значение.
-void runVars(const CS::Context &ctx) {
-    const std::uint32_t count = ctx.rootCount();
+/// Печатает состав хранилища: имя и значение.
+void runVars(const CS::Store &store) {
+    const std::uint32_t count = store.globalCount();
     if (count == 0) {
         std::cout << "the context is empty\n";
         return;
     }
     for (std::uint32_t i = 0; i < count; ++i) {
-        const std::string_view name = ctx.rootNameAt(i);
+        const std::string_view name = store.globalNameAt(i);
         std::cout << name << " = "
-                  << chupa::printValue(ctx, ctx.root(name)) << "\n";
+                  << chupa::printValue(store, store.global(name)) << "\n";
     }
 }
 
 /// Выполняет одну строку.
-After handleLine(CS::Context &ctx, std::string_view line) {
+After handleLine(CS::Store &store, std::string_view line) {
     const std::string_view text = trim(line);
     if (text.empty()) { return After::Continue; }
 
@@ -177,15 +177,15 @@ After handleLine(CS::Context &ctx, std::string_view line) {
             return After::Continue;
         }
         if (name == "vars") {
-            runVars(ctx);
+            runVars(store);
             return After::Continue;
         }
         if (name == "set") {
-            runSet(ctx, argument);
+            runSet(store, argument);
             return After::Continue;
         }
         if (name == "reset") {
-            // Контекст копит мусор — освобождения по одному нет
+            // Хранилище копит мусор — освобождения по одному нет
             // (docs/backlog.md B1). :reset единственный способ начать чисто,
             // не выходя из оболочки.
             return After::Reset;   // сам сброс делает вызывающий, см. runRepl
@@ -211,7 +211,7 @@ After handleLine(CS::Context &ctx, std::string_view line) {
             kPromptWidth + chupa::columnOf(line, static_cast<std::uint32_t>(
                                                      sourceStart));
 
-        runCode(ctx, source, indent, isScript);
+        runCode(store, source, indent, isScript);
         return After::Continue;
     }
 
@@ -222,17 +222,17 @@ After handleLine(CS::Context &ctx, std::string_view line) {
 }
 
 /// Инвариант времени жизни: ни один `Value`, ни один срез (`string_view`),
-/// полученный из `ctx`, не переживает вызов `handleLine`, который его
+/// полученный из `store`, не переживает вызов `handleLine`, который его
 /// произвёл. Ядро этой дисциплины ничем не подпирает — `Value` это индекс в
-/// пулы контекста, а `:reset` пересоздаёт `ctx` целиком (`ctx.emplace()`
+/// пулы хранилища, а `:reset` пересоздаёт `store` целиком (`store.emplace()`
 /// ниже), так что значение, пережившее сброс, стало бы индексом в чужой,
-/// вновь построенный контекст и молча указывало бы не на то, чем было. Это
+/// вновь построенное хранилище и молча указывало бы не на то, чем было. Это
 /// свойство, которое обязана сохранять всякая правка этого цикла, а не
 /// исторический факт о нём: команда вроде гипотетической `:last`, кладущей
 /// последнее значение про запас между строками, его нарушит.
 int runRepl() {
-    std::optional<CS::Context> ctx;
-    ctx.emplace();
+    std::optional<CS::Store> store;
+    store.emplace();
 
     std::cout << "chupa " << chupa_version() << ", :help for commands\n";
 
@@ -245,10 +245,10 @@ int runRepl() {
             std::cout << "\n";
             break;
         }
-        const After after = handleLine(*ctx, line);
+        const After after = handleLine(*store, line);
         if (after == After::Quit) { break; }
         if (after == After::Reset) {
-            ctx.emplace();
+            store.emplace();
             std::cout << "the context is empty\n";
         }
     }

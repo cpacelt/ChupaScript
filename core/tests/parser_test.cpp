@@ -29,9 +29,9 @@ Parsed parseExpr(const std::string &source) {
     return result;
 }
 
-Parsed parseProg(const std::string &source) {
+Parsed parseScriptSource(const std::string &source) {
     Parsed result;
-    result.ok = CS::parseProgram(source.data(),
+    result.ok = CS::parseScript(source.data(),
                                  static_cast<std::uint32_t>(source.size()),
                                  result.ast, result.diag);
     return result;
@@ -116,8 +116,8 @@ std::string dump(const CS::Ast &ast, CS::NodeId node) {
             return listOf(ast, node, opName(ast.op(node)));
         case NodeKind::CallStatement:
             return listOf(ast, node, "stmt");
-        case NodeKind::Program:
-            return listOf(ast, node, "program");
+        case NodeKind::Script:
+            return listOf(ast, node, "script");
     }
     return "<unknown>";
 }
@@ -131,9 +131,9 @@ std::string expr(const std::string &source) {
     return dump(parsed.ast, parsed.ast.root());
 }
 
-/// То же для программы.
-std::string prog(const std::string &source) {
-    const Parsed parsed = parseProg(source);
+/// То же для скрипта.
+std::string script(const std::string &source) {
+    const Parsed parsed = parseScriptSource(source);
     if (!parsed.ok) {
         return "";
     }
@@ -377,24 +377,24 @@ TEST(ParserPostfix, MethodCallSyntaxIsNotSupported) {
 
 // ─── §5.2: стейтменты ────────────────────────────────────────────────
 
-TEST(ParserStatement, EmptyProgramHasEmptyRoot) {
+TEST(ParserStatement, EmptyScriptHasEmptyRoot) {
     const std::string source = "";
-    EXPECT_EQ(prog(source), "(program)");
+    EXPECT_EQ(script(source), "(script)");
 }
 
-TEST(ParserStatement, WhitespaceOnlyProgramHasEmptyRoot) {
+TEST(ParserStatement, WhitespaceOnlyScriptHasEmptyRoot) {
     const std::string source = "  // только комментарий\n";
-    EXPECT_EQ(prog(source), "(program)");
+    EXPECT_EQ(script(source), "(script)");
 }
 
 TEST(ParserStatement, EmptyStatementProducesNoNode) {
     const std::string source = ";;;";
-    EXPECT_EQ(prog(source), "(program)");
+    EXPECT_EQ(script(source), "(script)");
 }
 
 TEST(ParserStatement, SimpleAssignment) {
     const std::string source = "a = 1;";
-    EXPECT_EQ(prog(source), "(program (= a 1))");
+    EXPECT_EQ(script(source), "(script (= a 1))");
 }
 
 TEST(ParserStatement, CompoundAssignments) {
@@ -402,41 +402,41 @@ TEST(ParserStatement, CompoundAssignments) {
     const std::string minus = "a -= 1;";
     const std::string star = "a *= 1;";
     const std::string slash = "a /= 1;";
-    EXPECT_EQ(prog(plus), "(program (+= a 1))");
-    EXPECT_EQ(prog(minus), "(program (-= a 1))");
-    EXPECT_EQ(prog(star), "(program (*= a 1))");
-    EXPECT_EQ(prog(slash), "(program (/= a 1))");
+    EXPECT_EQ(script(plus), "(script (+= a 1))");
+    EXPECT_EQ(script(minus), "(script (-= a 1))");
+    EXPECT_EQ(script(star), "(script (*= a 1))");
+    EXPECT_EQ(script(slash), "(script (/= a 1))");
 }
 
 TEST(ParserStatement, AssignmentToMember) {
     const std::string source = "state.total = 1;";
-    EXPECT_EQ(prog(source), "(program (= (. state total) 1))");
+    EXPECT_EQ(script(source), "(script (= (. state total) 1))");
 }
 
 TEST(ParserStatement, AssignmentToIndex) {
     const std::string source = "items[0] = 1;";
-    EXPECT_EQ(prog(source), "(program (= ([] items 0) 1))");
+    EXPECT_EQ(script(source), "(script (= ([] items 0) 1))");
 }
 
 TEST(ParserStatement, AssignmentTargetMayHaveCallInSubscript) {
     const std::string source = "arr[idx()] += 1;";
-    EXPECT_EQ(prog(source), "(program (+= ([] arr (call idx)) 1))");
+    EXPECT_EQ(script(source), "(script (+= ([] arr (call idx)) 1))");
 }
 
 TEST(ParserStatement, CallStatement) {
     const std::string source = "push(items, 1);";
-    EXPECT_EQ(prog(source), "(program (stmt (call push items 1)))");
+    EXPECT_EQ(script(source), "(script (stmt (call push items 1)))");
 }
 
 TEST(ParserStatement, SeveralStatementsKeepOrder) {
     const std::string source = "a = 1; push(b, 2); c += 3;";
-    EXPECT_EQ(prog(source),
-              "(program (= a 1) (stmt (call push b 2)) (+= c 3))");
+    EXPECT_EQ(script(source),
+              "(script (= a 1) (stmt (call push b 2)) (+= c 3))");
 }
 
 TEST(ParserStatement, StatementsSpanLines) {
     const std::string source = "a = 1;\n\nb = 2;\n";
-    EXPECT_EQ(prog(source), "(program (= a 1) (= b 2))");
+    EXPECT_EQ(script(source), "(script (= a 1) (= b 2))");
 }
 
 // ─── §5.1: два стартовых символа ─────────────────────────────────────
@@ -465,15 +465,15 @@ TEST(ParserModes, ExpressionModeRejectsEmptySource) {
     EXPECT_EQ(parsed.diag.offset, 0u);
 }
 
-TEST(ParserModes, ProgramModeRejectsBareExpression) {
+TEST(ParserModes, ScriptModeRejectsBareExpression) {
     const std::string source = "a + 1;";
-    const Parsed parsed = parseProg(source);
+    const Parsed parsed = parseScriptSource(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_EQ(parsed.diag.offset, 0u);
 }
 
-TEST(ParserModes, ExpressionModeAcceptsWhatProgramModeRejects) {
+TEST(ParserModes, ExpressionModeAcceptsWhatScriptModeRejects) {
     const std::string source = "a + 1";
     EXPECT_EQ(expr(source), "(+ a 1)");
 }
@@ -601,7 +601,7 @@ TEST(ParserEarlyErrors, ObjectPairNeedsColon) {
 
 TEST(ParserEarlyErrors, StatementReducesToNoProduction) {
     const std::string source = "user.name;";
-    const Parsed parsed = parseProg(source);
+    const Parsed parsed = parseScriptSource(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_EQ(parsed.diag.offset, 0u);
@@ -609,7 +609,7 @@ TEST(ParserEarlyErrors, StatementReducesToNoProduction) {
 
 TEST(ParserEarlyErrors, StatementCannotStartWithLiteral) {
     const std::string source = "1 + 1;";
-    const Parsed parsed = parseProg(source);
+    const Parsed parsed = parseScriptSource(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_EQ(parsed.diag.offset, 0u);
@@ -617,7 +617,7 @@ TEST(ParserEarlyErrors, StatementCannotStartWithLiteral) {
 
 TEST(ParserEarlyErrors, AssignmentTargetCannotContainCall) {
     const std::string source = "f(a).b = 1;";
-    const Parsed parsed = parseProg(source);
+    const Parsed parsed = parseScriptSource(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_EQ(parsed.diag.offset, 0u);
@@ -625,7 +625,7 @@ TEST(ParserEarlyErrors, AssignmentTargetCannotContainCall) {
 
 TEST(ParserEarlyErrors, StatementNeedsSemicolon) {
     const std::string source = "a = 1";
-    const Parsed parsed = parseProg(source);
+    const Parsed parsed = parseScriptSource(source);
     EXPECT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_EQ(parsed.diag.offset, 5u);
@@ -819,11 +819,11 @@ std::string targetChainOf(const char *link, int count) {
 }
 
 TEST(ParserLimits, LongAssignmentTargetChainIsAcceptedUpToTheLimit) {
-    EXPECT_TRUE(parseProg(targetChainOf(".b", 512)).ok);
+    EXPECT_TRUE(parseScriptSource(targetChainOf(".b", 512)).ok);
 }
 
 TEST(ParserLimits, AssignmentTargetChainPastTheLimitIsRejected) {
-    const Parsed parsed = parseProg(targetChainOf(".b", 513));
+    const Parsed parsed = parseScriptSource(targetChainOf(".b", 513));
     ASSERT_FALSE(parsed.ok);
     EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
     EXPECT_STREQ(parsed.diag.message, "expression nesting too deep");

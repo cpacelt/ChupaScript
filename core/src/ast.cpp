@@ -184,9 +184,9 @@ NodeId Ast::callStatement(NodeId callNode, std::uint32_t offset) {
     return add(node);
 }
 
-NodeId Ast::program(const NodeId *statements, std::uint32_t count) {
+NodeId Ast::script(const NodeId *statements, std::uint32_t count) {
     Node node;
-    node.kind = NodeKind::Program;
+    node.kind = NodeKind::Script;
     node.offset = 0;
     node.childStart = pushChildren(statements, count);
     node.childCount = count;

@@ -15,23 +15,23 @@ std::uint32_t reportParseFailure(const Diagnostic &diag, Diagnostic *out,
 }  // namespace
 
 std::uint32_t compileExpression(const char *source, std::uint32_t length,
-                                Ast &ast, const Context &ctx, Diagnostic *out,
+                                Ast &ast, const Store &store, Diagnostic *out,
                                 std::uint32_t capacity) {
     Diagnostic diag;
     if (!parseExpression(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
-    return check(ast, ctx, out, capacity);
+    return check(ast, store, out, capacity);
 }
 
 std::uint32_t compileScript(const char *source, std::uint32_t length, Ast &ast,
-                            const Context &ctx, Diagnostic *out,
+                            const Store &store, Diagnostic *out,
                             std::uint32_t capacity) {
     Diagnostic diag;
-    if (!parseProgram(source, length, ast, diag)) {
+    if (!parseScript(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
-    return check(ast, ctx, out, capacity);
+    return check(ast, store, out, capacity);
 }
 
 }  // namespace CS

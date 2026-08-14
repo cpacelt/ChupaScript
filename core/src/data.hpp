@@ -1,12 +1,12 @@
 #pragma once
 #include <string_view>
 
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 
 namespace CS {
 
-/// Кладёт в контекст значение под именем name.
+/// Кладёт в хранилище значение под именем name.
 ///
 /// text — литерал ChupaScript целиком: число, строка, true, false, null,
 /// массив или объект, произвольно вложенные
@@ -17,10 +17,10 @@ namespace CS {
 /// зарезервированным словом (§4.5) — иначе программа не сможет к нему
 /// обратиться.
 ///
-/// При отказе возвращает false, заполняет diag и не заводит корня. Смещение в
+/// При отказе возвращает false, заполняет diag и не заводит глобальной переменной. Смещение в
 /// diag считается от начала text — кроме ErrorCode::Name, для которой
 /// смещение не определено (имя не является частью text).
-bool setVariable(Context &ctx, std::string_view name, std::string_view text,
+bool setVariable(Store &store, std::string_view name, std::string_view text,
                  Diagnostic &diag);
 
 }  // namespace CS

@@ -4,250 +4,250 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 
 namespace {
 
-using CS::Context;
+using CS::Store;
 using CS::Diagnostic;
 using CS::ErrorCode;
 using CS::Value;
 
 /// Кладёт значение и требует успеха; возвращает то, что легло.
-Value put(Context &ctx, std::string_view name, std::string_view text) {
+Value put(Store &store, std::string_view name, std::string_view text) {
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(ctx, name, text, diag)) << diag.message;
-    return ctx.root(name);
+    EXPECT_TRUE(CS::setVariable(store, name, text, diag)) << diag.message;
+    return store.global(name);
 }
 
 TEST(DataScalars, NumberIsStored) {
-    Context ctx;
-    EXPECT_EQ(put(ctx, "count", "3").numberValue(), 3.0);
-    EXPECT_EQ(put(ctx, "ratio", "0.5").numberValue(), 0.5);
+    Store store;
+    EXPECT_EQ(put(store, "count", "3").numberValue(), 3.0);
+    EXPECT_EQ(put(store, "ratio", "0.5").numberValue(), 0.5);
 }
 
 TEST(DataScalars, BooleanIsStored) {
-    Context ctx;
-    EXPECT_TRUE(put(ctx, "on", "true").booleanValue());
-    EXPECT_FALSE(put(ctx, "off", "false").booleanValue());
+    Store store;
+    EXPECT_TRUE(put(store, "on", "true").booleanValue());
+    EXPECT_FALSE(put(store, "off", "false").booleanValue());
 }
 
 TEST(DataScalars, NullIsStored) {
-    Context ctx;
-    EXPECT_EQ(put(ctx, "nothing", "null").kind(), Value::Kind::Null);
-    EXPECT_TRUE(ctx.hasRoot("nothing"));
+    Store store;
+    EXPECT_EQ(put(store, "nothing", "null").kind(), Value::Kind::Null);
+    EXPECT_TRUE(store.hasGlobal("nothing"));
 }
 
 TEST(DataScalars, VeryLongIntegerBecomesInfinity) {
-    Context ctx;
+    Store store;
     // Четыреста цифр — не ошибка данных, а следствие поведения лексера и
     // std::from_chars: величина переполняет double и округляется до
     // бесконечности. Это осознанное свойство модели значений (double без
     // отдельной проверки диапазона), а не недосмотр разбора недоверенных
     // данных, — и оно теперь достижимо напрямую с бэкенда.
     const std::string text(400, '9');
-    const double value = put(ctx, "huge", text).numberValue();
+    const double value = put(store, "huge", text).numberValue();
     EXPECT_TRUE(std::isinf(value));
 }
 
 TEST(DataNames, IdentifierIsAccepted) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(ctx, "user_2", "1", diag));
-    EXPECT_TRUE(CS::setVariable(ctx, "_private", "1", diag));
+    EXPECT_TRUE(CS::setVariable(store, "user_2", "1", diag));
+    EXPECT_TRUE(CS::setVariable(store, "_private", "1", diag));
 }
 
 TEST(DataNames, NonIdentifierIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
     // Корень, который программа не может написать, бесполезен.
-    EXPECT_FALSE(CS::setVariable(ctx, "content-type", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "content-type", "1", diag));
     EXPECT_EQ(diag.code, ErrorCode::Name);
-    EXPECT_FALSE(CS::setVariable(ctx, "2fa", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, " state", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "state ", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "имя", "1", diag));
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_FALSE(CS::setVariable(store, "2fa", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, " state", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "state ", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "имя", "1", diag));
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataNames, ReservedWordIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
     // docs/grammar.md §4.5: ключевое слово идентификатором не является.
-    EXPECT_FALSE(CS::setVariable(ctx, "null", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "true", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "while", "1", diag));
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_FALSE(CS::setVariable(store, "null", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "true", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "while", "1", diag));
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
-TEST(DataFailure, SyntaxErrorLeavesNoRoot) {
-    Context ctx;
+TEST(DataFailure, SyntaxErrorLeavesNoGlobal) {
+    Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(ctx, "broken", "3 3", diag));
+    EXPECT_FALSE(CS::setVariable(store, "broken", "3 3", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
-    EXPECT_FALSE(ctx.hasRoot("broken"));
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_FALSE(store.hasGlobal("broken"));
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataStrings, BothQuoteFormsAreAccepted) {
-    Context ctx;
+    Store store;
     // docs/grammar.md §A: обе формы равноправны и дают одинаковые значения.
-    EXPECT_EQ(ctx.string(put(ctx, "a", "'Вася'")), "Вася");
-    EXPECT_EQ(ctx.string(put(ctx, "b", "\"Вася\"")), "Вася");
+    EXPECT_EQ(store.string(put(store, "a", "'Вася'")), "Вася");
+    EXPECT_EQ(store.string(put(store, "b", "\"Вася\"")), "Вася");
 }
 
 TEST(DataStrings, EmptyStringIsAccepted) {
-    Context ctx;
-    const Value v = put(ctx, "empty", "''");
+    Store store;
+    const Value v = put(store, "empty", "''");
     EXPECT_EQ(v.kind(), Value::Kind::String);
-    EXPECT_TRUE(ctx.string(v).empty());
+    EXPECT_TRUE(store.string(v).empty());
 }
 
 TEST(DataStrings, BytesArriveAlreadyUnescapedByTheHost) {
-    Context ctx;
+    Store store;
     // Внешний JSON снимает хост, до нас доезжают настоящие байты UTF-8.
     // Шесть кириллических букв — двенадцать байт.
-    EXPECT_EQ(ctx.string(put(ctx, "greet", "'привет'")).size(), 12u);
+    EXPECT_EQ(store.string(put(store, "greet", "'привет'")).size(), 12u);
 }
 
 TEST(DataMinus, NegativeNumberIsAccepted) {
-    Context ctx;
+    Store store;
     // Знака в NumericLiteral нет, -3 приезжает узлом Unary над Number.
-    EXPECT_EQ(put(ctx, "below", "-3").numberValue(), -3.0);
-    EXPECT_EQ(put(ctx, "half", "-0.5").numberValue(), -0.5);
+    EXPECT_EQ(put(store, "below", "-3").numberValue(), -3.0);
+    EXPECT_EQ(put(store, "half", "-0.5").numberValue(), -0.5);
 }
 
 TEST(DataMinus, NegativeZeroKeepsItsSign) {
-    Context ctx;
+    Store store;
     // docs/semantics.md §2.1 включает отрицательный ноль в модель значений.
-    EXPECT_TRUE(std::signbit(put(ctx, "zero", "-0").numberValue()));
+    EXPECT_TRUE(std::signbit(put(store, "zero", "-0").numberValue()));
 }
 
 TEST(DataMinus, MinusOverNonNumberIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(ctx, "bad", "-'abc'", diag));
+    EXPECT_FALSE(CS::setVariable(store, "bad", "-'abc'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataMinus, BangIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(ctx, "worse", "!true", diag));
+    EXPECT_FALSE(CS::setVariable(store, "worse", "!true", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataMinus, DoubleMinusIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
     // "--3" — минус над узлом Unary, а не над Number: материализация
     // принимает минус только непосредственно над числом (§5), поэтому
     // второй минус упирается в общее правило "выражение — не данные", а не
     // в частный случай "минус не над числом". Поведение разумное, но нигде
     // не было зафиксировано тестом.
-    EXPECT_FALSE(CS::setVariable(ctx, "v", "--3", diag));
+    EXPECT_FALSE(CS::setVariable(store, "v", "--3", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_EQ(ctx.rootCount(), 0u);
+    EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataEscapes, NewlineIsDecoded) {
-    Context ctx;
-    const std::string_view text = ctx.string(put(ctx, "s", "'a\\nb'"));
+    Store store;
+    const std::string_view text = store.string(put(store, "s", "'a\\nb'"));
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\n');
 }
 
 TEST(DataEscapes, TabIsDecoded) {
-    Context ctx;
-    const std::string_view text = ctx.string(put(ctx, "s", "'a\\tb'"));
+    Store store;
+    const std::string_view text = store.string(put(store, "s", "'a\\tb'"));
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\t');
 }
 
 TEST(DataEscapes, BackslashIsDecoded) {
-    Context ctx;
-    const std::string_view text = ctx.string(put(ctx, "s", "'a\\\\b'"));
+    Store store;
+    const std::string_view text = store.string(put(store, "s", "'a\\\\b'"));
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\\');
 }
 
 TEST(DataEscapes, BothQuotesAreDecoded) {
-    Context ctx;
-    EXPECT_EQ(ctx.string(put(ctx, "a", "'a\\'b'")), "a'b");
-    EXPECT_EQ(ctx.string(put(ctx, "b", "\"a\\\"b\"")), "a\"b");
+    Store store;
+    EXPECT_EQ(store.string(put(store, "a", "'a\\'b'")), "a'b");
+    EXPECT_EQ(store.string(put(store, "b", "\"a\\\"b\"")), "a\"b");
 }
 
 TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
-    Context ctx;
-    EXPECT_EQ(ctx.string(put(ctx, "s", "'\\n\\t'")), "\n\t");
+    Store store;
+    EXPECT_EQ(store.string(put(store, "s", "'\\n\\t'")), "\n\t");
 }
 
 TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
     // docs/grammar.md §8 и §4.7: юникодных escape в языке нет — внешний
     // уровень снимает хост, и до нас доезжают готовые байты.
-    EXPECT_FALSE(CS::setVariable(ctx, "s", "'\\u0041'", diag));
+    EXPECT_FALSE(CS::setVariable(store, "s", "'\\u0041'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
 TEST(DataAggregates, ArrayKeepsOrder) {
-    Context ctx;
-    const Value a = put(ctx, "items", "[1, 2, 3]");
-    ASSERT_EQ(ctx.arrayCount(a), 3u);
-    EXPECT_EQ(ctx.arrayAt(a, 0).numberValue(), 1.0);
-    EXPECT_EQ(ctx.arrayAt(a, 2).numberValue(), 3.0);
+    Store store;
+    const Value a = put(store, "items", "[1, 2, 3]");
+    ASSERT_EQ(store.arrayCount(a), 3u);
+    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(store.arrayAt(a, 2).numberValue(), 3.0);
 }
 
 TEST(DataAggregates, EmptyArrayAndObject) {
-    Context ctx;
-    EXPECT_EQ(ctx.arrayCount(put(ctx, "a", "[]")), 0u);
-    EXPECT_EQ(ctx.objectCount(put(ctx, "o", "{}")), 0u);
+    Store store;
+    EXPECT_EQ(store.arrayCount(put(store, "a", "[]")), 0u);
+    EXPECT_EQ(store.objectCount(put(store, "o", "{}")), 0u);
 }
 
 TEST(DataAggregates, ObjectStoresKeys) {
-    Context ctx;
-    const Value o = put(ctx, "user", "{\"name\": \"Вася\", \"age\": 30}");
-    ASSERT_EQ(ctx.objectCount(o), 2u);
-    EXPECT_EQ(ctx.string(ctx.objectGet(o, "name")), "Вася");
-    EXPECT_EQ(ctx.objectGet(o, "age").numberValue(), 30.0);
+    Store store;
+    const Value o = put(store, "user", "{\"name\": \"Вася\", \"age\": 30}");
+    ASSERT_EQ(store.objectCount(o), 2u);
+    EXPECT_EQ(store.string(store.objectGet(o, "name")), "Вася");
+    EXPECT_EQ(store.objectGet(o, "age").numberValue(), 30.0);
 }
 
 TEST(DataAggregates, KeyWithEscapeIsDecoded) {
-    Context ctx;
-    const Value o = put(ctx, "o", "{'a\\nb': 1}");
-    EXPECT_TRUE(ctx.objectHas(o, "a\nb"));
+    Store store;
+    const Value o = put(store, "o", "{'a\\nb': 1}");
+    EXPECT_TRUE(store.objectHas(o, "a\nb"));
 }
 
 TEST(DataAggregates, LastDuplicateKeyWins) {
-    Context ctx;
+    Store store;
     // Бэкенд отсутствия дубликатов не гарантирует; поведение определено.
-    const Value o = put(ctx, "o", "{'k': 1, 'k': 2}");
-    EXPECT_EQ(ctx.objectCount(o), 1u);
-    EXPECT_EQ(ctx.objectGet(o, "k").numberValue(), 2.0);
+    const Value o = put(store, "o", "{'k': 1, 'k': 2}");
+    EXPECT_EQ(store.objectCount(o), 1u);
+    EXPECT_EQ(store.objectGet(o, "k").numberValue(), 2.0);
 }
 
 TEST(DataAggregates, NestingWorks) {
-    Context ctx;
-    const Value o = put(ctx, "state", "{'items': [{'id': 1}, {'id': 2}]}");
-    const Value items = ctx.objectGet(o, "items");
-    ASSERT_EQ(ctx.arrayCount(items), 2u);
-    EXPECT_EQ(ctx.objectGet(ctx.arrayAt(items, 1), "id").numberValue(), 2.0);
+    Store store;
+    const Value o = put(store, "state", "{'items': [{'id': 1}, {'id': 2}]}");
+    const Value items = store.objectGet(o, "items");
+    ASSERT_EQ(store.arrayCount(items), 2u);
+    EXPECT_EQ(store.objectGet(store.arrayAt(items, 1), "id").numberValue(), 2.0);
 }
 
 TEST(DataAggregates, NegativeNumbersInsideAggregates) {
-    Context ctx;
-    const Value a = put(ctx, "a", "[-1, -2.5]");
-    EXPECT_EQ(ctx.arrayAt(a, 0).numberValue(), -1.0);
-    EXPECT_EQ(ctx.arrayAt(a, 1).numberValue(), -2.5);
+    Store store;
+    const Value a = put(store, "a", "[-1, -2.5]");
+    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), -1.0);
+    EXPECT_EQ(store.arrayAt(a, 1).numberValue(), -2.5);
 }
 
 TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
-    Context ctx;
+    Store store;
     std::string text = "[";
     for (int i = 0; i < 100; ++i) {
         if (i > 0) { text += ", "; }
@@ -255,18 +255,18 @@ TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
     }
     text += "]";
 
-    const std::size_t before = ctx.bytesUsed();
-    const Value a = put(ctx, "hundred", text);
-    ASSERT_EQ(ctx.arrayCount(a), 100u);
-    // Прирост — сто слотов плюс заголовок массива, пара корня и байты его
+    const std::size_t before = store.bytesUsed();
+    const Value a = put(store, "hundred", text);
+    ASSERT_EQ(store.arrayCount(a), 100u);
+    // Прирост — сто слотов плюс заголовок массива, пара глобальной переменной и байты его
     // имени; запас до ста десяти слотов это покрывает. При удвоении вместо
     // точного размера ушло бы сто двадцать восемь слотов, и порог не прошёл бы:
     // размер известен заранее, поэтому переездов при построении нет.
-    EXPECT_LT(ctx.bytesUsed() - before, 110u * sizeof(Value));
+    EXPECT_LT(store.bytesUsed() - before, 110u * sizeof(Value));
 }
 
 TEST(DataAggregates, NestingLimit) {
-    Context ctx;
+    Store store;
     // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §4:
     // предел вложенности агрегатов — тот же, что у парсера, 169 уровней.
     // Текст строится программно, а не руками, чтобы граница была видна.
@@ -274,120 +274,120 @@ TEST(DataAggregates, NestingLimit) {
     nested169 += "1";
     nested169 += std::string(169, ']');
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(ctx, "ok", nested169, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(store, "ok", nested169, diag)) << diag.message;
 
     std::string nested170(170, '[');
     nested170 += "1";
     nested170 += std::string(170, ']');
-    EXPECT_FALSE(CS::setVariable(ctx, "bad", nested170, diag));
+    EXPECT_FALSE(CS::setVariable(store, "bad", nested170, diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
 TEST(DataAggregates, ExpressionInsideAggregateIsRejected) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(ctx, "a", "[1, count(x), 3]", diag));
+    EXPECT_FALSE(CS::setVariable(store, "a", "[1, count(x), 3]", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
-    EXPECT_FALSE(ctx.hasRoot("a"));
+    EXPECT_FALSE(store.hasGlobal("a"));
 }
 
 /// Требует отказа и возвращает диагностику.
-Diagnostic reject(Context &ctx, std::string_view text) {
+Diagnostic reject(Store &store, std::string_view text) {
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(ctx, "v", text, diag));
+    EXPECT_FALSE(CS::setVariable(store, "v", text, diag));
     return diag;
 }
 
 TEST(DataRejects, IdentifierIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "user").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "user").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, CallIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "count(items)").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "count(items)").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, BinaryIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "1 + 1").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "1 + 1").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, MemberIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "user.name").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "user.name").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, IndexIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "items[0]").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "items[0]").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, ConditionalIsNotData) {
-    Context ctx;
-    EXPECT_EQ(reject(ctx, "a ? 1 : 2").code, ErrorCode::Data);
+    Store store;
+    EXPECT_EQ(reject(store, "a ? 1 : 2").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, OffsetPointsAtTheOffendingNode) {
-    Context ctx;
+    Store store;
     // Ошибка внутри массива обязана указывать на место выражения, а не на
     // начало текста и не на соседний элемент: иначе хост не покажет, где
     // именно чинить. В "[1, user.name, 3]" выражение занимает байты с 4 по 12,
     // а последний элемент стоит на 15 — верхняя граница отсекает его.
-    const Diagnostic diag = reject(ctx, "[1, user.name, 3]");
+    const Diagnostic diag = reject(store, "[1, user.name, 3]");
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_GE(diag.offset, 4u);
     EXPECT_LT(diag.offset, 13u);
 }
 
 TEST(DataRejects, OffsetPointsAtCallInsideObject) {
-    Context ctx;
+    Store store;
     // То же самое, но для другого вида узла (Call, а не Member) и другого
     // агрегата (Object, а не Array): смещение обязано попадать в границы
     // "count(x)", а не указывать на начало текста. В "{'k': count(x)}"
     // вызов занимает байты с 6 по 13.
-    const Diagnostic diag = reject(ctx, "{'k': count(x)}");
+    const Diagnostic diag = reject(store, "{'k': count(x)}");
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_GE(diag.offset, 6u);
     EXPECT_LT(diag.offset, 14u);
 }
 
 TEST(DataRejects, EmptyTextIsRejected) {
-    Context ctx;
+    Store store;
     // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §6:
     // пустой текст значения назван в таблице ошибок, но не проверялся.
-    EXPECT_EQ(reject(ctx, "").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(store, "").code, ErrorCode::Syntax);
 }
 
 TEST(DataRejects, TrailingBytesAreRejected) {
-    Context ctx;
+    Store store;
     // Текст обязан быть значением целиком.
-    EXPECT_EQ(reject(ctx, "1 2").code, ErrorCode::Syntax);
-    EXPECT_EQ(reject(ctx, "[1] 2").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(store, "1 2").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(store, "[1] 2").code, ErrorCode::Syntax);
 }
 
 TEST(DataRejects, IndexingALiteralIsNotData) {
-    Context ctx;
+    Store store;
     // [1] [2] разбирается: это массив, проиндексированный двойкой. Выражение,
     // а не запись значения.
-    EXPECT_EQ(reject(ctx, "[1] [2]").code, ErrorCode::Data);
+    EXPECT_EQ(reject(store, "[1] [2]").code, ErrorCode::Data);
 }
 
 TEST(DataRejects, ExponentIsNotANumber) {
-    Context ctx;
+    Store store;
     // docs/grammar.md §8 и §4.6: экспоненты в языке нет, 1e3 — два токена.
     // Единственное расхождение с JSON, переживающее границу.
-    EXPECT_EQ(reject(ctx, "1e3").code, ErrorCode::Syntax);
+    EXPECT_EQ(reject(store, "1e3").code, ErrorCode::Syntax);
 }
 
 TEST(DataRejects, FailedSetLeavesPreviousValueIntact) {
-    Context ctx;
+    Store store;
     Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx, "v", "1", diag));
-    EXPECT_FALSE(CS::setVariable(ctx, "v", "user.name", diag));
+    ASSERT_TRUE(CS::setVariable(store, "v", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, "v", "user.name", diag));
     // Отказ не трогает того, что уже лежало.
-    EXPECT_EQ(ctx.root("v").numberValue(), 1.0);
-    EXPECT_EQ(ctx.rootCount(), 1u);
+    EXPECT_EQ(store.global("v").numberValue(), 1.0);
+    EXPECT_EQ(store.globalCount(), 1u);
 }
 
 }  // namespace

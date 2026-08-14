@@ -286,10 +286,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/3_mean",
+      "name": "BM_Data_GlobalLookup/3_mean",
       "family_index": 4,
       "per_family_instance_index": 0,
-      "run_name": "BM_Data_RootLookup/3",
+      "run_name": "BM_Data_GlobalLookup/3",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -301,10 +301,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/3_median",
+      "name": "BM_Data_GlobalLookup/3_median",
       "family_index": 4,
       "per_family_instance_index": 0,
-      "run_name": "BM_Data_RootLookup/3",
+      "run_name": "BM_Data_GlobalLookup/3",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -316,10 +316,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/3_stddev",
+      "name": "BM_Data_GlobalLookup/3_stddev",
       "family_index": 4,
       "per_family_instance_index": 0,
-      "run_name": "BM_Data_RootLookup/3",
+      "run_name": "BM_Data_GlobalLookup/3",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -331,10 +331,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/3_cv",
+      "name": "BM_Data_GlobalLookup/3_cv",
       "family_index": 4,
       "per_family_instance_index": 0,
-      "run_name": "BM_Data_RootLookup/3",
+      "run_name": "BM_Data_GlobalLookup/3",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -346,10 +346,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/10_mean",
+      "name": "BM_Data_GlobalLookup/10_mean",
       "family_index": 4,
       "per_family_instance_index": 1,
-      "run_name": "BM_Data_RootLookup/10",
+      "run_name": "BM_Data_GlobalLookup/10",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -361,10 +361,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/10_median",
+      "name": "BM_Data_GlobalLookup/10_median",
       "family_index": 4,
       "per_family_instance_index": 1,
-      "run_name": "BM_Data_RootLookup/10",
+      "run_name": "BM_Data_GlobalLookup/10",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -376,10 +376,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/10_stddev",
+      "name": "BM_Data_GlobalLookup/10_stddev",
       "family_index": 4,
       "per_family_instance_index": 1,
-      "run_name": "BM_Data_RootLookup/10",
+      "run_name": "BM_Data_GlobalLookup/10",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -391,10 +391,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/10_cv",
+      "name": "BM_Data_GlobalLookup/10_cv",
       "family_index": 4,
       "per_family_instance_index": 1,
-      "run_name": "BM_Data_RootLookup/10",
+      "run_name": "BM_Data_GlobalLookup/10",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -406,10 +406,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/30_mean",
+      "name": "BM_Data_GlobalLookup/30_mean",
       "family_index": 4,
       "per_family_instance_index": 2,
-      "run_name": "BM_Data_RootLookup/30",
+      "run_name": "BM_Data_GlobalLookup/30",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -421,10 +421,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/30_median",
+      "name": "BM_Data_GlobalLookup/30_median",
       "family_index": 4,
       "per_family_instance_index": 2,
-      "run_name": "BM_Data_RootLookup/30",
+      "run_name": "BM_Data_GlobalLookup/30",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -436,10 +436,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/30_stddev",
+      "name": "BM_Data_GlobalLookup/30_stddev",
       "family_index": 4,
       "per_family_instance_index": 2,
-      "run_name": "BM_Data_RootLookup/30",
+      "run_name": "BM_Data_GlobalLookup/30",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,
@@ -451,10 +451,10 @@
       "time_unit": "ns"
     },
     {
-      "name": "BM_Data_RootLookup/30_cv",
+      "name": "BM_Data_GlobalLookup/30_cv",
       "family_index": 4,
       "per_family_instance_index": 2,
-      "run_name": "BM_Data_RootLookup/30",
+      "run_name": "BM_Data_GlobalLookup/30",
       "run_type": "aggregate",
       "repetitions": 5,
       "threads": 1,

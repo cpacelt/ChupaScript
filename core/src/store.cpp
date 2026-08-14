@@ -1,4 +1,4 @@
-#include "context.hpp"
+#include "store.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -28,15 +28,15 @@ struct ObjectRep {
 
 }  // namespace detail
 
-Context::Context() { roots_ = makeObject(); }
-Context::~Context() = default;
+Store::Store() { globals_ = makeObject(); }
+Store::~Store() = default;
 
-std::uint32_t Context::appendText(std::string_view bytes) {
+std::uint32_t Store::appendText(std::string_view bytes) {
     const std::uint32_t offset = static_cast<std::uint32_t>(text_.size());
     assert(text_.size() + bytes.size() <= 0xffffffffu && "пул текста перерос uint32");
 
     // bytes вправе указывать внутрь text_ — так выглядит objectSet(o,
-    // ctx.string(k), v). Рост пула переселит буфер, и указатель источника
+    // store.string(k), v). Рост пула переселит буфер, и указатель источника
     // повиснет прямо посреди копирования, поэтому положение источника
     // запоминается смещением, а не адресом.
     const char *first = text_.data();
@@ -56,7 +56,7 @@ std::uint32_t Context::appendText(std::string_view bytes) {
     return offset;
 }
 
-std::string_view Context::textAt(std::uint32_t offset,
+std::string_view Store::textAt(std::uint32_t offset,
                                  std::uint32_t length) const noexcept {
     // Проверяется пустота пула, а не длина: пустой ключ обязан отличаться от
     // отсутствующего, иначе chupa_object_key_at не сможет вернуть NULL только
@@ -65,26 +65,26 @@ std::string_view Context::textAt(std::uint32_t offset,
     return std::string_view(text_.data() + offset, length);
 }
 
-Value Context::makeString(std::string_view bytes) {
+Value Store::makeString(std::string_view bytes) {
     const std::uint32_t offset = appendText(bytes);
     return Value::string(offset, static_cast<std::uint32_t>(bytes.size()));
 }
 
-std::string_view Context::string(Value v) const noexcept {
+std::string_view Store::string(Value v) const noexcept {
     assert(v.kind() == Value::Kind::String);
     return textAt(v.index(), v.length());
 }
 
-std::uint32_t Context::beginString() noexcept {
+std::uint32_t Store::beginString() noexcept {
     assert(build_.size() <= 0xffffffffu && "буфер сборки строки перерос uint32");
     return static_cast<std::uint32_t>(build_.size());
 }
 
-void Context::appendToString(std::string_view bytes) {
+void Store::appendToString(std::string_view bytes) {
     build_.append(bytes);
 }
 
-Value Context::endString(std::uint32_t mark) noexcept {
+Value Store::endString(std::uint32_t mark) noexcept {
     // makeString копирует из build_ в text_; алиас-проверка в appendText
     // сравнивает источник с диапазоном text_, а build_ — другое хранилище,
     // поэтому спутать их не может.
@@ -93,12 +93,12 @@ Value Context::endString(std::uint32_t mark) noexcept {
     return result;
 }
 
-void Context::abortString(std::uint32_t mark) noexcept {
+void Store::abortString(std::uint32_t mark) noexcept {
     build_.resize(mark);
 }
 
 // Парная функция — growObject: правку в одной надо повторять в другой.
-void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
+void Store::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }
 
     // Точный размер — для вызывающего, который знает длину заранее: удвоение
@@ -127,26 +127,26 @@ void Context::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact)
     rep.capacity = capacity;
 }
 
-Value Context::makeArray(std::uint32_t capacity) {
+Value Store::makeArray(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(arrays_.size());
     arrays_.push_back(detail::ArrayRep{0, 0, 0});
     if (capacity > 0) { growArray(arrays_[index], capacity, /*exact=*/true); }
     return Value::array(index);
 }
 
-std::uint32_t Context::arrayCount(Value a) const noexcept {
+std::uint32_t Store::arrayCount(Value a) const noexcept {
     assert(a.kind() == Value::Kind::Array);
     return arrays_[a.index()].count;
 }
 
-Value Context::arrayAt(Value a, std::uint32_t index) const noexcept {
+Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
     assert(a.kind() == Value::Kind::Array);
     const detail::ArrayRep &rep = arrays_[a.index()];
     if (index >= rep.count) { return Value::null(); }
     return pool_[rep.start + index];
 }
 
-bool Context::arraySet(Value a, std::uint32_t index, Value v) noexcept {
+bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayRep &rep = arrays_[a.index()];
     if (index >= rep.count) { return false; }
@@ -154,7 +154,7 @@ bool Context::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     return true;
 }
 
-void Context::arrayPush(Value a, Value v) {
+void Store::arrayPush(Value a, Value v) {
     assert(a.kind() == Value::Kind::Array);
     // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
     // Заголовок перечитывается после роста: под единой ареной (docs/backlog.md
@@ -166,7 +166,7 @@ void Context::arrayPush(Value a, Value v) {
     rep.count += 1;
 }
 
-bool Context::arrayPop(Value a, Value *out) noexcept {
+bool Store::arrayPop(Value a, Value *out) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayRep &rep = arrays_[a.index()];
     if (rep.count == 0) { return false; }
@@ -176,7 +176,7 @@ bool Context::arrayPop(Value a, Value *out) noexcept {
 }
 
 // Парная функция — growArray: правку в одной надо повторять в другой.
-void Context::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact) {
+void Store::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }
 
     // Точный размер — для вызывающего, который знает длину заранее: удвоение
@@ -202,7 +202,7 @@ void Context::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exac
     rep.capacity = capacity;
 }
 
-std::uint32_t Context::findKey(const detail::ObjectRep &rep, std::string_view key,
+std::uint32_t Store::findKey(const detail::ObjectRep &rep, std::string_view key,
                                bool *found) const noexcept {
     // Пары отсортированы по ключу, поиск двоичный: на типичных 3–20 ключах
     // это дешевле хеш-таблицы и не выделяет ничего сверх самого массива.
@@ -225,19 +225,19 @@ std::uint32_t Context::findKey(const detail::ObjectRep &rep, std::string_view ke
     return low;
 }
 
-Value Context::makeObject(std::uint32_t capacity) {
+Value Store::makeObject(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(objects_.size());
     objects_.push_back(detail::ObjectRep{0, 0, 0});
     if (capacity > 0) { growObject(objects_[index], capacity, /*exact=*/true); }
     return Value::object(index);
 }
 
-std::uint32_t Context::objectCount(Value o) const noexcept {
+std::uint32_t Store::objectCount(Value o) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     return objects_[o.index()].count;
 }
 
-Value Context::objectGet(Value o, std::string_view key) const noexcept {
+Value Store::objectGet(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectRep &rep = objects_[o.index()];
     bool found = false;
@@ -246,14 +246,14 @@ Value Context::objectGet(Value o, std::string_view key) const noexcept {
     return entries_[rep.start + at].value;
 }
 
-bool Context::objectHas(Value o, std::string_view key) const noexcept {
+bool Store::objectHas(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     bool found = false;
     findKey(objects_[o.index()], key, &found);
     return found;
 }
 
-std::string_view Context::objectKeyAt(Value o, std::uint32_t i) const noexcept {
+std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectRep &rep = objects_[o.index()];
     if (i >= rep.count) { return {}; }
@@ -261,14 +261,14 @@ std::string_view Context::objectKeyAt(Value o, std::uint32_t i) const noexcept {
     return textAt(entry.keyOffset, entry.keyLength);
 }
 
-Value Context::objectValueAt(Value o, std::uint32_t i) const noexcept {
+Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectRep &rep = objects_[o.index()];
     if (i >= rep.count) { return Value::null(); }
     return entries_[rep.start + i].value;
 }
 
-void Context::objectSet(Value o, std::string_view key, Value v) {
+void Store::objectSet(Value o, std::string_view key, Value v) {
     assert(o.kind() == Value::Kind::Object);
 
     bool found = false;
@@ -296,30 +296,30 @@ void Context::objectSet(Value o, std::string_view key, Value v) {
     rep.count += 1;
 }
 
-Value Context::root(std::string_view name) const noexcept {
-    return objectGet(roots_, name);
+Value Store::global(std::string_view name) const noexcept {
+    return objectGet(globals_, name);
 }
 
-bool Context::hasRoot(std::string_view name) const noexcept {
-    return objectHas(roots_, name);
+bool Store::hasGlobal(std::string_view name) const noexcept {
+    return objectHas(globals_, name);
 }
 
-void Context::setRoot(std::string_view name, Value v) { objectSet(roots_, name, v); }
+void Store::setGlobal(std::string_view name, Value v) { objectSet(globals_, name, v); }
 
-std::uint32_t Context::rootCount() const noexcept { return objectCount(roots_); }
+std::uint32_t Store::globalCount() const noexcept { return objectCount(globals_); }
 
-std::string_view Context::rootNameAt(std::uint32_t i) const noexcept {
-    return objectKeyAt(roots_, i);
+std::string_view Store::globalNameAt(std::uint32_t i) const noexcept {
+    return objectKeyAt(globals_, i);
 }
 
-std::size_t Context::bytesUsed() const noexcept {
+std::size_t Store::bytesUsed() const noexcept {
     return pool_.size() * sizeof(Value) +
            arrays_.size() * sizeof(detail::ArrayRep) +
            objects_.size() * sizeof(detail::ObjectRep) +
            entries_.size() * sizeof(detail::Entry) + text_.size();
 }
 
-std::size_t Context::bytesReserved() const noexcept {
+std::size_t Store::bytesReserved() const noexcept {
     return pool_.capacity() * sizeof(Value) +
            arrays_.capacity() * sizeof(detail::ArrayRep) +
            objects_.capacity() * sizeof(detail::ObjectRep) +

@@ -80,8 +80,8 @@ class Parser {
     /// Стартовый символ Expression, docs/grammar.md §5.1.
     bool runExpression(Diagnostic &diag);
 
-    /// Стартовый символ Program, docs/grammar.md §5.1.
-    bool runProgram(Diagnostic &diag);
+    /// Стартовый символ Script, docs/grammar.md §5.1.
+    bool runScript(Diagnostic &diag);
 
    private:
     /// Считает глубину вложенности; уменьшает её на любом выходе из правила.
@@ -159,7 +159,7 @@ class Parser {
     [[nodiscard]] bool isLeftHandSide(NodeId node) const noexcept;
 
     /// Общий буфер списков детей: аргументы вызова, элементы литералов,
-    /// стейтменты программы. Правило помечает вершину, толкает свои узлы и
+    /// стейтменты скрипта. Правило помечает вершину, толкает свои узлы и
     /// откатывает буфер, забрав их.
     ///
     /// Откат делается только на успешном пути: после отказа разбор
@@ -753,7 +753,7 @@ bool Parser::statement(NodeId &out) {
     return false;
 }
 
-bool Parser::runProgram(Diagnostic &diag) {
+bool Parser::runScript(Diagnostic &diag) {
     if (!advance()) {
         diag = diag_;
         return false;
@@ -770,7 +770,7 @@ bool Parser::runProgram(Diagnostic &diag) {
         }
     }
     const auto count = static_cast<std::uint32_t>(scratch_.size() - mark);
-    ast_.setRoot(ast_.program(scratch_.data() + mark, count));
+    ast_.setRoot(ast_.script(scratch_.data() + mark, count));
     scratch_.resize(mark);
     return true;
 }
@@ -784,11 +784,11 @@ bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
     return parser.runExpression(diag);
 }
 
-bool parseProgram(const char *source, std::uint32_t length, Ast &ast,
+bool parseScript(const char *source, std::uint32_t length, Ast &ast,
                   Diagnostic &diag) {
     ast.reset(source);
     Parser parser(source, length, ast);
-    return parser.runProgram(diag);
+    return parser.runScript(diag);
 }
 
 }  // namespace CS

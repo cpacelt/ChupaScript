@@ -468,7 +468,7 @@ TEST(LexerString, TrailingBackslashIsError) {
 
 // ─── Совместный разбор ───────────────────────────────────────────────
 
-TEST(LexerProgram, RealisticScript) {
+TEST(LexerScript, RealisticScript) {
     const std::string source =
         "push(state.items, product);\n"
         "state.badge = count(state.items);\n"
@@ -480,7 +480,7 @@ TEST(LexerProgram, RealisticScript) {
     EXPECT_EQ(lexed.tokens.size(), 29u);
 }
 
-TEST(LexerProgram, RealisticExpression) {
+TEST(LexerScript, RealisticExpression) {
     const std::string source = "user.name ?? 'Гость'";
     const Lexed lexed = lexAll(source);
     ASSERT_TRUE(lexed.ok);
@@ -491,7 +491,7 @@ TEST(LexerProgram, RealisticExpression) {
                                       TokenKind::String, TokenKind::End}));
 }
 
-TEST(LexerProgram, OffsetsPointAtSource) {
+TEST(LexerScript, OffsetsPointAtSource) {
     const std::string source = "  user.name";
     const Lexed lexed = lexAll(source);
     ASSERT_TRUE(lexed.ok);

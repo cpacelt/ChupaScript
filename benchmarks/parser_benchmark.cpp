@@ -49,11 +49,11 @@ void runExpression(benchmark::State &state, const std::string &source) {
                             static_cast<std::int64_t>(source.size()));
 }
 
-void runProgram(benchmark::State &state, const std::string &source) {
+void runScript(benchmark::State &state, const std::string &source) {
     for (auto _ : state) {
         CS::Ast ast;
         CS::Diagnostic diag;
-        bool ok = CS::parseProgram(
+        bool ok = CS::parseScript(
             source.data(), static_cast<std::uint32_t>(source.size()), ast, diag);
         if (!ok) {
             state.SkipWithError("parse failed");
@@ -99,7 +99,7 @@ static void BM_Parse_Props(benchmark::State &state) {
 BENCHMARK(BM_Parse_Props);
 
 static void BM_Parse_Handler(benchmark::State &state) {
-    runProgram(state, repeat("push(state.items, product);"
+    runScript(state, repeat("push(state.items, product);"
                              "state.badge = count(state.items);"
                              "state.total += product.price;"
                              "state.label = format('добавлено ${} на ${}',"

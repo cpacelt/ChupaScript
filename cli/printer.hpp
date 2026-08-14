@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-#include "context.hpp"
+#include "store.hpp"
 #include "value.hpp"
 
 namespace chupa {
@@ -27,6 +27,6 @@ namespace chupa {
 /// `inf`/`nan` (docs/grammar.md §4.6). Формат числа задаёт `CS::formatNumber`,
 /// эта ветка ядро не трогает и не чинит эти три случая — только не обещает
 /// большего, чем есть.
-std::string printValue(const CS::Context &ctx, CS::Value value);
+std::string printValue(const CS::Store &store, CS::Value value);
 
 }  // namespace chupa

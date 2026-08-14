@@ -5,8 +5,8 @@
 #include <cstring>
 #include <string>
 
-// Helper: set a root from a ChupaScript literal text
-bool setRoot(ChupaContext* ctx, const std::string& name, const std::string& text) {
+// Helper: set a global from a ChupaScript literal text
+bool setGlobal(ChupaContext* ctx, const std::string& name, const std::string& text) {
     return chupa_context_set(ctx, name.c_str(), name.size(), text.c_str(), text.size());
 }
 
@@ -19,21 +19,21 @@ TEST(CApiContext, CreateDestroy) {
 TEST(CApiContext, SetLiteralString) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "name", "'hello'"));
+    EXPECT_TRUE(setGlobal(ctx, "name", "'hello'"));
     chupa_context_destroy(ctx);
 }
 
 TEST(CApiContext, SetLiteralNumber) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "count", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "count", "42"));
     chupa_context_destroy(ctx);
 }
 
 TEST(CApiContext, SetLiteralObject) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "user", "{ 'name': 'John', 'age': 30 }"));
+    EXPECT_TRUE(setGlobal(ctx, "user", "{ 'name': 'John', 'age': 30 }"));
     chupa_context_destroy(ctx);
 }
 
@@ -41,7 +41,7 @@ TEST(CApiContext, SetLiteralFailsOnExpression) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     // "1 + 2" is an expression, not a literal — should fail
-    EXPECT_FALSE(setRoot(ctx, "x", "1 + 2"));
+    EXPECT_FALSE(setGlobal(ctx, "x", "1 + 2"));
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_DATA);
     chupa_context_destroy(ctx);
 }
@@ -81,7 +81,7 @@ TEST(CApiContext, VersionIsReported) {
 TEST(CApiCompile, CompileExpression) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
     EXPECT_NE(e, nullptr);
     chupa_context_destroy(ctx);
@@ -96,7 +96,7 @@ TEST(CApiCompile, CompileExpressionFailsOnSyntaxError) {
     chupa_context_destroy(ctx);
 }
 
-TEST(CApiCompile, CompileExpressionFailsOnUnknownRoot) {
+TEST(CApiCompile, CompileExpressionFailsOnUnknownGlobal) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     ChupaExpression* e = chupa_compile_expression(ctx, "unknown_var", 11);
@@ -108,7 +108,7 @@ TEST(CApiCompile, CompileExpressionFailsOnUnknownRoot) {
 TEST(CApiEval, EvalNumber) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -120,7 +120,7 @@ TEST(CApiEval, EvalNumber) {
 TEST(CApiEval, EvalNumberFromExpression) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "10"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "10"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x + 5", 5);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -132,7 +132,7 @@ TEST(CApiEval, EvalNumberFromExpression) {
 TEST(CApiEval, EvalBool) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "10"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "10"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x > 5", 5);
     ASSERT_NE(e, nullptr);
     bool out = false;
@@ -144,7 +144,7 @@ TEST(CApiEval, EvalBool) {
 TEST(CApiEval, EvalString) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "name", "'hello'"));
+    EXPECT_TRUE(setGlobal(ctx, "name", "'hello'"));
     ChupaExpression* e = chupa_compile_expression(ctx, "name", 4);
     ASSERT_NE(e, nullptr);
     const char* out = nullptr;
@@ -159,7 +159,7 @@ TEST(CApiEval, EvalString) {
 TEST(CApiEval, EvalNullReturnsChupaNull) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "null"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "null"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -170,7 +170,7 @@ TEST(CApiEval, EvalNullReturnsChupaNull) {
 TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "name", "'hello'"));
+    EXPECT_TRUE(setGlobal(ctx, "name", "'hello'"));
     ChupaExpression* e = chupa_compile_expression(ctx, "name", 4);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -182,7 +182,7 @@ TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
 TEST(CApiEval, EvalMemberAccess) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "user", "{ 'name': 'John', 'age': 30 }"));
+    EXPECT_TRUE(setGlobal(ctx, "user", "{ 'name': 'John', 'age': 30 }"));
     ChupaExpression* e = chupa_compile_expression(ctx, "user.age", 8);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -194,7 +194,7 @@ TEST(CApiEval, EvalMemberAccess) {
 TEST(CApiEval, EvalTernary) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "5"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "5"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x > 3 ? 'big' : 'small'", 23);
     ASSERT_NE(e, nullptr);
     const char* out = nullptr;
@@ -246,7 +246,7 @@ TEST(CApiEval, SetStringThenEval) {
 TEST(CApiRun, RunScriptSetsVariable) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "state", "{ 'count': 0 }"));
+    EXPECT_TRUE(setGlobal(ctx, "state", "{ 'count': 0 }"));
     ChupaScript* s = chupa_compile_script(ctx, "state.count = 42;", 17);
     ASSERT_NE(s, nullptr);
     EXPECT_TRUE(chupa_run(ctx, s));
@@ -262,7 +262,7 @@ TEST(CApiRun, RunScriptSetsVariable) {
 TEST(CApiRun, RunScriptWithMemberAccess) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "user", "{ 'name': 'old' }"));
+    EXPECT_TRUE(setGlobal(ctx, "user", "{ 'name': 'old' }"));
     ChupaScript* s = chupa_compile_script(ctx, "user.name = 'new';", 18);
     ASSERT_NE(s, nullptr);
     EXPECT_TRUE(chupa_run(ctx, s));
@@ -278,7 +278,7 @@ TEST(CApiRun, RunScriptWithMemberAccess) {
 TEST(CApiRun, RunScriptFailsOnTypeError) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "0"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "0"));
     // x is a number, can't assign a string member to it
     ChupaScript* s = chupa_compile_script(ctx, "x.name = 'bad';", 15);
     ASSERT_NE(s, nullptr);
@@ -292,7 +292,7 @@ TEST(CApiRun, RunScriptFailsOnTypeError) {
 TEST(CApiError, NoErrorAfterSuccess) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NONE);
     chupa_context_destroy(ctx);
 }
@@ -338,7 +338,7 @@ TEST(CApiRedraw, FiresAfterSet) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     EXPECT_EQ(g_redrawCount, 1);
     EXPECT_EQ(g_lastRedrawCtx, ctx);
     chupa_context_destroy(ctx);
@@ -348,7 +348,7 @@ TEST(CApiRedraw, FiresAfterRun) {
     g_redrawCount = 0;
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "state", "{ 'count': 0 }"));
+    EXPECT_TRUE(setGlobal(ctx, "state", "{ 'count': 0 }"));
     // set already fired redraw; reset counter
     g_redrawCount = 0;
     chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
@@ -363,7 +363,7 @@ TEST(CApiRedraw, NoFireWithoutListener) {
     g_redrawCount = 0;
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setRoot(ctx, "x", "42"));
+    EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     EXPECT_EQ(g_redrawCount, 0);
     chupa_context_destroy(ctx);
 }

@@ -8,7 +8,7 @@ namespace {
 /// Состояние одного прохода: копит находки, не останавливаясь.
 struct Checker {
     const Ast &ast;
-    const Context &ctx;
+    const Store &store;
     Diagnostic *out;
     std::uint32_t capacity;
     std::uint32_t found = 0;
@@ -79,7 +79,7 @@ struct Checker {
             case NodeKind::Identifier:
                 // Узлы Identifier — это в точности обращения к именам: имя поля
                 // у Member лежит текстом, а не ребёнком.
-                if (!ctx.hasRoot(ast.text(node))) {
+                if (!store.hasGlobal(ast.text(node))) {
                     report(node, ErrorCode::Name, "unknown name");
                 }
                 break;
@@ -114,12 +114,12 @@ struct Checker {
 
 }  // namespace
 
-std::uint32_t check(Ast &ast, const Context &ctx, Diagnostic *out,
+std::uint32_t check(Ast &ast, const Store &store, Diagnostic *out,
                     std::uint32_t capacity) {
     const NodeId root = ast.root();
     if (root == kNoNode) { return 0; }
 
-    Checker checker{ast, ctx, out, capacity};
+    Checker checker{ast, store, out, capacity};
     // Плоский цикл, а не рекурсия: узлы лежат в пост-обходе, дети раньше
     // родителей, и проверкам пропускать нечего — значит предела глубины у
     // прохода нет вовсе.

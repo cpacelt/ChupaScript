@@ -307,17 +307,17 @@ Punctuator ::= '(' | ')' | '[' | ']' | '{' | '}'
 ### 5.1 Стартовые символы
 
 Грамматика имеет **два стартовых символа**. Выбор делает вызывающая сторона; по
-тексту программы режим не определяется.
+тексту исходника режим не определяется.
 
 ```
-Program    ::= Statement*        // режим скрипта:    runScript(source, ctx)
-Expression ::= Ternary           // режим выражения:  evalExpression(source, ctx)
+Script     ::= Statement*        // режим скрипта:    runScript(source, store)
+Expression ::= Ternary           // режим выражения:  evalExpression(source, store)
 ```
 
 В обоих режимах после разбора стартового символа обязан следовать конец текста;
 остаток — ошибка.
 
-`Program` допускает ноль стейтментов. `Expression` требует ровно одно выражение и
+`Script` допускает ноль стейтментов. `Expression` требует ровно одно выражение и
 **не допускает завершающей `;`** — стейтментов в этом режиме не существует.
 
 Грамматика выражения является строгим подмножеством скриптовой: реализуется тем
@@ -628,7 +628,7 @@ ReservedWord    ::= 'true' | 'false' | 'null'
 ### A.2 Синтаксическая
 
 ```
-Program         ::= Statement*
+Script          ::= Statement*
 Expression      ::= Ternary
 
 Statement       ::= Assignment | CallStatement | EmptyStatement

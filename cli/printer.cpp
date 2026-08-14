@@ -46,15 +46,15 @@ constexpr std::uint32_t kMaxPrintDepth = 64;
 ///
 /// Инвариант глубины ложен, и раньше здесь было записано обратное. Дерево
 /// значений НЕ наследует предел высоты дерева разбора (`kMaxDepth` в
-/// `core/src/parser.cpp`): единственный путь данных в Context — не
-/// `setVariable`. Вычислитель кладёт в Context уже существующие агрегаты:
+/// `core/src/parser.cpp`): единственный путь данных в Store — не
+/// `setVariable`. Вычислитель кладёт в Store уже существующие агрегаты:
 /// литерал агрегата в выражении, присваивания `a.k = v` и `a[i] = v`, `push` —
 /// и `push(a, b)` вкладывает в `a` агрегат `b` целиком, какой бы высоты тот ни
 /// достиг к этой строке сессии (аналогично `a.k = b`). Высота дерева значений
 /// поэтому растёт между строками сессии и с высотой дерева разбора одной
 /// строки не связана (docs/backlog.md B5). Печатник поэтому ограничивает
 /// глубину сам — `kMaxPrintDepth` выше.
-void append(std::string &out, const CS::Context &ctx, CS::Value value,
+void append(std::string &out, const CS::Store &store, CS::Value value,
             std::vector<CS::Value> &path, std::uint32_t depth) {
     switch (value.kind()) {
         case CS::Value::Kind::Null: out += "null"; return;
@@ -67,7 +67,7 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
             return;
         }
         case CS::Value::Kind::String:
-            appendQuoted(out, ctx.string(value));
+            appendQuoted(out, store.string(value));
             return;
         default: break;
     }
@@ -90,20 +90,20 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
 
     if (value.kind() == CS::Value::Kind::Array) {
         out += '[';
-        const std::uint32_t count = ctx.arrayCount(value);
+        const std::uint32_t count = store.arrayCount(value);
         for (std::uint32_t i = 0; i < count; ++i) {
             if (i != 0) { out += ", "; }
-            append(out, ctx, ctx.arrayAt(value, i), path, depth + 1);
+            append(out, store, store.arrayAt(value, i), path, depth + 1);
         }
         out += ']';
     } else {
         out += '{';
-        const std::uint32_t count = ctx.objectCount(value);
+        const std::uint32_t count = store.objectCount(value);
         for (std::uint32_t i = 0; i < count; ++i) {
             if (i != 0) { out += ", "; }
-            appendQuoted(out, ctx.objectKeyAt(value, i));
+            appendQuoted(out, store.objectKeyAt(value, i));
             out += ": ";
-            append(out, ctx, ctx.objectValueAt(value, i), path, depth + 1);
+            append(out, store, store.objectValueAt(value, i), path, depth + 1);
         }
         out += '}';
     }
@@ -113,10 +113,10 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
 
 }  // namespace
 
-std::string printValue(const CS::Context &ctx, CS::Value value) {
+std::string printValue(const CS::Store &store, CS::Value value) {
     std::string out;
     std::vector<CS::Value> path;
-    append(out, ctx, value, path, 0);
+    append(out, store, value, path, 0);
     return out;
 }
 

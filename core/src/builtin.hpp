@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <string_view>
 
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 #include "value.hpp"
 
 namespace CS {
@@ -62,7 +62,7 @@ struct FormatCursor {
 /// fmt передаётся при каждом вызове, а не хранится внутри cursor: у format
 /// вычисление аргумента-плейсхолдера вправе дописать в тот же пул текста, где
 /// лежит шаблон (строковый литерал, str, вложенный format — все кладут байты
-/// в контекст), и переезд пула отправит закэшированный срез в никуда. Свежий
+/// в хранилище), и переезд пула отправит закэшированный срез в никуда. Свежий
 /// fmt на каждый вызов — единственный способ пережить это, а cursor.pos как
 /// голое число переезду вообще не подвержен.
 bool nextFormatPiece(std::string_view fmt, FormatCursor &cursor,
@@ -86,7 +86,7 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
 /// Для Void-функций *out не трогается — Void не становится значением (§2.2).
 ///
 /// offset — смещение узла вызова, для диагностики.
-bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
+bool applyBuiltin(Builtin id, Store &store, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
                   Diagnostic &diag);
 
@@ -96,11 +96,11 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
 /// объекта), str и format (задачи 5 и 6), приведение в обходе (eval.cpp).
 /// Правило §4 записано один раз.
 ///
-/// Возвращает срез: у строки — её собственные байты в контексте, у числа —
+/// Возвращает срез: у строки — её собственные байты в хранилище, у числа —
 /// numberBuffer вызывающего (обязан быть размером не меньше
 /// kNumberBufferSize, core/src/text.hpp), у остальных — статическая строка.
 /// offset — место, куда указывает диагностика при отказе.
-bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
+bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
                           std::string_view *out, std::uint32_t offset,
                           Diagnostic &diag);
 

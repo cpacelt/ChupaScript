@@ -1,7 +1,7 @@
 #pragma once
 #include "ast.hpp"
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 #include "value.hpp"
 
 namespace CS {
@@ -15,11 +15,11 @@ namespace CS {
 /// исходника обязан пережить вычисление — имена и содержимое литералов в
 /// дереве это его срезы.
 ///
-/// Значения-агрегаты создаются в ctx и живут по его правилам. При отказе
+/// Значения-агрегаты создаются в store и живут по его правилам. При отказе
 /// возвращает false и заполняет diag; смещение считается от начала исходника
 /// выражения. При отказе *out не трогается — на это соглашение опираются ??
 /// и тернарный, передающие out вызывающего прямо во внутреннюю рекурсию.
-bool evalExpression(const Ast &ast, Context &ctx, Value *out, Diagnostic &diag);
+bool evalExpression(const Ast &ast, Store &store, Value *out, Diagnostic &diag);
 
 /// Выполняет разобранный скрипт: последовательность стейтментов.
 ///
@@ -33,6 +33,6 @@ bool evalExpression(const Ast &ast, Context &ctx, Value *out, Diagnostic &diag);
 /// Значения нет: результат это признак успеха (docs/semantics.md §3.1). Ошибка
 /// прерывает выполнение посередине, и сделанное остаётся сделанным — откатывать
 /// нечего, предыдущих состояний хранилище не держит.
-bool runScript(const Ast &ast, Context &ctx, Diagnostic &diag);
+bool runScript(const Ast &ast, Store &store, Diagnostic &diag);
 
 }  // namespace CS

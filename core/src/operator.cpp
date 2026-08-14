@@ -86,7 +86,7 @@ bool applyOrdering(TokenKind op, Value lhs, Value rhs, std::uint32_t offset,
 /// Правила применяются в порядке перечисления, и порядок существенен: null
 /// проверяется раньше несовпадения типов, поэтому null == 5 даёт false, а
 /// 1 == '1' — ошибку.
-bool valuesEqual(Value lhs, Value rhs, const Context &ctx, std::uint32_t offset,
+bool valuesEqual(Value lhs, Value rhs, const Store &store, std::uint32_t offset,
                  bool *out, Diagnostic &diag) {
     // 1. Один из операндов null: равно тогда и только тогда, когда второй тоже.
     if (lhs.kind() == Value::Kind::Null || rhs.kind() == Value::Kind::Null) {
@@ -107,7 +107,7 @@ bool valuesEqual(Value lhs, Value rhs, const Context &ctx, std::uint32_t offset,
 
         // 4. Побайтово, без нормализации юникода.
         case Value::Kind::String:
-            *out = ctx.string(lhs) == ctx.string(rhs);
+            *out = store.string(lhs) == store.string(rhs);
             return true;
 
         // 5. По значению.
@@ -155,7 +155,7 @@ bool applyUnary(TokenKind op, Value operand, std::uint32_t offset, Value *out,
     }
 }
 
-bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
+bool applyBinary(TokenKind op, Value lhs, Value rhs, const Store &store,
                  std::uint32_t offset, Value *out, Diagnostic &diag) {
     switch (op) {
         case TokenKind::Plus:
@@ -174,7 +174,7 @@ bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
         case TokenKind::Equal:
         case TokenKind::NotEqual: {
             bool equal = false;
-            if (!valuesEqual(lhs, rhs, ctx, offset, &equal, diag)) { return false; }
+            if (!valuesEqual(lhs, rhs, store, offset, &equal, diag)) { return false; }
             // != реализуется отрицанием ==, а не отдельной таблицей: тогда
             // разойтись они не могут по построению. Отказ уже вернулся выше,
             // поэтому «включая случай ошибки» выполняется само.

@@ -240,7 +240,7 @@ bool Lexer::lexString(Token &out, Diagnostic &diag) noexcept {
         }
 
         // Сырой перевод строки обрывает литерал, чтобы забытая кавычка не
-        // поглотила остаток программы (docs/grammar.md §4.9).
+        // поглотила остаток исходника (docs/grammar.md §4.9).
         if (c == '\n' || c == '\r') {
             return fail(diag, end, "line break in string literal");
         }

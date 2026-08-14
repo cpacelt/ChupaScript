@@ -2,8 +2,8 @@
 #include <cstdint>
 
 #include "ast.hpp"
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 
 namespace CS {
 
@@ -15,13 +15,13 @@ namespace CS {
 /// больше, чем поместилось. Ноль — дерево пригодно к вычислению, и на нём
 /// ставится отметка markChecked.
 ///
-/// Из ctx читается **только состав имён** (hasRoot): значения проверкам не
-/// нужны, поэтому инструменту валидации довольно контекста, где под каждым
+/// Из store читается **только состав имён** (hasGlobal): значения проверкам не
+/// нужны, поэтому инструменту валидации довольно хранилища, где под каждым
 /// объявленным именем лежит null.
 ///
 /// Проход не останавливается на первой ошибке — иначе исправлять пришлось бы по
 /// одной.
-std::uint32_t check(Ast &ast, const Context &ctx, Diagnostic *out,
+std::uint32_t check(Ast &ast, const Store &store, Diagnostic *out,
                     std::uint32_t capacity);
 
 }  // namespace CS

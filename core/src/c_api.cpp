@@ -14,17 +14,17 @@
 
 #include "ast.hpp"
 #include "compile.hpp"
-#include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "eval.hpp"
+#include "store.hpp"
 #include "value.hpp"
 
 // ─── Opaque struct definitions ───
 // Defined here, not in the header: C doesn't see C++ members.
 
 struct ChupaContext {
-    CS::Context engine;
+    CS::Store engine;
     std::vector<std::string> sources;                    // copied source texts
     std::vector<std::unique_ptr<CS::Ast>> asts;          // compiled trees
     std::vector<std::unique_ptr<ChupaExpression>> expressions;  // wrapper structs
@@ -103,8 +103,8 @@ bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
 void chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len,
                             bool value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    c->engine.setRoot(std::string_view(name, name_len),
-                      CS::Value::boolean(value));
+    c->engine.setGlobal(std::string_view(name, name_len),
+                        CS::Value::boolean(value));
     c->clearError();
     c->notifyRedraw();
 }
@@ -112,8 +112,8 @@ void chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len
 void chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_len,
                               double value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    c->engine.setRoot(std::string_view(name, name_len),
-                      CS::Value::number(value));
+    c->engine.setGlobal(std::string_view(name, name_len),
+                        CS::Value::number(value));
     c->clearError();
     c->notifyRedraw();
 }
@@ -122,7 +122,7 @@ void chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
                               const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     CS::Value str = c->engine.makeString(std::string_view(text, text_len));
-    c->engine.setRoot(std::string_view(name, name_len), str);
+    c->engine.setGlobal(std::string_view(name, name_len), str);
     c->clearError();
     c->notifyRedraw();
 }

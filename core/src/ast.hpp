@@ -11,7 +11,7 @@ namespace CS {
 enum class NodeKind : std::uint8_t {
     Invalid,  ///< узел с индексом kNoNode; в готовом дереве не встречается
 
-    Program,        ///< дети: стейтменты
+    Script,        ///< дети: стейтменты
     Assign,         ///< дети: цель, значение; op — один из = += -= *= /=
     CallStatement,  ///< дети: вызов
 
@@ -80,7 +80,7 @@ class Ast {
     NodeId object(const NodeId *pairs, std::uint32_t count, std::uint32_t offset);
     NodeId assign(TokenKind op, NodeId target, NodeId value, std::uint32_t offset);
     NodeId callStatement(NodeId callNode, std::uint32_t offset);
-    NodeId program(const NodeId *statements, std::uint32_t count);
+    NodeId script(const NodeId *statements, std::uint32_t count);
 
     // ─── аксессоры: единственный способ прочитать узел ───
 
@@ -133,7 +133,7 @@ class Ast {
     const char *src_ = nullptr;
     NodeId root_ = kNoNode;
     bool checked_ = false;
-    std::vector<Node> nodes_;      // TODO(B7): переехать в арену контекста
+    std::vector<Node> nodes_;      // TODO(B7): переехать в арену хранилища
     std::vector<NodeId> children_; // TODO(B10): боковой пул детей
 };
 

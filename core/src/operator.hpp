@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-#include "context.hpp"
 #include "diagnostic.hpp"
+#include "store.hpp"
 #include "token.hpp"
 #include "value.hpp"
 
@@ -14,15 +14,15 @@ namespace CS {
 /// GreaterEqual, Equal, NotEqual. Логические, ?? и тернарный сюда не попадают:
 /// они решают, вычислять ли операнд, а здесь оба уже вычислены.
 ///
-/// ctx нужен единственной операции — сравнению строк на равенство. offset
+/// store нужен единственной операции — сравнению строк на равенство. offset
 /// попадает в diag при отказе: это данные, а не зависимость от дерева. При
 /// отказе *out не трогается.
-bool applyBinary(TokenKind op, Value lhs, Value rhs, const Context &ctx,
+bool applyBinary(TokenKind op, Value lhs, Value rhs, const Store &store,
                  std::uint32_t offset, Value *out, Diagnostic &diag);
 
 /// Применяет унарную операцию: Bang над Boolean, Minus над Number.
 ///
-/// Контекст не нужен: ни одна из двух операций не заглядывает в хранилище.
+/// Хранилище не нужно: ни одна из двух операций в него не заглядывает.
 /// При отказе *out не трогается.
 bool applyUnary(TokenKind op, Value operand, std::uint32_t offset, Value *out,
                 Diagnostic &diag);

@@ -9,7 +9,7 @@
 namespace CS {
 namespace {
 
-/// Отсортирована по имени: findBuiltin ищет двоично, как findKey в контексте.
+/// Отсортирована по имени: findBuiltin ищет двоично, как findKey в хранилище.
 /// Порядок обязан совпадать с порядком в enum Builtin — на этом стоит индексация
 /// в builtinInfo, и тест BuiltinTable.IsSortedByName стережёт инвариант.
 constexpr BuiltinInfo kTable[] = {
@@ -141,11 +141,11 @@ double chooseOrNaN(double a, double b, bool takeSmaller) noexcept {
 
 }  // namespace
 
-bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
+bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
                           std::string_view *out, std::uint32_t offset,
                           Diagnostic &diag) {
     switch (v.kind()) {
-        case Value::Kind::String: *out = ctx.string(v); return true;
+        case Value::Kind::String: *out = store.string(v); return true;
         case Value::Kind::Number:
             *out = formatNumber(v.numberValue(), numberBuffer, kNumberBufferSize);
             return true;
@@ -162,7 +162,7 @@ bool coerceScalarToString(const Context &ctx, Value v, char *numberBuffer,
     }
 }
 
-bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
+bool applyBuiltin(Builtin id, Store &store, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
                   Diagnostic &diag) {
     (void)count;  // арность гарантирована проходом
@@ -171,14 +171,14 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             // Array, Object либо String (§8.1); у строки — байты, не символы.
             switch (args[0].kind()) {
                 case Value::Kind::Array:
-                    *out = Value::number(ctx.arrayCount(args[0]));
+                    *out = Value::number(store.arrayCount(args[0]));
                     return true;
                 case Value::Kind::Object:
-                    *out = Value::number(ctx.objectCount(args[0]));
+                    *out = Value::number(store.objectCount(args[0]));
                     return true;
                 case Value::Kind::String:
                     *out = Value::number(
-                        static_cast<double>(ctx.string(args[0]).size()));
+                        static_cast<double>(store.string(args[0]).size()));
                     return true;
                 default:
                     return failType(offset,
@@ -190,13 +190,13 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             if (args[0].kind() != Value::Kind::Object) {
                 return failType(offset, "keys expects an object", diag);
             }
-            const std::uint32_t size = ctx.objectCount(args[0]);
+            const std::uint32_t size = store.objectCount(args[0]);
             // Точное выделение: длина известна заранее.
-            Value result = ctx.makeArray(size);
+            Value result = store.makeArray(size);
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.
-                ctx.arrayPush(result, ctx.makeString(ctx.objectKeyAt(args[0], i)));
+                store.arrayPush(result, store.makeString(store.objectKeyAt(args[0], i)));
             }
             *out = result;
             return true;
@@ -208,10 +208,10 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceScalarToString(ctx, args[1], buffer, &key, offset, diag)) {
+            if (!coerceScalarToString(store, args[1], buffer, &key, offset, diag)) {
                 return false;
             }
-            *out = Value::boolean(ctx.objectHas(args[0], key));
+            *out = Value::boolean(store.objectHas(args[0], key));
             return true;
         }
 
@@ -219,9 +219,9 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             if (args[0].kind() != Value::Kind::Array) {
                 return failType(offset, "last expects an array", diag);
             }
-            const std::uint32_t size = ctx.arrayCount(args[0]);
+            const std::uint32_t size = store.arrayCount(args[0]);
             // На пустом — null (§8.4): через индексацию это невыразимо.
-            *out = size == 0 ? Value::null() : ctx.arrayAt(args[0], size - 1);
+            *out = size == 0 ? Value::null() : store.arrayAt(args[0], size - 1);
             return true;
         }
 
@@ -230,7 +230,7 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
                 return failType(offset, "push expects an array", diag);
             }
             // Void: *out не трогается (§2.2).
-            ctx.arrayPush(args[0], args[1]);
+            store.arrayPush(args[0], args[1]);
             return true;
 
         case Builtin::Pop:
@@ -239,7 +239,7 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             }
             // На пустом ничего не делает и не отказывает (§8.6). Снятое
             // значение никуда не идёт: pop его не возвращает.
-            ctx.arrayPop(args[0], nullptr);
+            store.arrayPop(args[0], nullptr);
             return true;
 
         case Builtin::Str: {
@@ -251,10 +251,10 @@ bool applyBuiltin(Builtin id, Context &ctx, const Value *args,
             std::string_view text;
             // Агрегат отвергается тем же правилом §4, что и всюду: сообщение
             // общее, частных формулировок под каждый билтин не заводим.
-            if (!coerceScalarToString(ctx, args[0], buffer, &text, offset, diag)) {
+            if (!coerceScalarToString(store, args[0], buffer, &text, offset, diag)) {
                 return false;
             }
-            *out = ctx.makeString(text);
+            *out = store.makeString(text);
             return true;
         }
 

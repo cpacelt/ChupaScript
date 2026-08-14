@@ -86,6 +86,14 @@ CHUPA_API void chupa_context_set_string(ChupaContext *ctx,
 typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 
+/* ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ UAF-2 — ctx НЕ удерживает user_data и не знает, когда тот умер.      ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * chupa_context_destroy НЕ снимает слушателя и не зовёт его на прощание.
+ * Снять обязан хост — chupa_context_on_redraw(ctx, NULL, NULL) — ДО того,
+ * как умрёт объект, на который смотрит user_data.
+ * Swift-обёртка этого сейчас не делает: см. swift/ChupaContext.swift, UAF-2.
+ */
 CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
                                        ChupaRedrawListener listener,
                                        void *CHUPA_NULLABLE user_data);
@@ -102,6 +110,16 @@ chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
+/* ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ UAF-1 — out получает указатель ВНУТРЬ хранилища контекста.           ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * Окно валидности здесь НЕ ОПИСАНО, и это сама по себе дыра в контракте.
+ * Фактически указатель мёртв после ЛЮБОЙ следующей операции над ctx —
+ * chupa_context_set*, chupa_run или даже другого chupa_eval_string,
+ * потому что вычисление строки само пишет в тот же пул.
+ * Пользоваться можно только до следующего вызова: копируй сразу.
+ * Реализация и план починки: core/src/c_api.cpp, метка UAF-1.
+ */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
                   const char *CHUPA_NULLABLE *CHUPA_NULLABLE out, size_t *len);

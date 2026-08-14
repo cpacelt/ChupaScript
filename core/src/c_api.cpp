@@ -25,11 +25,63 @@
 
 struct ChupaContext {
     CS::Store engine;
+
+    // ╔════════════════════════════════════════════════════════════════════╗
+    // ║ UAF-3 — ЗДЕСЬ КОРЕНЬ. std::vector<std::string> под сырым указателем ║
+    // ╚════════════════════════════════════════════════════════════════════╝
+    //
+    // Каждый Ast хранит СЫРОЙ const char* на байты своего исходника
+    // (ast.hpp:133, src_). Указатель берётся отсюда: sources.back().c_str().
+    //
+    // Но vector при росте ПЕРЕМЕЩАЕТ свои элементы в новый буфер.
+    //   • Длинная строка (> 22 байт на libc++/x86-64): байты в куче,
+    //     перемещение переносит только указатель — данные на месте, всё цело.
+    //   • КОРОТКАЯ строка (SSO): байты лежат ВНУТРИ самого std::string,
+    //     то есть внутри буфера вектора. Перемещение их ДВИГАЕТ.
+    //     Все ранее выданные src_ повисают.
+    //
+    // Практически это значит: скомпилировал два выражения — первое сломано.
+    //
+    //     compile("a + b");   // src_ -> внутрь sources[0] (5 байт, SSO)
+    //     compile("c * d");   // вектор вырос, sources[0] уехал
+    //     eval(первое);       // ЧТЕНИЕ ОСВОБОЖДЁННОЙ ПАМЯТИ
+    //
+    // "a + b", "count(x)", "user.name" — всё это короче 23 байт. Это не
+    // угловой случай, это обычный путь.
+    //
+    // Тесты молчат, потому что c_api_test.cpp компилирует и сразу вычисляет,
+    // а уехавшая SSO-память ещё не отдана ОС и читается как валидная.
+    // Видно только под ASan.
+    //
+    // Починка: см. план, шаг 1 — хранить std::unique_ptr<const char[]>,
+    // чей адрес не зависит от роста вектора.
     std::vector<std::string> sources;                    // copied source texts
     std::vector<std::unique_ptr<CS::Ast>> asts;          // compiled trees
     std::vector<std::unique_ptr<ChupaExpression>> expressions;  // wrapper structs
     std::vector<std::unique_ptr<ChupaScript>> scripts;          // wrapper structs
+    //
+    // ┌─ УТЕЧКА (не UAF, но рядом) ────────────────────────────────────────┐
+    // │ В эти четыре вектора только ДОБАВЛЯЮТ. В chupascript.h нет ни      │
+    // │ chupa_expression_destroy, ни chupa_script_destroy — освободить     │
+    // │ одно выражение нельзя, всё живёт до chupa_context_destroy.         │
+    // │ Компиляция в цикле = неограниченный рост по построению.            │
+    // │ Хуже: при ошибке компиляции sources.emplace_back уже случился и    │
+    // │ назад не откатывается — каждый неудачный разбор оставляет мусор.   │
+    // └────────────────────────────────────────────────────────────────────┘
     CS::Diagnostic lastError;
+
+    // ╔════════════════════════════════════════════════════════════════════╗
+    // ║ UAF-2 (C-половина) — колбэк переживает того, на кого указывает     ║
+    // ╚════════════════════════════════════════════════════════════════════╝
+    //
+    // redrawUserData — непрозрачный указатель на объект хоста. В Swift это
+    // Unmanaged.passUnretained(ChupaContext), см. swift/ChupaContext.swift.
+    // Здесь его никто не удерживает и никто не проверяет на живость.
+    //
+    // chupa_context_destroy (ниже) просто delete'ит — листенер не обнуляется
+    // и не вызывается на прощание. Пока хост сам не снимет колбэк перед
+    // разрушением, любой notifyRedraw по мёртвому user_data — это UAF.
+    // Swift-обёртка этого не делает: снятия нет нигде.
     ChupaRedrawListener redrawListener = nullptr;
     void* redrawUserData = nullptr;
 
@@ -76,6 +128,12 @@ ChupaContext* chupa_context_create(void) {
 
 void chupa_context_destroy(ChupaContext* ctx) {
     if (!ctx) { return; }
+    // ⚠️ UAF-2 — ЗДЕСЬ НИЧЕГО НЕ СНИМАЕТСЯ.
+    // Ни redrawListener, ни redrawUserData не обнуляются перед delete.
+    // Swift-обёртка (swift/ChupaContext.swift) в своём заголовочном
+    // комментарии УТВЕРЖДАЕТ, что «deinit calls chupa_context_destroy which
+    // unregisters the redraw callback». Это неправда: смотри код выше и ниже —
+    // здесь только delete. Снятия колбэка нет ни здесь, ни в Swift.
     delete reinterpret_cast<::ChupaContext*>(ctx);
 }
 
@@ -180,9 +238,15 @@ const char* chupa_context_error(const ChupaContext* ctx, size_t* len) {
 ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
                                           const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    // ⚠️⚠️⚠️ UAF-3 — ЗДЕСЬ ⚠️⚠️⚠️  (подробно: см. поле sources выше)
+    //
+    // Комментарий ниже — «Ast stores string_views into this buffer» — верен и
+    // именно поэтому опасен: buffer УЕЗЖАЕТ при следующем emplace_back, если
+    // строка попала в SSO. Второй compile ломает первый Ast.
+    //
     // Copy source — Ast stores string_views into this buffer
     c->sources.emplace_back(source, len);
-    const char* src = c->sources.back().c_str();
+    const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
 
     auto ast = std::make_unique<CS::Ast>();
     ast->reset(src);
@@ -207,8 +271,9 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
 ChupaScript* chupa_compile_script(ChupaContext* ctx,
                                   const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    // ⚠️⚠️⚠️ UAF-3 — ЗДЕСЬ ТОЖЕ ⚠️⚠️⚠️  (то же самое, что в compile_expression)
     c->sources.emplace_back(source, len);
-    const char* src = c->sources.back().c_str();
+    const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
 
     auto ast = std::make_unique<CS::Ast>();
     ast->reset(src);
@@ -298,6 +363,35 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
         return CHUPA_ERROR;
     }
     std::string_view sv = c->engine.string(value);
+
+    // ╔════════════════════════════════════════════════════════════════════╗
+    // ║ UAF-1 — ЗДЕСЬ. Наружу отдаётся указатель ВНУТРЬ пула движка        ║
+    // ╚════════════════════════════════════════════════════════════════════╝
+    //
+    // sv.data() указывает внутрь CS::Store::text_ — это std::vector<char>
+    // (store.hpp:201). Сам CS::Store об этом честно предупреждает в своей
+    // шапке (store.hpp:24-26): срез живёт «лишь до ближайшей мутации того
+    // же хранилища; дольше их хранить нельзя».
+    //
+    // А мутирует text_ буквально всё:
+    //   chupa_context_set_string, chupa_context_set, конкатенация строк
+    //   и format ВНУТРИ следующего eval — все они зовут makeString.
+    // Любой из них может реаллоцировать вектор и подвесить выданный указатель.
+    //
+    //     chupa_eval_string(ctx, e, &p, &n);
+    //     chupa_context_set_string(ctx, "x", 1, "...", 3);  // text_ переехал
+    //     puts(p);                                          // UAF
+    //
+    // При этом в chupascript.h окно валидности НЕ ОПИСАНО ВООБЩЕ — контракт
+    // не нарушается, его просто нет.
+    //
+    // Ровно здесь обёртка обязана превращать внутреннее время жизни движка в
+    // стабильное для хоста — и не делает этого, а пробрасывает насквозь.
+    //
+    // Swift сегодня цел СЛУЧАЙНО: ChupaExpression.evalString копирует в String
+    // сразу же. Любой хост на C/ObjC/Rust, придержавший указатель, — падает.
+    //
+    // Починка: см. план, шаг 2 — копирование в буфер вызывающего.
     *out = sv.data();
     *len = sv.size();
     return CHUPA_OK;

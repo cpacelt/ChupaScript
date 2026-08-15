@@ -46,6 +46,11 @@ class Script {
     /// начала source().
     bool run(Store &store, Diagnostic &diag) const;
 
+    /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:
+    /// после разрушения объекта либо после следующего compile() срез
+    /// провисает — обычное для string_view правило, но раз выше объявлено
+    /// отсутствие правил времени жизни у самой единицы, здесь оно
+    /// уточняется отдельно (review round 2, M1).
     [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
    private:

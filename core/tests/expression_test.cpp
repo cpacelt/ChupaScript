@@ -17,7 +17,10 @@ namespace {
 // компилируется против core/src/store.hpp (see task-2-report.md).
 void storeWithUser(CS::Store &store) {
     CS::Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, "user", "{'name': 'Вася'}", diag));
+    // ASSERT, а не EXPECT: если setVariable откажет, продолжать тест не
+    // имеет смысла — дальше он упал бы непонятным «unknown name» из
+    // compile, а не в этой точке (review round 2, M2).
+    ASSERT_TRUE(CS::setVariable(store, "user", "{'name': 'Вася'}", diag));
 }
 
 TEST(Expression, CompilesAndEvaluates) {
@@ -101,6 +104,27 @@ TEST(Expression, RecompileReplacesEverything) {
     CS::Diagnostic diag;
     ASSERT_TRUE(expr.eval(store, &out, diag));
     EXPECT_DOUBLE_EQ(out.numberValue(), 2.0);
+}
+
+TEST(Expression, FailedCompileDoesNotTouchOut) {
+    // Контракт «неудачная компиляция не портит *out» (expression.hpp) не
+    // покрыт ничем другим: RecompileReplacesEverything гоняет только успехи,
+    // а тесты на ошибки всегда работают со свежей единицей (review round 2,
+    // I1).
+    CS::Store store;
+    storeWithUser(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[2];
+    ASSERT_EQ(CS::Expression::compile("user.name", store, &expr, diags, 2), 0u);
+
+    ASSERT_EQ(CS::Expression::compile("user..name", store, &expr, diags, 2), 1u);
+    EXPECT_EQ(diags[0].code, CS::ErrorCode::Syntax);
+    EXPECT_EQ(expr.source(), "user.name");
+
+    CS::Value out = CS::Value::null();
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.eval(store, &out, diag));
+    EXPECT_EQ(store.string(out), "Вася");
 }
 
 }  // namespace

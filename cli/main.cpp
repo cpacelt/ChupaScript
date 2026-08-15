@@ -12,12 +12,11 @@
 #include "report.hpp"
 #include "store.hpp"
 
-#include "ast.hpp"
-#include "compile.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
-#include "eval.hpp"
+#include "expression.hpp"
 #include "printer.hpp"
+#include "script.hpp"
 #include "value.hpp"
 
 namespace {
@@ -38,50 +37,67 @@ constexpr std::uint32_t kPromptWidth = 2;
 /// сказать. Строка в оболочке короткая, и восьми хватает с запасом.
 constexpr std::uint32_t kMaxReported = 8;
 
-/// Компилирует и выполняет строку кода.
+/// Общая часть выражения и скрипта: печатает находки компиляции.
+///
+/// Возвращает true, если компиляция удалась (errors == 0). Печатаются все
+/// поместившиеся находки, а не первая: проход отдаёт их массивом именно
+/// затем; о непоместившихся — отдельная строка.
+bool reportCompile(std::uint32_t errors, std::string_view source,
+                   std::uint32_t indent, const CS::Diagnostic *found,
+                   std::uint32_t capacity) {
+    if (errors == 0) { return true; }
+    const std::uint32_t shown = errors < capacity ? errors : capacity;
+    for (std::uint32_t i = 0; i < shown; ++i) {
+        chupa::reportDiagnostic(std::cout, source, indent, found[i]);
+    }
+    if (errors > shown) {
+        std::cout << "error: " << (errors - shown) << " more not shown\n";
+    }
+    return false;
+}
+
+/// Компилирует и вычисляет выражение.
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runCode(CS::Store &store, std::string_view source, std::uint32_t indent,
-             bool asScript) {
-    CS::Ast ast;
+void runExpression(CS::Store &store, std::string_view source,
+                   std::uint32_t indent) {
     CS::Diagnostic found[kMaxReported];
-    const std::uint32_t length = static_cast<std::uint32_t>(source.size());
+    CS::Expression expr;
     const std::uint32_t errors =
-        asScript ? CS::compileScript(source.data(), length, ast, store, found,
-                                     kMaxReported)
-                 : CS::compileExpression(source.data(), length, ast, store, found,
-                                         kMaxReported);
+        CS::Expression::compile(source, store, &expr, found, kMaxReported);
+    if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
 
-    if (errors != 0) {
-        // Печатаются все, а не первая: проход отдаёт их массивом именно затем.
-        const std::uint32_t shown =
-            errors < kMaxReported ? errors : kMaxReported;
-        for (std::uint32_t i = 0; i < shown; ++i) {
-            chupa::reportDiagnostic(std::cout, source, indent, found[i]);
-        }
-        if (errors > shown) {
-            std::cout << "error: " << (errors - shown) << " more not shown\n";
-        }
-        return;
-    }
-
-    CS::Diagnostic diag;
-    if (asScript) {
-        // Скрипт при успехе молчит: значения у него нет, а результат виден
-        // через :vars.
-        if (!CS::runScript(ast, source, store, diag)) {
-            chupa::reportDiagnostic(std::cout, source, indent, diag);
-        }
-        return;
-    }
-
+    // Сырой путь, а не evalString: оболочка печатает null наравне со всем
+    // прочим и умеет агрегаты (cli/printer.cpp) — трёхзначный исход ей только
+    // мешал бы.
     CS::Value out = CS::Value::null();
-    if (!CS::evalExpression(ast, source, store, &out, diag)) {
+    CS::Diagnostic diag;
+    if (!expr.eval(store, &out, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }
     std::cout << chupa::printValue(store, out) << "\n";
+}
+
+/// Компилирует и исполняет скрипт.
+///
+/// source — то, что осталось после префикса режима; indent — ширина всего, что
+/// напечатано до него.
+void runScriptSource(CS::Store &store, std::string_view source,
+                     std::uint32_t indent) {
+    CS::Diagnostic found[kMaxReported];
+    CS::Script script;
+    const std::uint32_t errors =
+        CS::Script::compile(source, store, &script, found, kMaxReported);
+    if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
+
+    // Скрипт при успехе молчит: значения у него нет, а результат виден через
+    // :vars.
+    CS::Diagnostic diag;
+    if (!script.run(store, diag)) {
+        chupa::reportDiagnostic(std::cout, source, indent, diag);
+    }
 }
 
 void printUsage(std::ostream &out) {
@@ -211,7 +227,11 @@ After handleLine(CS::Store &store, std::string_view line) {
             kPromptWidth + chupa::columnOf(line, static_cast<std::uint32_t>(
                                                      sourceStart));
 
-        runCode(store, source, indent, isScript);
+        if (isScript) {
+            runScriptSource(store, source, indent);
+        } else {
+            runExpression(store, source, indent);
+        }
         return After::Continue;
     }
 

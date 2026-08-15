@@ -35,7 +35,7 @@ struct ChupaContext {
     // ╚════════════════════════════════════════════════════════════════════╝
     //
     // redrawUserData — непрозрачный указатель на объект хоста. В Swift это
-    // Unmanaged.passUnretained(ChupaContext), см. swift/ChupaContext.swift.
+    // Unmanaged.passUnretained(Context), см. swift/Context.swift.
     // Здесь его никто не удерживает и никто не проверяет на живость.
     //
     // chupa_context_destroy (ниже) просто delete'ит — листенер не обнуляется
@@ -94,10 +94,11 @@ void chupa_context_destroy(ChupaContext* ctx) {
     if (!ctx) { return; }
     // ⚠️ UAF-2 — ЗДЕСЬ НИЧЕГО НЕ СНИМАЕТСЯ.
     // Ни redrawListener, ни redrawUserData не обнуляются перед delete.
-    // Swift-обёртка (swift/ChupaContext.swift) в своём заголовочном
-    // комментарии УТВЕРЖДАЕТ, что «deinit calls chupa_context_destroy which
-    // unregisters the redraw callback». Это неправда: смотри код выше и ниже —
-    // здесь только delete. Снятия колбэка нет ни здесь, ни в Swift.
+    // Снятия колбэка нет ни здесь, ни в Swift: swift/Context.swift не зовёт
+    // chupa_context_on_redraw(handle, nil, nil) ни в deinit, ни где-либо ещё.
+    // (Раньше здесь приводилась цитата из шапки swift/ChupaContext.swift,
+    // утверждавшей обратное. Задача 7 ложную фразу удалила — дефект от этого
+    // не исчез, см. B38.)
     delete reinterpret_cast<::ChupaContext*>(ctx);
 }
 

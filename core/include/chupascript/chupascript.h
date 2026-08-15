@@ -98,7 +98,7 @@ typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
  * chupa_context_destroy НЕ снимает слушателя и не зовёт его на прощание.
  * Снять обязан хост — chupa_context_on_redraw(ctx, NULL, NULL) — ДО того,
  * как умрёт объект, на который смотрит user_data.
- * Swift-обёртка этого сейчас не делает: см. swift/ChupaContext.swift, UAF-2.
+ * Swift-обёртка этого сейчас не делает: см. swift/Context.swift, UAF-2.
  */
 CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
                                        ChupaRedrawListener listener,

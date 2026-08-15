@@ -374,7 +374,7 @@ public enum ChupaScalar {
     case string(String)
 }
 
-extension ChupaContext {
+extension Context {
     /// Register a host function. Must be called before any compile.
     public func register(
         _ name: String,
@@ -391,7 +391,7 @@ extension ChupaContext {
 
 **Box и `user_data`.** Замыкание в `@convention(c)`-указатель не превращается.
 Обёртка кладёт `body` в `final class Box`, держит массив боксов полем
-`ChupaContext` — то есть ровно столько же, сколько живёт контекст, — и передаёт
+`Context` — то есть ровно столько же, сколько живёт контекст, — и передаёт
 `Unmanaged.passUnretained(box).toOpaque()` в `user_data`. Владеет массив,
 поэтому `passUnretained` здесь корректен по устройству, а не по удаче.
 
@@ -415,20 +415,33 @@ box.returnBytes.withUnsafeBufferPointer {
 C-тип пишется полностью: `ChupaScriptC.ChupaScalar`. Это единственное такое
 место, и там квалификация даже полезна — видно, где кончается C.
 
+> **Открытый вопрос после Р8.** Абзац выше описывает ровно то затенение, которое
+> Р8 спеки `2026-08-15-chupascript-core-entities-design.md` из Swift-обвязки
+> убрал: Swift-класс `ChupaContext` носил имя C-структуры `ChupaContext`, и это
+> названо там дефектом, а не удобством. Предложенный здесь `ChupaScalar`
+> заводит его заново, да ещё и с префиксом, который Р8 снял со всех остальных
+> типов. Напрашивается `Scalar`, но это уже решение по имени публичного типа, и
+> задача 7 его не принимала — оставлено тому, кто будет делать B34. Остальные
+> Swift-имена в этой главе к состоянию после Р8 приведены: `Context`, `Error`.
+
 **Ошибка.** `body` бросает — thunk ловит, зовёт `chupa_fail` и возвращает
-`false`. `ChupaError` (`swift/ChupaError.swift`) уже несёт `code` и `message`,
-новых типов не появляется; для ошибок, не являющихся `ChupaError`, берётся
-`CHUPA_ERR_USAGE` и `localizedDescription`. Одна правка в нём всё же нужна:
-почленный инициализатор структуры сегодня внутренний, а хосту требуется свой
-`ChupaError` создавать — значит объявляется публичный `init`.
+`false`. `Error` (`swift/Error.swift`) уже несёт `code` и `message`,
+новых типов не появляется; для ошибок, не являющихся `ChupaScript.Error`,
+берётся `CHUPA_ERR_USAGE` и `localizedDescription`. Одна правка в нём всё же
+нужна: почленный инициализатор структуры сегодня внутренний, а хосту требуется
+свой `Error` создавать — значит объявляется публичный `init`.
+
+Ловить в thunk'е надо `Swift.Error`, а не `Error`: после Р8 второе — это наш
+собственный тип, затеняющий протокол внутри модуля. То есть `catch let e as
+ChupaScript.Error` для своей ошибки и `catch let e` для всех прочих.
 
 Пример:
 
 ```swift
 try ctx.register("track", arity: 1) { args in
     guard case .string(let event) = args[0] else {
-        throw ChupaError(code: CHUPA_ERR_TYPE,
-                         message: "track expects a string", offset: 0)
+        throw Error(code: CHUPA_ERR_TYPE,
+                    message: "track expects a string", offset: 0)
     }
     analytics.send(event)
     return nil

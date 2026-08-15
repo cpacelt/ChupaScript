@@ -118,8 +118,8 @@ public final class Context {
         let msgPtr = chupa_context_error(handle, &len)
         let message: String
         if let msgPtr, len > 0 {
-            message = String(bytes: UnsafeBufferPointer(start: msgPtr, count: len),
-                             encoding: .utf8) ?? ""
+            message = String(decoding: UnsafeRawBufferPointer(start: msgPtr, count: len),
+                             as: UTF8.self)
         } else {
             message = ""
         }

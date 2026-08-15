@@ -245,7 +245,10 @@ std::string_view Ast::text(NodeId node, std::string_view source) const noexcept 
     const Node &n = nodes_[node];
     if (n.textLength == 0) { return {}; }
     assert(n.textOffset + n.textLength <= source.size());
-    return source.substr(n.textOffset, n.textLength);
+    // Не substr: он бросает out_of_range при textOffset > size(), а text()
+    // объявлена noexcept — в релизной сборке, где assert'ы выше сняты, это
+    // был бы std::terminate вместо мусора. Конструктор среза не бросает.
+    return std::string_view(source.data() + n.textOffset, n.textLength);
 }
 
 bool Ast::hasEscape(NodeId node) const noexcept {

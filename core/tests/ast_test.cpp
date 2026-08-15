@@ -1,4 +1,6 @@
-// Тесты строителя и аксессоров Ast. Парсер здесь не участвует.
+// Тесты строителя и аксессоров Ast. Парсер участвует ровно в одном тесте —
+// TextSurvivesSourceRelocation: там нужно настоящее дерево над настоящим
+// исходником, а строителем такое не собрать.
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -181,7 +183,7 @@ TEST(AstShape, RootIsWhatWasSet) {
     EXPECT_EQ(ast.root(), node);
 }
 
-TEST(Ast, TextSurvivesSourceRelocation) {
+TEST(AstShape, TextSurvivesSourceRelocation) {
     // Короткая строка попадает в SSO: её байты лежат внутри самого
     // std::string, и рост вектора их ФИЗИЧЕСКИ ДВИГАЕТ. Ровно так ломался
     // UAF-3 (docs/backlog.md B39).
@@ -194,9 +196,15 @@ TEST(Ast, TextSurvivesSourceRelocation) {
     ASSERT_TRUE(CS::parseExpression(sources[0].data(),
                                     static_cast<std::uint32_t>(sources[0].size()),
                                     ast, diag));
+    EXPECT_EQ(ast.sourceLength(), sources[0].size());
 
     // Вектор растёт — sources[0] уезжает на новый адрес.
+    const char *before = sources[0].data();
     for (int i = 0; i < 8; ++i) { sources.emplace_back("x"); }
+    // Тест обязан проверить своё предположение: если reserve(1) когда-нибудь
+    // выдаст ёмкость на все девять, роста не случится и проверять станет
+    // нечего, а тест продолжит зеленеть.
+    ASSERT_NE(sources[0].data(), before);
 
     // Дерево ничего не заметило: исходник приходит параметром.
     EXPECT_EQ(ast.text(ast.child(ast.root(), 0), sources[0]), "user");

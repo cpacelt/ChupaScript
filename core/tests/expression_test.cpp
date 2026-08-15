@@ -127,4 +127,80 @@ TEST(Expression, FailedCompileDoesNotTouchOut) {
     EXPECT_EQ(store.string(out), "Вася");
 }
 
+TEST(Expression, EvalNumberReturnsOk) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Expression::compile("1 + 1", store, &expr, diags, 1), 0u);
+
+    double out = 0.0;
+    CS::Diagnostic diag;
+    EXPECT_EQ(expr.evalNumber(store, &out, diag), CS::EvalStatus::Ok);
+    EXPECT_DOUBLE_EQ(out, 2.0);
+}
+
+TEST(Expression, EvalNumberReturnsNullSeparately) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Expression::compile("null", store, &expr, diags, 1), 0u);
+
+    double out = 42.0;
+    CS::Diagnostic diag;
+    // Null — не ошибка и не значение: положить его в double* некуда.
+    EXPECT_EQ(expr.evalNumber(store, &out, diag), CS::EvalStatus::Null);
+    EXPECT_DOUBLE_EQ(out, 42.0);  // *out не тронут
+}
+
+TEST(Expression, EvalNumberOnStringIsTypeErrorWithRealOffset) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Expression::compile("  'привет'", store, &expr, diags, 1), 0u);
+
+    double out = 0.0;
+    CS::Diagnostic diag;
+    EXPECT_EQ(expr.evalNumber(store, &out, diag), CS::EvalStatus::Error);
+    EXPECT_EQ(diag.code, CS::ErrorCode::Type);
+    // Смещение настоящее, а не ноль: прокладка ставила 0 и указывала в никуда.
+    EXPECT_EQ(diag.offset, 2u);
+}
+
+TEST(Expression, EvalBoolAndString) {
+    CS::Store store;
+    CS::Diagnostic diag;
+    CS::Diagnostic diags[1];
+
+    CS::Expression flag;
+    ASSERT_EQ(CS::Expression::compile("1 < 2", store, &flag, diags, 1), 0u);
+    bool b = false;
+    EXPECT_EQ(flag.evalBool(store, &b, diag), CS::EvalStatus::Ok);
+    EXPECT_TRUE(b);
+
+    CS::Expression text;
+    ASSERT_EQ(CS::Expression::compile("'привет'", store, &text, diags, 1), 0u);
+    std::string s;
+    EXPECT_EQ(text.evalString(store, &s, diag), CS::EvalStatus::Ok);
+    EXPECT_EQ(s, "привет");
+}
+
+TEST(Expression, EvalStringPropagatesEvalError) {
+    CS::Store store;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(store, "items", "[1]", diag));
+
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    // Бриф предлагал items[5], но положительный индекс за концом массива при
+    // чтении штатно даёт null (EvalCompound.BeyondTheEndGivesTypeNotRange,
+    // core/tests/eval_test.cpp) — не ошибку. Range при чтении даёт только
+    // дробный/отрицательный/переполняющий индекс (EvalIndex.
+    // FractionalAndNegativeIndicesAreErrors, там же); берём отрицательный.
+    ASSERT_EQ(CS::Expression::compile("items[-1]", store, &expr, diags, 1), 0u);
+
+    std::string s;
+    EXPECT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Error);
+    EXPECT_EQ(diag.code, CS::ErrorCode::Range);
+}
+
 }  // namespace

@@ -10,6 +10,13 @@
 
 namespace CS {
 
+/// Исход типизированного вычисления.
+///
+/// Трёхзначен по необходимости: «получилось null» физически некуда положить,
+/// когда выходной параметр — double *. У сырого eval такой нужды нет, там
+/// null — обычное значение, и он возвращает bool.
+enum class EvalStatus : std::uint8_t { Ok, Null, Error };
+
 /// Скомпилированное выражение: исходник и дерево, связанные навсегда.
 ///
 /// Единица владеет копией своего исходника, поэтому правил времени жизни у
@@ -53,7 +60,22 @@ class Expression {
     /// уточняется отдельно (review round 2, M1).
     [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
+    /// Вычисляет и достаёт результат нужного типа.
+    ///
+    /// Ok — значение положено в *out. Null — выражение дало null, *out не
+    /// тронут. Error — ошибка вычисления либо несовпадение типа, подробности
+    /// в diag, *out не тронут.
+    EvalStatus evalNumber(Store &store, double *out, Diagnostic &diag) const;
+    EvalStatus evalBool  (Store &store, bool *out, Diagnostic &diag) const;
+    EvalStatus evalString(Store &store, std::string *out, Diagnostic &diag) const;
+
    private:
+    /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит
+    /// в *out и остаётся только достать его. Остальные исходы — как у
+    /// публичных методов.
+    EvalStatus evalOfKind(Store &store, Value::Kind wanted, const char *message,
+                          Value *out, Diagnostic &diag) const;
+
     std::string source_;
     Ast ast_;
 };

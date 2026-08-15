@@ -13,7 +13,9 @@
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "eval.hpp"
+#include "expression.hpp"
 #include "parser.hpp"
+#include "script.hpp"
 #include "store.hpp"
 #include "text.hpp"
 
@@ -265,6 +267,276 @@ void BM_Check_Handler(benchmark::State &state) {
              true);
 }
 BENCHMARK(BM_Check_Handler);
+
+// ════════════════════════════════════════════════════════════════════════
+// Цена рефакторинга (docs/superpowers/specs/2026-08-15-chupascript-core-
+// entities-design.md, Р2 и Р6): решения из этого рефакторинга добавили
+// стоимость ровно в двух местах, и обе формы — «до» и «после» — по-прежнему
+// выразимы в одном прогоне, потому что старый низкоуровневый путь
+// (compileExpression в голый Ast, string_view прямо из пула store) никуда не
+// делся — рефакторинг положил новый путь рядом, не убрав старый.
+// ════════════════════════════════════════════════════════════════════════
+
+// ─── Р2: копия исходника при компиляции ───
+//
+// CS::Expression::compile (core/src/expression.cpp) копирует переданный
+// string_view в собственное поле source_ и компилирует уже из копии. До
+// рефакторинга компиляция шла CS::compileExpression прямо в голый CS::Ast,
+// без выделения под исходник — дерево смотрело в чужой буфер.
+//
+// Обе стороны должны быть в одинаковых условиях, иначе сравнение врёт — и
+// оно действительно соврало в первой версии этих строк. Ast::reset()
+// (core/src/ast.cpp) делает nodes_.clear() / children_.clear(): ёмкость
+// векторов остаётся, реального выделения со второй итерации нет. Если
+// единицу-приёмник (Ast для старого пути, Expression для нового) объявить
+// снаружи цикла — обе стороны переиспользуют ёмкость одинаково, и разница
+// между ними — это разница именно в работе compile(), а не в том, что одна
+// сторона холодная, а другая тёплая. Из-за этой асимметрии первая версия
+// этого бенчмарка (единица нового пути создавалась внутри цикла, старого —
+// снаружи) давала завышенную и неверную цифру.
+//
+// Но даже после починки New/Old не измеряет ровно «цену копии». Внутри
+// Expression::compile строится в локальную built (пустые векторы на каждый
+// вызов) и только при успехе делается *out = std::move(built) — так работает
+// контракт «при отказе *out не портится» (core/src/expression.cpp,
+// core/src/expression.hpp). У Ast, который переиспускается на месте,
+// такой пересборки нет вовсе. Значит New/Old меряет две слитые вместе вещи:
+// саму копию исходника и рост векторов built с нуля на каждый вызов. Чтобы
+// разложить их, ниже есть третья группа строк — BM_Copy_SourceBytes,
+// изолированная цена одной только копии string_view в std::string того же
+// размера. New − Old даёт полную цену перехода; New − Old − Copy — то, что
+// остаётся на сборку во временную единицу.
+//
+// Хранилище используется только для проверки состава имён (check.hpp),
+// значения роли не играют — строится один раз до цикла и не растёт: сама
+// компиляция ничего в store не пишет.
+
+/// Компиляция выражения, новый путь (с копией исходника). Expression — вне
+/// цикла и переиспользуется: Expression::compile() принимает *out именно
+/// затем, чтобы так можно было делать (contract: «неудача не портит *out»).
+void BM_Compile_Expr_New(benchmark::State &state, std::string_view source) {
+    Store store;
+    if (!fill(store)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    Diagnostic diag;
+    CS::Expression expr;
+    for (auto _ : state) {
+        std::uint32_t errors = CS::Expression::compile(source, store, &expr,
+                                                        &diag, 1);
+        if (errors != 0) {
+            state.SkipWithError("Expression::compile failed");
+            return;
+        }
+        benchmark::DoNotOptimize(expr);
+    }
+}
+
+/// Компиляция выражения, старый путь (без копии, дерево смотрит в буфер
+/// вызывающего). Ast — вне цикла и переиспользуется, симметрично New.
+void BM_Compile_Expr_Old(benchmark::State &state, std::string_view source) {
+    Store store;
+    if (!fill(store)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    Ast ast;
+    Diagnostic diag;
+    for (auto _ : state) {
+        std::uint32_t errors = CS::compileExpression(
+            source.data(), static_cast<std::uint32_t>(source.size()), ast,
+            store, &diag, 1);
+        if (errors != 0) {
+            state.SkipWithError("compileExpression failed");
+            return;
+        }
+        benchmark::DoNotOptimize(ast);
+    }
+}
+
+/// Изолированная цена копии: не компиляция вовсе, а ровно то самое
+/// присваивание built.source_ = std::string(source), что стоит в
+/// Expression::compile — вынесенное отдельно, чтобы иметь порядок величины
+/// без примеси сборки дерева. Свежий std::string на каждой итерации, как и в
+/// built: переиспользования ёмкости здесь нет ни у New, ни у Old, поэтому
+/// сравнение с ними по этой оси честное.
+void BM_Copy_SourceBytes(benchmark::State &state, std::string_view source) {
+    for (auto _ : state) {
+        std::string copy(source);
+        benchmark::DoNotOptimize(copy);
+    }
+}
+
+// Самое частое выражение в props — один сегмент от глобальной переменной.
+BENCHMARK_CAPTURE(BM_Compile_Expr_New, ShortPath, "user.name");
+BENCHMARK_CAPTURE(BM_Compile_Expr_Old, ShortPath, "user.name");
+BENCHMARK_CAPTURE(BM_Copy_SourceBytes, ShortPath, "user.name");
+
+// Реалистичный источник из props: вызов и тернарник вместе.
+BENCHMARK_CAPTURE(BM_Compile_Expr_New, CallTernary,
+                  "count(items) > 0 ? items[0] : user.name");
+BENCHMARK_CAPTURE(BM_Compile_Expr_Old, CallTernary,
+                  "count(items) > 0 ? items[0] : user.name");
+BENCHMARK_CAPTURE(BM_Copy_SourceBytes, CallTernary,
+                  "count(items) > 0 ? items[0] : user.name");
+
+/// Компиляция скрипта, новый путь (с копией исходника). Script — вне цикла,
+/// симметрично Old, по той же причине, что и у выражения.
+void BM_Compile_Script_New(benchmark::State &state, std::string_view source) {
+    Store store;
+    if (!fill(store)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    Diagnostic diag;
+    CS::Script script;
+    for (auto _ : state) {
+        std::uint32_t errors = CS::Script::compile(source, store, &script,
+                                                    &diag, 1);
+        if (errors != 0) {
+            state.SkipWithError("Script::compile failed");
+            return;
+        }
+        benchmark::DoNotOptimize(script);
+    }
+}
+
+/// Компиляция скрипта, старый путь (без копии).
+void BM_Compile_Script_Old(benchmark::State &state, std::string_view source) {
+    Store store;
+    if (!fill(store)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    Ast ast;
+    Diagnostic diag;
+    for (auto _ : state) {
+        std::uint32_t errors = CS::compileScript(
+            source.data(), static_cast<std::uint32_t>(source.size()), ast,
+            store, &diag, 1);
+        if (errors != 0) {
+            state.SkipWithError("compileScript failed");
+            return;
+        }
+        benchmark::DoNotOptimize(ast);
+    }
+}
+
+// Обработчик из трёх операторов — вызов, присваивание, форматирование.
+BENCHMARK_CAPTURE(BM_Compile_Script_New, Handler,
+                  "push(items, 1);"
+                  "user.badge = count(items);"
+                  "user.label = format('${} шт.', count(items));");
+BENCHMARK_CAPTURE(BM_Compile_Script_Old, Handler,
+                  "push(items, 1);"
+                  "user.badge = count(items);"
+                  "user.label = format('${} шт.', count(items));");
+BENCHMARK_CAPTURE(BM_Copy_SourceBytes, Handler,
+                  "push(items, 1);"
+                  "user.badge = count(items);"
+                  "user.label = format('${} шт.', count(items));");
+
+// ─── Р6: выделение на строку при вычислении ───
+//
+// chupa_eval_string (core/src/c_api.cpp) заводит ChupaString — однополейную
+// обёртку над std::string — и копирует туда результат вычисления; хост потом
+// обязан позвать chupa_string_destroy. До рефакторинга строковый результат
+// отдавался наружу как string_view прямо в текстовый пул store: ноль
+// выделений, ноль копий — и ровно это было дырой UAF-1 (спека, Р6). Старый
+// путь всё ещё выразим напрямую через ядро: CS::Expression::eval кладёт
+// Value, а Store::string(value) даёт string_view в пул без единого malloc.
+// Разница между каждой парой строк ниже — цена перехода к владению: пара
+// malloc/free на ChupaString плюс копия байт.
+//
+// Значение читается из поля, установленного один раз до цикла
+// (setVariable / chupa_context_set_string) — сама компиляция и вычисление
+// не пишут в текстовый пул store (никаких строковых литералов и никакого
+// makeString в горячем пути), поэтому пул не растёт от итерации к итерации,
+// в отличие от BM_Eval_ArrayLiteral и BM_Eval_NilCoalesceLong (см. B24).
+//
+// Две длины строки — не украшение: короткая (<=22 байта) укладывается в SSO
+// std::string и на старом пути обходится вовсе без malloc что до, что после
+// рефакторинга, а на новом всё равно платит за ChupaString и его копию;
+// длинная (>22 байта) на старом пути тоже без malloc (это string_view, не
+// std::string), а на новом добавляет ещё и настоящее выделение под сами
+// байты внутри std::string. Разница между короткой и длинной строкой на
+// новом пути — это и есть цена второго malloc, который SSO снял бы, будь
+// строка не заимствована в чужое владение, а короткой и на своём стеке.
+
+// 9 байт — заведомо короче порога SSO (22 байта у libc++ std::string).
+constexpr std::string_view kShortStringValue = "avatar_ok";
+// 54 байта — заведомо длиннее порога SSO, реалистичный URL из props.
+constexpr std::string_view kLongStringValue =
+    "https://cdn.example.com/avatars/abcdef1234567890.png";
+
+/// Вычисление со строковым результатом, новый путь (через C API, с
+/// ChupaString).
+void BM_Eval_String_New(benchmark::State &state, std::string_view value) {
+    ChupaContext *ctx = chupa_context_create();
+    if (ctx == nullptr) {
+        state.SkipWithError("chupa_context_create failed");
+        return;
+    }
+    chupa_context_set_string(ctx, "s", 1, value.data(), value.size());
+    ChupaExpression *expr = chupa_compile_expression(ctx, "s", 1);
+    if (expr == nullptr) {
+        state.SkipWithError("chupa_compile_expression failed");
+        chupa_context_destroy(ctx);
+        return;
+    }
+
+    for (auto _ : state) {
+        ChupaString *out = nullptr;
+        const ChupaStatus status = chupa_eval_string(ctx, expr, &out);
+        if (status != CHUPA_OK) {
+            state.SkipWithError("chupa_eval_string failed");
+            break;
+        }
+        size_t len = 0;
+        const char *bytes = chupa_string_bytes(out, &len);
+        benchmark::DoNotOptimize(bytes);
+        chupa_string_destroy(out);
+    }
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+/// Вычисление со строковым результатом, старый путь (string_view прямо в
+/// пул store, без выделения и без владения).
+void BM_Eval_String_Old(benchmark::State &state, std::string_view value) {
+    Store store;
+    Diagnostic diag;
+    // setVariable понимает синтаксис языка, а не JSON: строка в одинарных
+    // кавычках — обычный строковый литерал.
+    const std::string literal = "'" + std::string(value) + "'";
+    if (!CS::setVariable(store, "s", literal, diag)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+
+    CS::Expression expr;
+    if (CS::Expression::compile("s", store, &expr, &diag, 1) != 0) {
+        state.SkipWithError("Expression::compile failed");
+        return;
+    }
+
+    for (auto _ : state) {
+        Value out = Value::null();
+        if (!expr.eval(store, &out, diag)) {
+            state.SkipWithError("eval failed");
+            return;
+        }
+        std::string_view text = store.string(out);
+        benchmark::DoNotOptimize(text);
+    }
+}
+
+BENCHMARK_CAPTURE(BM_Eval_String_New, Short, kShortStringValue);
+BENCHMARK_CAPTURE(BM_Eval_String_Old, Short, kShortStringValue);
+BENCHMARK_CAPTURE(BM_Eval_String_New, Long, kLongStringValue);
+BENCHMARK_CAPTURE(BM_Eval_String_Old, Long, kLongStringValue);
 
 }  // namespace
 

@@ -7,9 +7,11 @@ add_library(chupascript STATIC
     src/store.cpp
     src/data.cpp
     src/eval.cpp
+    src/expression.cpp
     src/lexer.cpp
     src/operator.cpp
     src/parser.cpp
+    src/script.cpp
     src/text.cpp
 )
 

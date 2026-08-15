@@ -10,8 +10,8 @@ Ast::Ast() {
     nodes_.push_back(Node{});
 }
 
-void Ast::reset(const char *source) {
-    src_ = source;
+void Ast::reset(std::uint32_t sourceLength) {
+    sourceLength_ = sourceLength;
     root_ = kNoNode;
     nodes_.clear();
     children_.clear();
@@ -236,13 +236,19 @@ bool Ast::boolValue(NodeId node) const noexcept {
     return nodes_[node].boolean;
 }
 
-std::string_view Ast::text(NodeId node) const noexcept {
+std::uint32_t Ast::sourceLength() const noexcept { return sourceLength_; }
+
+std::string_view Ast::text(NodeId node, std::string_view source) const noexcept {
     assert(node < nodes_.size());
+    // Дешёвая ловушка на «передали не тот исходник» (спека Р3).
+    assert(source.size() == sourceLength_);
     const Node &n = nodes_[node];
-    if (n.textLength == 0 || src_ == nullptr) {
-        return {};
-    }
-    return std::string_view(src_ + n.textOffset, n.textLength);
+    if (n.textLength == 0) { return {}; }
+    assert(n.textOffset + n.textLength <= source.size());
+    // Не substr: он бросает out_of_range при textOffset > size(), а text()
+    // объявлена noexcept — в релизной сборке, где assert'ы выше сняты, это
+    // был бы std::terminate вместо мусора. Конструктор среза не бросает.
+    return std::string_view(source.data() + n.textOffset, n.textLength);
 }
 
 bool Ast::hasEscape(NodeId node) const noexcept {

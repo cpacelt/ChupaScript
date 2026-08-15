@@ -29,10 +29,11 @@ std::string_view decodeEscapes(std::string_view raw, std::string &scratch) {
     return scratch;
 }
 
-std::string_view literalText(const Ast &ast, NodeId node, std::string &scratch) {
+std::string_view literalText(const Ast &ast, NodeId node,
+                             std::string_view source, std::string &scratch) {
     assert(ast.kind(node) == NodeKind::String);
-    if (!ast.hasEscape(node)) { return ast.text(node); }
-    return decodeEscapes(ast.text(node), scratch);
+    const std::string_view raw = ast.text(node, source);
+    return ast.hasEscape(node) ? decodeEscapes(raw, scratch) : raw;
 }
 
 std::string_view formatNumber(double value, char *buffer, std::size_t size) {

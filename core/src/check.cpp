@@ -1,5 +1,7 @@
 #include "check.hpp"
 
+#include <string_view>
+
 #include "builtin.hpp"
 
 namespace CS {
@@ -8,6 +10,7 @@ namespace {
 /// Состояние одного прохода: копит находки, не останавливаясь.
 struct Checker {
     const Ast &ast;
+    std::string_view source;
     const Store &store;
     Diagnostic *out;
     std::uint32_t capacity;
@@ -23,7 +26,7 @@ struct Checker {
     /// Вызов, чей результат употреблён, обязан возвращать значение (§6.2).
     void requireValue(NodeId call) {
         Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(call), &id)) { return; }  // уже сообщено
+        if (!findBuiltin(ast.text(call, source), &id)) { return; }  // уже сообщено
         if (!builtinInfo(id).returnsValue) {
             report(call, ErrorCode::Name, "builtin does not return a value");
         }
@@ -32,7 +35,7 @@ struct Checker {
     /// Вызов в позиции стейтмента обязан значения не возвращать (§6.1).
     void requireVoid(NodeId call) {
         Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(call), &id)) { return; }
+        if (!findBuiltin(ast.text(call, source), &id)) { return; }
         if (builtinInfo(id).returnsValue) {
             report(call, ErrorCode::Name, "call result is not used");
         }
@@ -40,7 +43,7 @@ struct Checker {
 
     void checkCall(NodeId node) {
         Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(node), &id)) {
+        if (!findBuiltin(ast.text(node, source), &id)) {
             report(node, ErrorCode::Name, "unknown function");
             return;
         }
@@ -64,7 +67,7 @@ struct Checker {
         // совпадать с подсчётом по декодированному.
         const NodeId tmpl = ast.child(node, 0);
         if (ast.kind(tmpl) != NodeKind::String) { return; }
-        if (countPlaceholders(ast.text(tmpl)) != count - 1) {
+        if (countPlaceholders(ast.text(tmpl, source)) != count - 1) {
             report(node, ErrorCode::Name,
                    "format placeholder count does not match arguments");
         }
@@ -79,7 +82,7 @@ struct Checker {
             case NodeKind::Identifier:
                 // Узлы Identifier — это в точности обращения к именам: имя поля
                 // у Member лежит текстом, а не ребёнком.
-                if (!store.hasGlobal(ast.text(node))) {
+                if (!store.hasGlobal(ast.text(node, source))) {
                     report(node, ErrorCode::Name, "unknown name");
                 }
                 break;
@@ -114,12 +117,12 @@ struct Checker {
 
 }  // namespace
 
-std::uint32_t check(Ast &ast, const Store &store, Diagnostic *out,
-                    std::uint32_t capacity) {
+std::uint32_t check(Ast &ast, std::string_view source, const Store &store,
+                    Diagnostic *out, std::uint32_t capacity) {
     const NodeId root = ast.root();
     if (root == kNoNode) { return 0; }
 
-    Checker checker{ast, store, out, capacity};
+    Checker checker{ast, source, store, out, capacity};
     // Плоский цикл, а не рекурсия: узлы лежат в пост-обходе, дети раньше
     // родителей, и проверкам пропускать нечего — значит предела глубины у
     // прохода нет вовсе.

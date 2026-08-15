@@ -38,18 +38,19 @@ inline constexpr NodeId kNoNode = 0;
 
 /// Дерево разбора: хранение, строитель, аксессоры.
 ///
-/// Ничем не владеет: текст имён и литералов — срезы исходного буфера, который
-/// обязан пережить Ast (docs/backlog.md B12).
+/// Ничем не владеет: текст имён и литералов — смещения в исходнике, который
+/// передаётся аксессорам параметром.
 class Ast {
    public:
     Ast();
 
-    /// Начинает новое дерево над этим исходником.
+    /// Начинает новое дерево над исходником такой длины.
     ///
     /// Выбрасывает всё, что было построено раньше: Ast пригоден для повторного
-    /// разбора. Буфер source обязан пережить Ast — имена и литералы хранятся
-    /// срезами (docs/backlog.md B12).
-    void reset(const char *source);
+    /// разбора. Самого исходника дерево не держит — узлы хранят смещения, а
+    /// байты приходят параметром в text(). Поэтому Ast безразличен к тому,
+    /// куда переехал буфер (docs/backlog.md B39).
+    void reset(std::uint32_t sourceLength);
 
     /// Объявляет узел корнем дерева.
     void setRoot(NodeId node) noexcept;
@@ -98,7 +99,15 @@ class Ast {
     [[nodiscard]] double numberValue(NodeId node) const noexcept;
     [[nodiscard]] bool boolValue(NodeId node) const noexcept;
     /// Имя либо содержимое строкового литерала без кавычек, сырыми байтами.
-    [[nodiscard]] std::string_view text(NodeId node) const noexcept;
+    ///
+    /// source обязан быть тем же текстом, над которым дерево построено.
+    /// В отладочной сборке несовпадение ловится утверждением по длине.
+    [[nodiscard]] std::string_view text(NodeId node,
+                                        std::string_view source) const noexcept;
+
+    /// Длина исходника, над которым построено дерево. Для утверждений и тестов.
+    [[nodiscard]] std::uint32_t sourceLength() const noexcept;
+
     [[nodiscard]] bool hasEscape(NodeId node) const noexcept;
 
     /// Число узлов, включая пустышку с индексом kNoNode. Для тестов и замеров.
@@ -130,7 +139,7 @@ class Ast {
     NodeId add(const Node &node);
     std::uint32_t pushChildren(const NodeId *ids, std::uint32_t count);
 
-    const char *src_ = nullptr;
+    std::uint32_t sourceLength_ = 0;
     NodeId root_ = kNoNode;
     bool checked_ = false;
     std::vector<Node> nodes_;      // TODO(B7): переехать в арену хранилища

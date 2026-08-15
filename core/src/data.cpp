@@ -42,8 +42,8 @@ bool isGlobalName(std::string_view name) noexcept {
     return tail.kind == TokenKind::End;
 }
 
-bool materialize(const Ast &ast, NodeId node, Store &store,
-                 Value *out, Diagnostic &diag) {
+bool materialize(const Ast &ast, std::string_view source, NodeId node,
+                 Store &store, Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
             *out = Value::number(ast.numberValue(node));
@@ -59,7 +59,7 @@ bool materialize(const Ast &ast, NodeId node, Store &store,
 
         case NodeKind::String: {
             std::string scratch;
-            *out = store.makeString(literalText(ast, node, scratch));
+            *out = store.makeString(literalText(ast, node, source, scratch));
             return true;
         }
 
@@ -68,7 +68,9 @@ bool materialize(const Ast &ast, NodeId node, Store &store,
             // вычисление: знака в NumericLiteral нет (docs/grammar.md §4.6),
             // и без этой ветки первое же отрицательное поле с бэкенда упёрлось
             // бы в «выражения в данных запрещены».
-            if (ast.op(node) != TokenKind::Minus) { return rejectNode(ast, node, diag); }
+            if (ast.op(node) != TokenKind::Minus) {
+                return rejectNode(ast, node, diag);
+            }
             const NodeId operand = ast.child(node, 0);
             if (ast.kind(operand) != NodeKind::Number) {
                 return rejectNode(ast, node, diag);
@@ -84,7 +86,7 @@ bool materialize(const Ast &ast, NodeId node, Store &store,
             const Value array = store.makeArray(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
-                if (!materialize(ast, ast.child(node, i), store, &element, diag)) {
+                if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
                 store.arrayPush(array, element);
@@ -100,12 +102,13 @@ bool materialize(const Ast &ast, NodeId node, Store &store,
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
-                if (!materialize(ast, ast.child(node, i + 1), store, &value, diag)) {
+                if (!materialize(ast, source, ast.child(node, i + 1), store, &value, diag)) {
                     return false;
                 }
                 // Повторный ключ заменяет значение: последний выигрывает.
-                store.objectSet(object, literalText(ast, ast.child(node, i), scratch),
-                              value);
+                store.objectSet(
+                    object, literalText(ast, ast.child(node, i), source, scratch),
+                    value);
             }
             *out = object;
             return true;
@@ -140,7 +143,7 @@ bool setVariable(Store &store, std::string_view name, std::string_view text,
     }
 
     Value value = Value::null();
-    if (!materialize(ast, ast.root(), store, &value, diag)) { return false; }
+    if (!materialize(ast, text, ast.root(), store, &value, diag)) { return false; }
 
     // Корень заводится только после успеха: отказ не оставляет имени.
     store.setGlobal(name, value);

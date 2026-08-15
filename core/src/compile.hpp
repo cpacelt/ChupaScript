@@ -14,7 +14,9 @@ namespace CS {
 /// первой. Ошибок проверки может быть сколько угодно, и в out попадает не
 /// больше capacity первых.
 ///
-/// Буфер source обязан пережить дерево: имена и литералы хранятся срезами.
+/// Пережить дерево буфер source не обязан: имена и литералы хранятся в узлах
+/// смещениями, а не срезами. Но тот же самый текст обязан быть передан
+/// вычислителю (evalExpression, runScript) — иначе смещения укажут не туда.
 std::uint32_t compileExpression(const char *source, std::uint32_t length,
                                 Ast &ast, const Store &store, Diagnostic *out,
                                 std::uint32_t capacity);

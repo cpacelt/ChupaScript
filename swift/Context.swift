@@ -2,24 +2,28 @@ import Foundation
 import ChupaScriptC
 
 /// Owns a ChupaScript engine context.
-/// All expressions, scripts, and values live until this context is deallocated.
+///
+/// Compiled units do not belong to the context: an `Expression` or a `Script`
+/// owns its own handle and frees it when it is deallocated, in any order
+/// relative to this context.
 ///
 /// Thread safety: one context = one thread at a time. The context MUST be
 /// deallocated on the same thread it was last used on — `deinit` calls
-/// `chupa_context_destroy` which unregisters the redraw callback, and a
-/// callback in flight on another thread during destruction is a race.
+/// `chupa_context_destroy` which tears down the engine while the redraw
+/// callback is still registered, and a callback in flight on another thread
+/// during destruction is a race.
 /// If the context was used on a background queue, capture it in a
 /// `DispatchQueue.async` block on that queue and let it release there.
-public final class ChupaContext {
+public final class Context {
 
     internal let handle: OpaquePointer
 
     /// Weak delegate for redraw notifications.
-    public weak var delegate: ChupaContextDelegate?
+    public weak var delegate: ContextDelegate?
 
     public init() {
         guard let h = chupa_context_create() else {
-            fatalError("ChupaContext: allocation failed")
+            fatalError("ChupaScript.Context: allocation failed")
         }
         handle = h
         registerRedrawCallback()
@@ -71,22 +75,22 @@ public final class ChupaContext {
 
     /// Compile a ChupaScript expression.
     /// Throws on compile error (syntax, unknown global, etc.).
-    public func compile(expression source: String) throws -> ChupaExpression {
+    public func compile(expression source: String) throws -> Expression {
         let h = source.withCString { ptr in
             chupa_compile_expression(handle, ptr, source.utf8.count)
         }
         guard let h else { throw makeError() }
-        return ChupaExpression(handle: h, context: self)
+        return Expression(handle: h, context: self)
     }
 
     /// Compile a ChupaScript script (statements).
     /// Throws on compile error.
-    public func compile(script source: String) throws -> ChupaScript {
+    public func compile(script source: String) throws -> Script {
         let h = source.withCString { ptr in
             chupa_compile_script(handle, ptr, source.utf8.count)
         }
         guard let h else { throw makeError() }
-        return ChupaScript(handle: h, context: self)
+        return Script(handle: h, context: self)
     }
 
     // MARK: - Run
@@ -94,46 +98,54 @@ public final class ChupaContext {
     /// Execute a compiled script. Returns false on runtime error.
     /// Partial changes may have been applied (see C API spec §7).
     @discardableResult
-    public func run(_ script: ChupaScript) -> Bool {
+    public func run(_ script: Script) -> Bool {
         chupa_run(handle, script.handle)
     }
 
     // MARK: - Error
 
     /// Last error on this context, or nil if last operation succeeded.
-    public var error: ChupaError? {
+    public var error: Error? {
         let code = chupa_context_error_code(handle)
         guard code != CHUPA_ERR_NONE else { return nil }
         return makeError()
     }
 
-    private func makeError() -> ChupaError {
+    internal func makeError() -> Error {
         let code = chupa_context_error_code(handle)
         let offset = chupa_context_error_offset(handle)
         var len: Int = 0
         let msgPtr = chupa_context_error(handle, &len)
         let message: String
         if let msgPtr, len > 0 {
-            message = String(bytes: UnsafeBufferPointer(start: msgPtr, count: len),
-                             encoding: .utf8) ?? ""
+            message = String(decoding: UnsafeRawBufferPointer(start: msgPtr, count: len),
+                             as: UTF8.self)
         } else {
             message = ""
         }
-        return ChupaError(code: code, message: message, offset: offset)
+        return Error(code: code, message: message, offset: offset)
     }
 
     // MARK: - Redraw trampoline
 
+    /// UAF-2 (backlog B38) — not fixed here, and this comment must not read as
+    /// if it were. The engine neither retains `user_data` nor unregisters the
+    /// listener in `chupa_context_destroy`; unregistering is the host's job
+    /// (`chupa_context_on_redraw(ctx, nil, nil)`), and this wrapper does not do
+    /// it anywhere, including `deinit`. `passUnretained` is the right half of
+    /// the pair — `passRetained` would make the context own itself and `deinit`
+    /// would never run — but the other half, the guaranteed unregister, is
+    /// missing.
     private func registerRedrawCallback() {
         let ptr = Unmanaged.passUnretained(self).toOpaque()
-        chupa_context_on_redraw(handle, ChupaContext.trampoline, ptr)
-    }
-
-    private static let trampoline: @convention(c) (
-        OpaquePointer?, UnsafeMutableRawPointer?
-    ) -> Void = { _, userData in
-        guard let userData else { return }
-        let ctx = Unmanaged<ChupaContext>.fromOpaque(userData).takeUnretainedValue()
-        ctx.delegate?.contextNeedsRedraw(ctx)
+        // The closure captures nothing, so it converts to a C function pointer.
+        // Written inline rather than as a typed constant: the header is inside
+        // an `assume_nonnull` region, and letting the parameter type drive
+        // inference avoids restating the imported signature by hand.
+        chupa_context_on_redraw(handle, { _, userData in
+            guard let userData else { return }
+            let ctx = Unmanaged<Context>.fromOpaque(userData).takeUnretainedValue()
+            ctx.delegate?.contextNeedsRedraw(ctx)
+        }, ptr)
     }
 }

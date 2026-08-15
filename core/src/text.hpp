@@ -22,8 +22,11 @@ std::string_view decodeEscapes(std::string_view raw, std::string &scratch);
 /// Флаг hasEscape избавляет от временного буфера в подавляющем большинстве
 /// случаев: экранирование редкость.
 ///
-/// Предусловие: ast.kind(node) == NodeKind::String.
-std::string_view literalText(const Ast &ast, NodeId node, std::string &scratch);
+/// Предусловие: ast.kind(node) == NodeKind::String. source обязан быть тем же
+/// текстом, над которым дерево построено: содержимое литерала дерево хранит
+/// смещением в нём.
+std::string_view literalText(const Ast &ast, NodeId node,
+                             std::string_view source, std::string &scratch);
 
 /// Достаточный размер буфера под formatNumber.
 ///

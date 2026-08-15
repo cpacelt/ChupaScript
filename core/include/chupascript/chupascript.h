@@ -14,10 +14,15 @@
 #  define CHUPA_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
 #  define CHUPA_NONNULL_END   _Pragma("clang assume_nonnull end")
 #  define CHUPA_NULLABLE      _Nullable
+/* Explicit non-null marker. Inside a CHUPA_NONNULL_BEGIN region the outer
+ * level of a multi-level pointer is NOT inferred once an inner level carries
+ * an explicit specifier, so it has to be spelled out. */
+#  define CHUPA_NONNULL       _Nonnull
 #else
 #  define CHUPA_NONNULL_BEGIN
 #  define CHUPA_NONNULL_END
 #  define CHUPA_NULLABLE
+#  define CHUPA_NONNULL
 #endif
 
 #define CHUPA_API __attribute__((visibility("default")))
@@ -37,6 +42,7 @@ CHUPA_NONNULL_BEGIN
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
+typedef struct ChupaString     ChupaString;
 
 typedef enum ChupaKind {
     CHUPA_KIND_NULL   = 0,
@@ -87,12 +93,12 @@ typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
- * ║ UAF-2 — ctx НЕ удерживает user_data и не знает, когда тот умер.      ║
+ * ║ UAF-2 — ctx does NOT retain user_data and cannot know when it dies.  ║
  * ╚══════════════════════════════════════════════════════════════════════╝
- * chupa_context_destroy НЕ снимает слушателя и не зовёт его на прощание.
- * Снять обязан хост — chupa_context_on_redraw(ctx, NULL, NULL) — ДО того,
- * как умрёт объект, на который смотрит user_data.
- * Swift-обёртка этого сейчас не делает: см. swift/ChupaContext.swift, UAF-2.
+ * chupa_context_destroy does NOT clear the listener and does NOT call it a
+ * final time. Clearing it is the host's duty — chupa_context_on_redraw(ctx,
+ * NULL, NULL) — BEFORE the object that user_data points at is destroyed.
+ * The Swift wrapper does not do this today: see swift/Context.swift, UAF-2.
  */
 CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
                                        ChupaRedrawListener listener,
@@ -104,25 +110,39 @@ chupa_compile_expression(ChupaContext *ctx, const char *source, size_t len);
 CHUPA_API ChupaScript *CHUPA_NULLABLE
 chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 
+/* Compiled units are owned by the caller, not by the context. Destroying the
+ * context does not free them; destroying a unit does not touch the context.
+ * A unit may be destroyed in any order relative to the context it was
+ * compiled against — it holds no reference to it. */
+CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
+CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
+
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
 
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
-/* ╔══════════════════════════════════════════════════════════════════════╗
- * ║ UAF-1 — out получает указатель ВНУТРЬ хранилища контекста.           ║
- * ╚══════════════════════════════════════════════════════════════════════╝
- * Окно валидности здесь НЕ ОПИСАНО, и это сама по себе дыра в контракте.
- * Фактически указатель мёртв после ЛЮБОЙ следующей операции над ctx —
- * chupa_context_set*, chupa_run или даже другого chupa_eval_string,
- * потому что вычисление строки само пишет в тот же пул.
- * Пользоваться можно только до следующего вызова: копируй сразу.
- * Реализация и план починки: core/src/c_api.cpp, метка UAF-1.
- */
+/* Evaluates the expression as a string.
+ *
+ * On CHUPA_OK, *out receives a ChupaString the CALLER now owns and must
+ * release with chupa_string_destroy. On CHUPA_NULL and CHUPA_ERROR, *out is
+ * left untouched and there is nothing to destroy.
+ *
+ * A ChupaString may be destroyed in any order relative to the context it was
+ * evaluated against — it holds no reference to it. It owns its bytes outright,
+ * so destroying the context neither frees it nor invalidates its bytes. */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
-                  const char *CHUPA_NULLABLE *CHUPA_NULLABLE out, size_t *len);
+                  ChupaString *CHUPA_NULLABLE *CHUPA_NONNULL out);
+
+/* The bytes are valid until chupa_string_destroy and not one moment longer.
+ * They are not NUL-terminated by contract; pass len if you need the length.
+ * Never freed by the caller — the ChupaString owns them. */
+CHUPA_API const char *chupa_string_bytes(const ChupaString *s,
+                                         size_t *CHUPA_NULLABLE len);
+
+CHUPA_API void chupa_string_destroy(ChupaString *CHUPA_NULLABLE s);
 
 CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
 

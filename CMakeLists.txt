@@ -65,6 +65,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         -Wdouble-promotion
         -Wformat=2
     )
+    # Публичный заголовок намеренно размечен _Nullable: без этих аннотаций
+    # Swift видит каждый указатель как implicitly-unwrapped optional. Это
+    # расширение Clang, и -Wpedantic на него ругается — предупреждение
+    # снимаем, аннотации оставляем. Опция сугубо clang'овая, GCC её не знает.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(chupascript_compile_options INTERFACE
+            -Wno-nullability-extension)
+    endif()
     if(CHUPASCRIPT_WERROR)
         target_compile_options(chupascript_compile_options INTERFACE -Werror)
     endif()

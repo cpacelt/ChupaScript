@@ -14,10 +14,15 @@
 #  define CHUPA_NONNULL_BEGIN _Pragma("clang assume_nonnull begin")
 #  define CHUPA_NONNULL_END   _Pragma("clang assume_nonnull end")
 #  define CHUPA_NULLABLE      _Nullable
+/* Explicit non-null marker. Inside a CHUPA_NONNULL_BEGIN region the outer
+ * level of a multi-level pointer is NOT inferred once an inner level carries
+ * an explicit specifier, so it has to be spelled out. */
+#  define CHUPA_NONNULL       _Nonnull
 #else
 #  define CHUPA_NONNULL_BEGIN
 #  define CHUPA_NONNULL_END
 #  define CHUPA_NULLABLE
+#  define CHUPA_NONNULL
 #endif
 
 #define CHUPA_API __attribute__((visibility("default")))
@@ -37,6 +42,7 @@ CHUPA_NONNULL_BEGIN
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
+typedef struct ChupaString     ChupaString;
 
 typedef enum ChupaKind {
     CHUPA_KIND_NULL   = 0,
@@ -117,19 +123,22 @@ chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
-/* ╔══════════════════════════════════════════════════════════════════════╗
- * ║ UAF-1 — out получает указатель ВНУТРЬ хранилища контекста.           ║
- * ╚══════════════════════════════════════════════════════════════════════╝
- * Окно валидности здесь НЕ ОПИСАНО, и это сама по себе дыра в контракте.
- * Фактически указатель мёртв после ЛЮБОЙ следующей операции над ctx —
- * chupa_context_set*, chupa_run или даже другого chupa_eval_string,
- * потому что вычисление строки само пишет в тот же пул.
- * Пользоваться можно только до следующего вызова: копируй сразу.
- * Реализация и план починки: core/src/c_api.cpp, метка UAF-1.
- */
+/* Evaluates the expression as a string.
+ *
+ * On CHUPA_OK, *out receives a ChupaString the CALLER now owns and must
+ * release with chupa_string_destroy. On CHUPA_NULL and CHUPA_ERROR, *out is
+ * left untouched and there is nothing to destroy. */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
-                  const char *CHUPA_NULLABLE *CHUPA_NULLABLE out, size_t *len);
+                  ChupaString *CHUPA_NULLABLE *CHUPA_NONNULL out);
+
+/* The bytes are valid until chupa_string_destroy and not one moment longer.
+ * They are not NUL-terminated by contract; pass len if you need the length.
+ * Never freed by the caller — the ChupaString owns them. */
+CHUPA_API const char *chupa_string_bytes(const ChupaString *s,
+                                         size_t *CHUPA_NULLABLE len);
+
+CHUPA_API void chupa_string_destroy(ChupaString *CHUPA_NULLABLE s);
 
 CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
 

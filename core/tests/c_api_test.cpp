@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <string>
+#include <string_view>
 
 // Helper: set a global from a ChupaScript literal text
 bool setGlobal(ChupaContext* ctx, const std::string& name, const std::string& text) {
@@ -151,12 +152,14 @@ TEST(CApiEval, EvalString) {
     EXPECT_TRUE(setGlobal(ctx, "name", "'hello'"));
     ChupaExpression* e = chupa_compile_expression(ctx, "name", 4);
     ASSERT_NE(e, nullptr);
-    const char* out = nullptr;
-    size_t len = 0;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
+    ChupaString* out = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
     ASSERT_NE(out, nullptr);
+    size_t len = 0;
+    const char* bytes = chupa_string_bytes(out, &len);
     EXPECT_EQ(len, 5u);
-    EXPECT_EQ(std::string(out, len), "hello");
+    EXPECT_EQ(std::string(bytes, len), "hello");
+    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -205,10 +208,13 @@ TEST(CApiEval, EvalTernary) {
     EXPECT_TRUE(setGlobal(ctx, "x", "5"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x > 3 ? 'big' : 'small'", 23);
     ASSERT_NE(e, nullptr);
-    const char* out = nullptr;
+    ChupaString* out = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
+    ASSERT_NE(out, nullptr);
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
-    EXPECT_EQ(std::string(out, len), "big");
+    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(std::string(bytes, len), "big");
+    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -245,10 +251,114 @@ TEST(CApiEval, SetStringThenEval) {
     chupa_context_set_string(ctx, "greeting", 8, "world", 5);
     ChupaExpression* e = chupa_compile_expression(ctx, "greeting", 8);
     ASSERT_NE(e, nullptr);
-    const char* out = nullptr;
+    ChupaString* out = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
+    ASSERT_NE(out, nullptr);
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
-    EXPECT_EQ(std::string(out, len), "world");
+    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(std::string(bytes, len), "world");
+    chupa_string_destroy(out);
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+// ─── ChupaString: строка во владении хоста ───
+
+TEST(CApi, EvalStringHandsOverOwnership) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    std::string_view src = "'привет'";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
+    ASSERT_NE(s, nullptr);
+
+    size_t len = 0;
+    const char* bytes = chupa_string_bytes(s, &len);
+    EXPECT_EQ(std::string(bytes, len), "привет");
+
+    chupa_string_destroy(s);
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, EvalStringSurvivesStoreMutation) {
+    // Это и есть UAF-1: раньше указатель смотрел внутрь пула движка, и любая
+    // следующая операция над контекстом могла его подвесить.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    std::string_view src = "'привет'";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
+    ASSERT_NE(s, nullptr);
+
+    // Растим пул текста так, чтобы он заведомо переехал.
+    std::string_view name = "filler";
+    std::string_view filler = "довольно длинная строка для роста пула";
+    for (int i = 0; i < 1000; ++i) {
+        chupa_context_set_string(ctx, name.data(), name.size(),
+                                 filler.data(), filler.size());
+    }
+
+    size_t len = 0;
+    const char* bytes = chupa_string_bytes(s, &len);
+    EXPECT_EQ(std::string(bytes, len), "привет");  // байты наши, не движка
+
+    chupa_string_destroy(s);
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, EvalStringOnNullLeavesOutUntouched) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ChupaExpression* e = chupa_compile_expression(ctx, "null", 4);
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_NULL);
+    EXPECT_EQ(s, nullptr);  // отдавать нечего — и не отдано
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, EvalStringOnNumberIsTypeError) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ChupaExpression* e = chupa_compile_expression(ctx, "42", 2);
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_ERROR);
+    EXPECT_EQ(s, nullptr);
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, StringDestroyAcceptsNull) {
+    chupa_string_destroy(nullptr);
+}
+
+TEST(CApi, StringBytesAcceptsNullLength) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ChupaExpression* e = chupa_compile_expression(ctx, "'ok'", 4);
+    ASSERT_NE(e, nullptr);
+    ChupaString* s = nullptr;
+    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
+    ASSERT_NE(s, nullptr);
+    size_t len = 0;
+    EXPECT_EQ(std::string(chupa_string_bytes(s, nullptr), 2), "ok");
+    EXPECT_EQ(std::string_view(chupa_string_bytes(s, &len), len), "ok");
+    chupa_string_destroy(s);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -282,10 +392,13 @@ TEST(CApiRun, RunScriptWithMemberAccess) {
     EXPECT_TRUE(chupa_run(ctx, s));
     ChupaExpression* e = chupa_compile_expression(ctx, "user.name", 9);
     ASSERT_NE(e, nullptr);
-    const char* out = nullptr;
+    ChupaString* out = nullptr;
+    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
+    ASSERT_NE(out, nullptr);
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
-    EXPECT_EQ(std::string(out, len), "new");
+    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(std::string(bytes, len), "new");
+    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_script_destroy(s);
     chupa_context_destroy(ctx);

@@ -7,7 +7,10 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
+#include <string>
 #include <string_view>
+#include <utility>
 
 #include "data.hpp"
 #include "diagnostic.hpp"
@@ -61,6 +64,13 @@ struct ChupaContext {
 // хост — контекст о скомпилированных единицах больше не знает (B35).
 struct ChupaExpression { CS::Expression impl; };
 struct ChupaScript     { CS::Script     impl; };
+
+/// Строка, отданная хосту во владение (спека Р6).
+///
+/// Однополевая обёртка: наружу видно только имя типа, внутри — обычная
+/// std::string. Отдельное выделение на строку — сознательный долг; сменить
+/// его на пул внутри контекста можно не трогая ни заголовок, ни Swift.
+struct ChupaString     { std::string    text; };
 
 // ─── Version ───
 
@@ -237,8 +247,7 @@ void chupa_script_destroy(ChupaScript* s) {
 // ядра. На исходах Ok и Null ядро diag не трогает вовсе (докблок
 // evalNumber/evalBool/evalString, core/src/expression.hpp), так что без
 // предварительной очистки успешное вычисление оставило бы наружу
-// диагностику от прошлого вызова. Исключение — chupa_eval_string: она
-// собрана вручную и чистит после, потому что ошибку типа ставит сама.
+// диагностику от прошлого вызова.
 
 namespace {
 
@@ -271,62 +280,34 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
     return toStatus(expr->impl.evalBool(c->engine, out, c->lastError));
 }
 
-// На evalString эта функция НЕ переводится: тот отдаёт результат в
-// std::string, а наружу здесь уходит сырой указатель — указывать ему было бы
-// некуда, временная строка умрёт на выходе. Отсюда ручной разбор вида
-// значения и метка UAF-1 ниже; и подпись, и дыру снимает задача 5.
 ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
-                              const char** out, size_t* len) {
+                              ChupaString** out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
 
-    CS::Value value = CS::Value::null();
-    CS::Diagnostic diag;
-    if (!expr->impl.eval(c->engine, &value, diag)) {
-        c->setError(diag);
-        return CHUPA_ERROR;
-    }
+    std::string text;
     c->clearError();
-    if (value.kind() == CS::Value::Kind::Null) {
-        return CHUPA_NULL;
-    }
-    if (value.kind() != CS::Value::Kind::String) {
-        c->setError({CS::ErrorCode::Type, 0, "eval_string: value is not a string"});
+    const CS::EvalStatus status = expr->impl.evalString(c->engine, &text,
+                                                        c->lastError);
+    if (status != CS::EvalStatus::Ok) { return toStatus(status); }
+
+    auto* s = new (std::nothrow) ::ChupaString{std::move(text)};
+    if (s == nullptr) {
+        c->setError({CS::ErrorCode::Memory, 0, "eval_string: out of memory"});
         return CHUPA_ERROR;
     }
-    std::string_view sv = c->engine.string(value);
-
-    // ╔════════════════════════════════════════════════════════════════════╗
-    // ║ UAF-1 — ЗДЕСЬ. Наружу отдаётся указатель ВНУТРЬ пула движка        ║
-    // ╚════════════════════════════════════════════════════════════════════╝
-    //
-    // sv.data() указывает внутрь CS::Store::text_ — это std::vector<char>
-    // (store.hpp:201). Сам CS::Store об этом честно предупреждает в своей
-    // шапке (store.hpp:24-26): срез живёт «лишь до ближайшей мутации того
-    // же хранилища; дольше их хранить нельзя».
-    //
-    // А мутирует text_ буквально всё:
-    //   chupa_context_set_string, chupa_context_set, конкатенация строк
-    //   и format ВНУТРИ следующего eval — все они зовут makeString.
-    // Любой из них может реаллоцировать вектор и подвесить выданный указатель.
-    //
-    //     chupa_eval_string(ctx, e, &p, &n);
-    //     chupa_context_set_string(ctx, "x", 1, "...", 3);  // text_ переехал
-    //     puts(p);                                          // UAF
-    //
-    // При этом в chupascript.h окно валидности НЕ ОПИСАНО ВООБЩЕ — контракт
-    // не нарушается, его просто нет.
-    //
-    // Ровно здесь обёртка обязана превращать внутреннее время жизни движка в
-    // стабильное для хоста — и не делает этого, а пробрасывает насквозь.
-    //
-    // Swift сегодня цел СЛУЧАЙНО: ChupaExpression.evalString копирует в String
-    // сразу же. Любой хост на C/ObjC/Rust, придержавший указатель, — падает.
-    //
-    // Починка: см. план, шаг 2 — копирование в буфер вызывающего.
-    *out = sv.data();
-    *len = sv.size();
+    *out = reinterpret_cast<ChupaString*>(s);
     return CHUPA_OK;
+}
+
+const char* chupa_string_bytes(const ChupaString* s, size_t* len) {
+    const auto* impl = reinterpret_cast<const ::ChupaString*>(s);
+    if (len) { *len = impl->text.size(); }
+    return impl->text.c_str();
+}
+
+void chupa_string_destroy(ChupaString* s) {
+    delete reinterpret_cast<::ChupaString*>(s);
 }
 
 // ─── Run ───

@@ -232,6 +232,13 @@ void chupa_script_destroy(ChupaScript* s) {
 }
 
 // ─── Eval ───
+//
+// Порядок чистки ошибки во всей секции один: clearError() идёт ДО вызова
+// ядра. На исходах Ok и Null ядро diag не трогает вовсе (докблок
+// evalNumber/evalBool/evalString, core/src/expression.hpp), так что без
+// предварительной очистки успешное вычисление оставило бы наружу
+// диагностику от прошлого вызова. Исключение — chupa_eval_string: она
+// собрана вручную и чистит после, потому что ошибку типа ставит сама.
 
 namespace {
 
@@ -248,9 +255,6 @@ ChupaStatus toStatus(CS::EvalStatus status) {
 
 }  // namespace
 
-// Чистка ошибки идёт ДО вызова ядра: на исходах Ok и Null ядро diag не
-// трогает вовсе (core/src/expression.hpp), так что без предварительной
-// очистки успешное вычисление оставило бы наружу прошлую диагностику.
 ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
                               double* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);

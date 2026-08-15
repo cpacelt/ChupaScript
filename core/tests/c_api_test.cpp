@@ -451,6 +451,24 @@ TEST(CApi, DestroyAcceptsNull) {
     chupa_script_destroy(nullptr);
 }
 
+TEST(CApi, UnitOutlivesTheContextItWasCompiledAgainst) {
+    // chupascript.h обещает наружу: «A unit may be destroyed in any order
+    // relative to the context it was compiled against». Здесь порядок
+    // обратный обычному — сначала умирает контекст.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_TRUE(chupa_context_set(ctx, "obj", 3, "{ 'n': 1 }", 10));
+
+    ChupaExpression* e = chupa_compile_expression(ctx, "obj.n + 1", 9);
+    ASSERT_NE(e, nullptr);
+    ChupaScript* s = chupa_compile_script(ctx, "obj.n = 7;", 10);
+    ASSERT_NE(s, nullptr);
+
+    chupa_context_destroy(ctx);
+    chupa_expression_destroy(e);
+    chupa_script_destroy(s);
+}
+
 TEST(CApi, ScriptIsOwnedByHost) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);

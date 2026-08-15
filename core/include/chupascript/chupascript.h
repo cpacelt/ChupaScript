@@ -93,12 +93,12 @@ typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
- * ║ UAF-2 — ctx НЕ удерживает user_data и не знает, когда тот умер.      ║
+ * ║ UAF-2 — ctx does NOT retain user_data and cannot know when it dies.  ║
  * ╚══════════════════════════════════════════════════════════════════════╝
- * chupa_context_destroy НЕ снимает слушателя и не зовёт его на прощание.
- * Снять обязан хост — chupa_context_on_redraw(ctx, NULL, NULL) — ДО того,
- * как умрёт объект, на который смотрит user_data.
- * Swift-обёртка этого сейчас не делает: см. swift/Context.swift, UAF-2.
+ * chupa_context_destroy does NOT clear the listener and does NOT call it a
+ * final time. Clearing it is the host's duty — chupa_context_on_redraw(ctx,
+ * NULL, NULL) — BEFORE the object that user_data points at is destroyed.
+ * The Swift wrapper does not do this today: see swift/Context.swift, UAF-2.
  */
 CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
                                        ChupaRedrawListener listener,

@@ -311,9 +311,11 @@ BENCHMARK(BM_Check_Handler);
 // значения роли не играют — строится один раз до цикла и не растёт: сама
 // компиляция ничего в store не пишет.
 
-/// Компиляция выражения, новый путь (с копией исходника). Expression — вне
-/// цикла и переиспользуется: Expression::compile() принимает *out именно
-/// затем, чтобы так можно было делать (contract: «неудача не портит *out»).
+/// Компиляция выражения, новый путь (с копией исходника). Приёмник создаётся
+/// внутри цикла: пропс компилируется однажды при парсинге и дальше только
+/// вычисляется, так что каждая компиляция в жизни продукта — в свежий
+/// объект. Переиспользование приёмника между итерациями измеряло бы сценарий,
+/// которого нет.
 void BM_Compile_Expr_New(benchmark::State &state, std::string_view source) {
     Store store;
     if (!fill(store)) {
@@ -321,8 +323,8 @@ void BM_Compile_Expr_New(benchmark::State &state, std::string_view source) {
         return;
     }
     Diagnostic diag;
-    CS::Expression expr;
     for (auto _ : state) {
+        CS::Expression expr;
         std::uint32_t errors = CS::Expression::compile(source, store, &expr,
                                                         &diag, 1);
         if (errors != 0) {
@@ -334,16 +336,16 @@ void BM_Compile_Expr_New(benchmark::State &state, std::string_view source) {
 }
 
 /// Компиляция выражения, старый путь (без копии, дерево смотрит в буфер
-/// вызывающего). Ast — вне цикла и переиспользуется, симметрично New.
+/// вызывающего). Ast — внутри цикла, симметрично New.
 void BM_Compile_Expr_Old(benchmark::State &state, std::string_view source) {
     Store store;
     if (!fill(store)) {
         state.SkipWithError("setVariable failed");
         return;
     }
-    Ast ast;
     Diagnostic diag;
     for (auto _ : state) {
+        Ast ast;
         std::uint32_t errors = CS::compileExpression(
             source.data(), static_cast<std::uint32_t>(source.size()), ast,
             store, &diag, 1);
@@ -381,8 +383,9 @@ BENCHMARK_CAPTURE(BM_Compile_Expr_Old, CallTernary,
 BENCHMARK_CAPTURE(BM_Copy_SourceBytes, CallTernary,
                   "count(items) > 0 ? items[0] : user.name");
 
-/// Компиляция скрипта, новый путь (с копией исходника). Script — вне цикла,
-/// симметрично Old, по той же причине, что и у выражения.
+/// Компиляция скрипта, новый путь (с копией исходника). Script — внутри
+/// цикла, по той же причине, что и у выражения: свежий приёмник на каждую
+/// компиляцию.
 void BM_Compile_Script_New(benchmark::State &state, std::string_view source) {
     Store store;
     if (!fill(store)) {
@@ -390,8 +393,8 @@ void BM_Compile_Script_New(benchmark::State &state, std::string_view source) {
         return;
     }
     Diagnostic diag;
-    CS::Script script;
     for (auto _ : state) {
+        CS::Script script;
         std::uint32_t errors = CS::Script::compile(source, store, &script,
                                                     &diag, 1);
         if (errors != 0) {
@@ -402,16 +405,17 @@ void BM_Compile_Script_New(benchmark::State &state, std::string_view source) {
     }
 }
 
-/// Компиляция скрипта, старый путь (без копии).
+/// Компиляция скрипта, старый путь (без копии). Ast — внутри цикла,
+/// симметрично New.
 void BM_Compile_Script_Old(benchmark::State &state, std::string_view source) {
     Store store;
     if (!fill(store)) {
         state.SkipWithError("setVariable failed");
         return;
     }
-    Ast ast;
     Diagnostic diag;
     for (auto _ : state) {
+        Ast ast;
         std::uint32_t errors = CS::compileScript(
             source.data(), static_cast<std::uint32_t>(source.size()), ast,
             store, &diag, 1);

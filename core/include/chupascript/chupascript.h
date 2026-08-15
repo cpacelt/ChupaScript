@@ -104,6 +104,13 @@ chupa_compile_expression(ChupaContext *ctx, const char *source, size_t len);
 CHUPA_API ChupaScript *CHUPA_NULLABLE
 chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 
+/* Compiled units are owned by the caller, not by the context. Destroying the
+ * context does not free them; destroying a unit does not touch the context.
+ * A unit may be destroyed in any order relative to the context it was
+ * compiled against — it holds no reference to it. */
+CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
+CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
+
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
 

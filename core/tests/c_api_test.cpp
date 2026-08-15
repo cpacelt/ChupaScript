@@ -84,6 +84,7 @@ TEST(CApiCompile, CompileExpression) {
     EXPECT_TRUE(setGlobal(ctx, "x", "42"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
     EXPECT_NE(e, nullptr);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -114,6 +115,7 @@ TEST(CApiEval, EvalNumber) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
     EXPECT_EQ(out, 42.0);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -126,6 +128,7 @@ TEST(CApiEval, EvalNumberFromExpression) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
     EXPECT_EQ(out, 15.0);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -138,6 +141,7 @@ TEST(CApiEval, EvalBool) {
     bool out = false;
     EXPECT_EQ(chupa_eval_bool(ctx, e, &out), CHUPA_OK);
     EXPECT_TRUE(out);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -153,6 +157,7 @@ TEST(CApiEval, EvalString) {
     ASSERT_NE(out, nullptr);
     EXPECT_EQ(len, 5u);
     EXPECT_EQ(std::string(out, len), "hello");
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -164,6 +169,7 @@ TEST(CApiEval, EvalNullReturnsChupaNull) {
     ASSERT_NE(e, nullptr);
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_NULL);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -176,6 +182,7 @@ TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_ERROR);
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -188,6 +195,7 @@ TEST(CApiEval, EvalMemberAccess) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
     EXPECT_EQ(out, 30.0);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -201,6 +209,7 @@ TEST(CApiEval, EvalTernary) {
     size_t len = 0;
     EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
     EXPECT_EQ(std::string(out, len), "big");
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -213,6 +222,7 @@ TEST(CApiEval, SetBoolThenEval) {
     bool out = false;
     EXPECT_EQ(chupa_eval_bool(ctx, e, &out), CHUPA_OK);
     EXPECT_TRUE(out);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -225,6 +235,7 @@ TEST(CApiEval, SetNumberThenEval) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
     EXPECT_EQ(out, 3.14);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -238,6 +249,7 @@ TEST(CApiEval, SetStringThenEval) {
     size_t len = 0;
     EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
     EXPECT_EQ(std::string(out, len), "world");
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
@@ -256,6 +268,8 @@ TEST(CApiRun, RunScriptSetsVariable) {
     double out = 0;
     EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
     EXPECT_EQ(out, 42.0);
+    chupa_expression_destroy(e);
+    chupa_script_destroy(s);
     chupa_context_destroy(ctx);
 }
 
@@ -272,6 +286,8 @@ TEST(CApiRun, RunScriptWithMemberAccess) {
     size_t len = 0;
     EXPECT_EQ(chupa_eval_string(ctx, e, &out, &len), CHUPA_OK);
     EXPECT_EQ(std::string(out, len), "new");
+    chupa_expression_destroy(e);
+    chupa_script_destroy(s);
     chupa_context_destroy(ctx);
 }
 
@@ -284,6 +300,7 @@ TEST(CApiRun, RunScriptFailsOnTypeError) {
     ASSERT_NE(s, nullptr);
     EXPECT_FALSE(chupa_run(ctx, s));
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    chupa_script_destroy(s);
     chupa_context_destroy(ctx);
 }
 
@@ -356,6 +373,7 @@ TEST(CApiRedraw, FiresAfterRun) {
     ASSERT_NE(s, nullptr);
     EXPECT_TRUE(chupa_run(ctx, s));
     EXPECT_EQ(g_redrawCount, 1);
+    chupa_script_destroy(s);
     chupa_context_destroy(ctx);
 }
 
@@ -373,11 +391,83 @@ TEST(CApiRedraw, UserDataPassedThrough) {
     int marker = 42;
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_on_redraw(ctx, [](ChupaContext* ctx, void* user_data) {
+    chupa_context_on_redraw(ctx, [](ChupaContext* /*ctx*/, void* user_data) {
         g_redrawCount++;
         EXPECT_EQ(*static_cast<int*>(user_data), 42);
     }, &marker);
     chupa_context_set_bool(ctx, "flag", 4, true);
     EXPECT_EQ(g_redrawCount, 1);
+    chupa_context_destroy(ctx);
+}
+
+// ─── Ownership of compiled units ───
+
+TEST(CApi, SecondCompileDoesNotBreakTheFirst) {
+    // Ровно тот сценарий, на котором ломался UAF-3 (B39): оба исходника
+    // короче 23 байт, то есть оба попадали в SSO.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_TRUE(chupa_context_set(ctx, "a", 1, "2", 1));
+    ASSERT_TRUE(chupa_context_set(ctx, "b", 1, "3", 1));
+
+    ChupaExpression* first = chupa_compile_expression(ctx, "a + b", 5);
+    ASSERT_NE(first, nullptr);
+    ChupaExpression* second = chupa_compile_expression(ctx, "a * b", 5);
+    ASSERT_NE(second, nullptr);
+
+    double out = 0.0;
+    EXPECT_EQ(chupa_eval_number(ctx, first, &out), CHUPA_OK);
+    EXPECT_DOUBLE_EQ(out, 5.0);
+
+    chupa_expression_destroy(first);
+    chupa_expression_destroy(second);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, ExpressionOutlivesNothingAndIsFreedByHost) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    // Компиляция в цикле больше не растит контекст по построению.
+    for (int i = 0; i < 1000; ++i) {
+        ChupaExpression* e = chupa_compile_expression(ctx, "1 + 1", 5);
+        ASSERT_NE(e, nullptr);
+        chupa_expression_destroy(e);
+    }
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, FailedCompileLeavesNothingBehind) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    for (int i = 0; i < 1000; ++i) {
+        EXPECT_EQ(chupa_compile_expression(ctx, "a..b", 4), nullptr);
+    }
+    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_SYNTAX);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, DestroyAcceptsNull) {
+    chupa_expression_destroy(nullptr);
+    chupa_script_destroy(nullptr);
+}
+
+TEST(CApi, ScriptIsOwnedByHost) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    // Цель присваивания обязана быть Member или Index (docs/semantics.md
+    // §7.2), голый идентификатор язык отвергает — отсюда объект.
+    ASSERT_TRUE(chupa_context_set(ctx, "obj", 3, "{ 'n': 1 }", 10));
+
+    ChupaScript* s = chupa_compile_script(ctx, "obj.n = obj.n + 1;", 18);
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    chupa_script_destroy(s);
+
+    ChupaExpression* e = chupa_compile_expression(ctx, "obj.n", 5);
+    ASSERT_NE(e, nullptr);
+    double out = 0.0;
+    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_DOUBLE_EQ(out, 2.0);
+    chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }

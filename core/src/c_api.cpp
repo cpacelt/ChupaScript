@@ -1,22 +1,18 @@
-// C API boundary — context lifecycle, set functions, version.
+// C API boundary — a thin wrapper over the core entities.
 //
 // The public C header declares the full API surface; this translation unit
-// implements the context lifecycle, variable setters, and version query.
-// Compile/eval/run/error-reporting functions are filled in by Tasks 3–5.
+// implements it by forwarding to CS::Store, CS::Expression and CS::Script.
 #include "chupascript/chupascript.h"
 
-#include <cstdlib>
+#include <cstdint>
 #include <cstring>
 #include <memory>
-#include <string>
 #include <string_view>
-#include <vector>
 
-#include "ast.hpp"
-#include "compile.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
-#include "eval.hpp"
+#include "expression.hpp"
+#include "script.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -26,48 +22,9 @@
 struct ChupaContext {
     CS::Store engine;
 
-    // ╔════════════════════════════════════════════════════════════════════╗
-    // ║ UAF-3 — ЗДЕСЬ КОРЕНЬ. std::vector<std::string> под сырым указателем ║
-    // ╚════════════════════════════════════════════════════════════════════╝
-    //
-    // Каждый Ast хранит СЫРОЙ const char* на байты своего исходника
-    // (ast.hpp:133, src_). Указатель берётся отсюда: sources.back().c_str().
-    //
-    // Но vector при росте ПЕРЕМЕЩАЕТ свои элементы в новый буфер.
-    //   • Длинная строка (> 22 байт на libc++/x86-64): байты в куче,
-    //     перемещение переносит только указатель — данные на месте, всё цело.
-    //   • КОРОТКАЯ строка (SSO): байты лежат ВНУТРИ самого std::string,
-    //     то есть внутри буфера вектора. Перемещение их ДВИГАЕТ.
-    //     Все ранее выданные src_ повисают.
-    //
-    // Практически это значит: скомпилировал два выражения — первое сломано.
-    //
-    //     compile("a + b");   // src_ -> внутрь sources[0] (5 байт, SSO)
-    //     compile("c * d");   // вектор вырос, sources[0] уехал
-    //     eval(первое);       // ЧТЕНИЕ ОСВОБОЖДЁННОЙ ПАМЯТИ
-    //
-    // "a + b", "count(x)", "user.name" — всё это короче 23 байт. Это не
-    // угловой случай, это обычный путь.
-    //
-    // Тесты молчат, потому что c_api_test.cpp компилирует и сразу вычисляет,
-    // а уехавшая SSO-память ещё не отдана ОС и читается как валидная.
-    // Видно только под ASan.
-    //
-    // Починка: см. план, шаг 1 — хранить std::unique_ptr<const char[]>,
-    // чей адрес не зависит от роста вектора.
-    std::vector<std::string> sources;                    // copied source texts
-    std::vector<std::unique_ptr<CS::Ast>> asts;          // compiled trees
-    std::vector<std::unique_ptr<ChupaExpression>> expressions;  // wrapper structs
-    std::vector<std::unique_ptr<ChupaScript>> scripts;          // wrapper structs
-    //
-    // ┌─ УТЕЧКА (не UAF, но рядом) ────────────────────────────────────────┐
-    // │ В эти четыре вектора только ДОБАВЛЯЮТ. В chupascript.h нет ни      │
-    // │ chupa_expression_destroy, ни chupa_script_destroy — освободить     │
-    // │ одно выражение нельзя, всё живёт до chupa_context_destroy.         │
-    // │ Компиляция в цикле = неограниченный рост по построению.            │
-    // │ Хуже: при ошибке компиляции sources.emplace_back уже случился и    │
-    // │ назад не откатывается — каждый неудачный разбор оставляет мусор.   │
-    // └────────────────────────────────────────────────────────────────────┘
+    /// Состояние последней ошибки в стиле errno — идиома C, вынужденная тем,
+    /// что второе значение из функции здесь вернуть нечем. В C++ ошибка
+    /// приходит выходным параметром Diagnostic & (core/src/expression.hpp).
     CS::Diagnostic lastError;
 
     // ╔════════════════════════════════════════════════════════════════════╗
@@ -100,18 +57,10 @@ struct ChupaContext {
     }
 };
 
-// sourceIndex — временный костыль: Ast больше не держит исходник, а
-// evalExpression/runScript требуют его параметром. Индекс указывает в
-// ChupaContext::sources. Уйдёт вместе с самим sources в задаче 4.
-struct ChupaExpression {
-    CS::Ast* ast = nullptr;
-    std::size_t sourceIndex = 0;
-};
-
-struct ChupaScript {
-    CS::Ast* ast = nullptr;
-    std::size_t sourceIndex = 0;
-};
+// Обёртки однополевые: вся работа живёт в сущностях ядра, а владеет ими
+// хост — контекст о скомпилированных единицах больше не знает (B35).
+struct ChupaExpression { CS::Expression impl; };
+struct ChupaScript     { CS::Script     impl; };
 
 // ─── Version ───
 
@@ -243,115 +192,85 @@ const char* chupa_context_error(const ChupaContext* ctx, size_t* len) {
 ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
                                           const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    // ⚠️⚠️⚠️ UAF-3 — ЗДЕСЬ ⚠️⚠️⚠️  (подробно: см. поле sources выше)
-    //
-    // Комментарий ниже — «Ast stores string_views into this buffer» — верен и
-    // именно поэтому опасен: buffer УЕЗЖАЕТ при следующем emplace_back, если
-    // строка попала в SSO. Второй compile ломает первый Ast.
-    //
-    // Copy source — Ast stores string_views into this buffer
-    c->sources.emplace_back(source, len);
-    const std::size_t sourceIndex = c->sources.size() - 1;
-    const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
-
-    auto ast = std::make_unique<CS::Ast>();
+    auto e = std::make_unique<::ChupaExpression>();
 
     CS::Diagnostic diag;
-    const std::uint32_t errors = CS::compileExpression(
-        src, static_cast<std::uint32_t>(len), *ast, c->engine, &diag, 1);
-
+    const std::uint32_t errors = CS::Expression::compile(
+        std::string_view(source, len), c->engine, &e->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
-        return nullptr;
+        return nullptr;   // unique_ptr уносит с собой всё, что успело завестись
     }
-
     c->clearError();
-    auto expr =
-        std::make_unique<ChupaExpression>(ChupaExpression{ast.get(), sourceIndex});
-    ChupaExpression* raw = expr.get();
-    c->expressions.push_back(std::move(expr));
-    c->asts.push_back(std::move(ast));
-    return reinterpret_cast<ChupaExpression*>(raw);
+    return reinterpret_cast<ChupaExpression*>(e.release());
 }
 
 ChupaScript* chupa_compile_script(ChupaContext* ctx,
                                   const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    // ⚠️⚠️⚠️ UAF-3 — ЗДЕСЬ ТОЖЕ ⚠️⚠️⚠️  (то же самое, что в compile_expression)
-    c->sources.emplace_back(source, len);
-    const std::size_t sourceIndex = c->sources.size() - 1;
-    const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
-
-    auto ast = std::make_unique<CS::Ast>();
+    auto s = std::make_unique<::ChupaScript>();
 
     CS::Diagnostic diag;
-    const std::uint32_t errors = CS::compileScript(
-        src, static_cast<std::uint32_t>(len), *ast, c->engine, &diag, 1);
-
+    const std::uint32_t errors = CS::Script::compile(
+        std::string_view(source, len), c->engine, &s->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
-        return nullptr;
+        return nullptr;   // unique_ptr уносит с собой всё, что успело завестись
     }
-
     c->clearError();
-    auto script =
-        std::make_unique<ChupaScript>(ChupaScript{ast.get(), sourceIndex});
-    ChupaScript* raw = script.get();
-    c->scripts.push_back(std::move(script));
-    c->asts.push_back(std::move(ast));
-    return reinterpret_cast<ChupaScript*>(raw);
+    return reinterpret_cast<ChupaScript*>(s.release());
+}
+
+// ─── Destroy ───
+
+void chupa_expression_destroy(ChupaExpression* e) {
+    delete reinterpret_cast<::ChupaExpression*>(e);
+}
+
+void chupa_script_destroy(ChupaScript* s) {
+    delete reinterpret_cast<::ChupaScript*>(s);
 }
 
 // ─── Eval ───
 
+namespace {
+
+/// Перевод исхода ядра в исход C. Единственная работа, которая остаётся
+/// прокладке после переезда: два перечисления об одном и том же.
+ChupaStatus toStatus(CS::EvalStatus status) {
+    switch (status) {
+        case CS::EvalStatus::Ok:    return CHUPA_OK;
+        case CS::EvalStatus::Null:  return CHUPA_NULL;
+        case CS::EvalStatus::Error: return CHUPA_ERROR;
+    }
+    return CHUPA_ERROR;
+}
+
+}  // namespace
+
+// Чистка ошибки идёт ДО вызова ядра: на исходах Ok и Null ядро diag не
+// трогает вовсе (core/src/expression.hpp), так что без предварительной
+// очистки успешное вычисление оставило бы наружу прошлую диагностику.
 ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
                               double* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
-
-    CS::Value value = CS::Value::null();
-    CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
-                            &value, diag)) {
-        c->setError(diag);
-        return CHUPA_ERROR;
-    }
     c->clearError();
-    if (value.kind() == CS::Value::Kind::Null) {
-        return CHUPA_NULL;
-    }
-    if (value.kind() != CS::Value::Kind::Number) {
-        c->setError({CS::ErrorCode::Type, 0, "eval_number: value is not a number"});
-        return CHUPA_ERROR;
-    }
-    *out = value.numberValue();
-    return CHUPA_OK;
+    return toStatus(expr->impl.evalNumber(c->engine, out, c->lastError));
 }
 
 ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
                             bool* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
-
-    CS::Value value = CS::Value::null();
-    CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
-                            &value, diag)) {
-        c->setError(diag);
-        return CHUPA_ERROR;
-    }
     c->clearError();
-    if (value.kind() == CS::Value::Kind::Null) {
-        return CHUPA_NULL;
-    }
-    if (value.kind() != CS::Value::Kind::Boolean) {
-        c->setError({CS::ErrorCode::Type, 0, "eval_bool: value is not a boolean"});
-        return CHUPA_ERROR;
-    }
-    *out = value.booleanValue();
-    return CHUPA_OK;
+    return toStatus(expr->impl.evalBool(c->engine, out, c->lastError));
 }
 
+// На evalString эта функция НЕ переводится: тот отдаёт результат в
+// std::string, а наружу здесь уходит сырой указатель — указывать ему было бы
+// некуда, временная строка умрёт на выходе. Отсюда ручной разбор вида
+// значения и метка UAF-1 ниже; и подпись, и дыру снимает задача 5.
 ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
                               const char** out, size_t* len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
@@ -359,8 +278,7 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
 
     CS::Value value = CS::Value::null();
     CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
-                            &value, diag)) {
+    if (!expr->impl.eval(c->engine, &value, diag)) {
         c->setError(diag);
         return CHUPA_ERROR;
     }
@@ -415,7 +333,7 @@ bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
     CS::Diagnostic diag;
-    if (!CS::runScript(*s->ast, c->sources[s->sourceIndex], c->engine, diag)) {
+    if (!s->impl.run(c->engine, diag)) {
         c->setError(diag);
         return false;
     }

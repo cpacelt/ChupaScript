@@ -394,10 +394,10 @@ TEST(Script, CompilesAndRuns) {
               0u);
     ASSERT_TRUE(script.run(store, diag));
 
-    CS::Value user = CS::Value::null();
-    ASSERT_TRUE(store.global("user", &user));
-    CS::Value name = CS::Value::null();
-    ASSERT_TRUE(store.objectGet(user, "name", &name));
+    // Store::global и Store::objectGet возвращают Value, а не пишут в
+    // выходной параметр (core/src/store.hpp:107,152).
+    const CS::Value user = store.global("user");
+    const CS::Value name = store.objectGet(user, "name");
     EXPECT_EQ(store.string(name), "Петя");
 }
 
@@ -427,7 +427,7 @@ TEST(Script, ReportsUnknownName) {
 }  // namespace
 ```
 
-Сверься с `core/tests/eval_test.cpp` и `store_test.cpp` по именам аксессоров `Store` (`global`, `objectGet`, `string`) — если они называются иначе, поправь вызовы, а не смысл теста.
+Сверься с `core/tests/eval_test.cpp` по тому, как там достают глобальные переменные и поля — имена аксессоров выше проверены по `core/src/store.hpp`, но форма утверждений может отличаться.
 
 - [ ] **Шаг 2: Прогнать и убедиться, что не собирается**
 

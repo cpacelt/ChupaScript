@@ -284,9 +284,9 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
                               ChupaString** out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
 
     std::string text;
-    c->clearError();
     const CS::EvalStatus status = expr->impl.evalString(c->engine, &text,
                                                         c->lastError);
     if (status != CS::EvalStatus::Ok) { return toStatus(status); }

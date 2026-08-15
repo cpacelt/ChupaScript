@@ -331,14 +331,62 @@ TEST(CApi, EvalStringOnNullLeavesOutUntouched) {
 TEST(CApi, EvalStringOnNumberIsTypeError) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    ChupaExpression* e = chupa_compile_expression(ctx, "42", 2);
+    // Корень намеренно НЕ в первом байте: раньше прокладка ставила в ошибку
+    // типа хардкод offset = 0 и на выражении вида "42" разницы было бы не
+    // видно. Теперь смещение ставит ядро — и оно настоящее.
+    std::string_view src = "1 + 41";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
     ChupaString* s = nullptr;
     EXPECT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_ERROR);
     EXPECT_EQ(s, nullptr);
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    EXPECT_EQ(chupa_context_error_offset(ctx), 2u);  // '+', корень выражения
 
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, EvalStringOutlivesTheContext) {
+    // Порядок разрушения свободный: строка владеет своими байтами и на
+    // контекст не ссылается. Заголовок это обещает — тест это держит.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    std::string_view src = "'привет'";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
+    ASSERT_NE(s, nullptr);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);  // контекст умер РАНЬШЕ строки
+
+    size_t len = 0;
+    const char* bytes = chupa_string_bytes(s, &len);
+    EXPECT_EQ(std::string(bytes, len), "привет");
+    chupa_string_destroy(s);
+}
+
+TEST(CApi, EvalStringOnEmptyStringIsOkAndNotNull) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    std::string_view src = "''";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
+    ASSERT_NE(e, nullptr);
+
+    ChupaString* s = nullptr;
+    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);  // пустая — не null
+    ASSERT_NE(s, nullptr);
+
+    size_t len = 1;
+    const char* bytes = chupa_string_bytes(s, &len);
+    EXPECT_NE(bytes, nullptr);  // ноль байт — но указатель всё равно есть
+    EXPECT_EQ(len, 0u);
+
+    chupa_string_destroy(s);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -350,14 +398,17 @@ TEST(CApi, StringDestroyAcceptsNull) {
 TEST(CApi, StringBytesAcceptsNullLength) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    ChupaExpression* e = chupa_compile_expression(ctx, "'ok'", 4);
+    std::string_view src = "'ok'";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
     ChupaString* s = nullptr;
     ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
     ASSERT_NE(s, nullptr);
     size_t len = 0;
-    EXPECT_EQ(std::string(chupa_string_bytes(s, nullptr), 2), "ok");
-    EXPECT_EQ(std::string_view(chupa_string_bytes(s, &len), len), "ok");
+    const char* with_len = chupa_string_bytes(s, &len);
+    EXPECT_EQ(std::string_view(with_len, len), "ok");
+    // len == nullptr принимается, и байты те же самые.
+    EXPECT_EQ(std::string_view(chupa_string_bytes(s, nullptr), len), "ok");
     chupa_string_destroy(s);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);

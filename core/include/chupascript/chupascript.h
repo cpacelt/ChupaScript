@@ -127,7 +127,11 @@ chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
  *
  * On CHUPA_OK, *out receives a ChupaString the CALLER now owns and must
  * release with chupa_string_destroy. On CHUPA_NULL and CHUPA_ERROR, *out is
- * left untouched and there is nothing to destroy. */
+ * left untouched and there is nothing to destroy.
+ *
+ * A ChupaString may be destroyed in any order relative to the context it was
+ * evaluated against — it holds no reference to it. It owns its bytes outright,
+ * so destroying the context neither frees it nor invalidates its bytes. */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
                   ChupaString *CHUPA_NULLABLE *CHUPA_NONNULL out);

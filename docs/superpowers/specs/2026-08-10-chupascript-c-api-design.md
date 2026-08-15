@@ -364,16 +364,23 @@ CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
  * вычисление и проверка типа — один вызов. CHUPA_NULL означает, что
  * выражение дало null: для вьюхи это «возьми значение по умолчанию».
  * Число и логическое возвращаются копией и живут сколько угодно;
- * строка указывает в память контекста (см. правило ниже). */
+ * строка отдаётся хосту во владение (см. правило ниже). */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
 
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
+/* Строка возвращается не указателем внутрь контекста, а объектом во
+ * владении хоста: см. правило времени жизни ниже. */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
 chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
-                  const char *CHUPA_NULLABLE *CHUPA_NULLABLE out, size_t *len);
+                  ChupaString *CHUPA_NULLABLE *CHUPA_NONNULL out);
+
+CHUPA_API const char *chupa_string_bytes(const ChupaString *s,
+                                         size_t *CHUPA_NULLABLE len);
+
+CHUPA_API void chupa_string_destroy(ChupaString *CHUPA_NULLABLE s);
 ```
 
 > **`ChupaValue` удалён.** В предыдущей редакции спецификации API содержал
@@ -389,13 +396,24 @@ chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
 
 **Время жизни результата.**
 
-> Указатель, отданный `chupa_eval_string`, действителен до следующего
-> вычисления на этом контексте.
+> Строка, отданная `chupa_eval_string`, принадлежит хосту. Её байты
+> действительны до `chupa_string_destroy` и ни мгновением дольше.
 
-Правило описывает реальность буквально. Пулы значений переезжают при росте
-(`2026-08-11-chupascript-values-design.md` §3), поэтому указатель, выданный до
-ближайшей мутации, после неё повисает. Хост копирует строку в свой тип при
-первом касании, и держать результат дольше ему незачем.
+Раньше здесь стояло правило «действителен до следующего вычисления на этом
+контексте»: наружу уходил указатель внутрь пула значений, а пулы переезжают при
+росте (`2026-08-11-chupascript-values-design.md` §3). Это описывало реальность,
+но перекладывало внутреннее время жизни движка на хоста — дыра UAF-1 (B37).
+
+Правила больше нет, потому что нет и окна. `chupa_eval_string` отдаёт
+непрозрачный `ChupaString`, который владеет собственной копией байтов;
+`chupa_string_bytes` даёт к ним доступ, `chupa_string_destroy` их освобождает.
+Разрушать строку можно в любом порядке относительно контекста: на контекст она
+не ссылается, и `chupa_context_destroy` её байтов не касается. Копировать
+строку при первом касании хосту больше не нужно — копия уже сделана за него.
+
+Обоснование выбора (непрозрачный дескриптор против буфера вызывающего и против
+голого `char *`), а также записанный долг «выделение на строку»:
+`2026-08-15-chupascript-core-entities-design.md`, Р6.
 
 Числа и логические значения правилу не подчиняются: они возвращаются копией.
 

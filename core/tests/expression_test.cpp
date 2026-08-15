@@ -158,12 +158,16 @@ TEST(Expression, EvalNumberOnStringIsTypeErrorWithRealOffset) {
     CS::Diagnostic diags[1];
     ASSERT_EQ(CS::Expression::compile("  'привет'", store, &expr, diags, 1), 0u);
 
-    double out = 0.0;
+    // Сторожевое значение: случайно получить его нельзя, поэтому если оно
+    // выживет — *out на исходе Error действительно не тронут (review round
+    // 3, M2).
+    double out = 42.0;
     CS::Diagnostic diag;
     EXPECT_EQ(expr.evalNumber(store, &out, diag), CS::EvalStatus::Error);
     EXPECT_EQ(diag.code, CS::ErrorCode::Type);
     // Смещение настоящее, а не ноль: прокладка ставила 0 и указывала в никуда.
     EXPECT_EQ(diag.offset, 2u);
+    EXPECT_DOUBLE_EQ(out, 42.0);
 }
 
 TEST(Expression, EvalBoolAndString) {
@@ -198,9 +202,17 @@ TEST(Expression, EvalStringPropagatesEvalError) {
     // FractionalAndNegativeIndicesAreErrors, там же); берём отрицательный.
     ASSERT_EQ(CS::Expression::compile("items[-1]", store, &expr, diags, 1), 0u);
 
-    std::string s;
+    // Сторожевое значение по той же причине, что и у out=42.0 выше
+    // (review round 3, M2): если *out на исходе Error действительно не
+    // тронут, "было" переживёт вызов неизменным.
+    std::string s = "было";
     EXPECT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Error);
     EXPECT_EQ(diag.code, CS::ErrorCode::Range);
+    // Смещение указывает на сам индекс — байт '[' в "items[-1]" (review
+    // round 3, M3): ошибка рождается на operation "[...]", а не на всём
+    // выражении.
+    EXPECT_EQ(diag.offset, 5u);
+    EXPECT_EQ(s, "было");
 }
 
 }  // namespace

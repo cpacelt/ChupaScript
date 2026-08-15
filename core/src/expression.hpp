@@ -64,7 +64,10 @@ class Expression {
     ///
     /// Ok — значение положено в *out. Null — выражение дало null, *out не
     /// тронут. Error — ошибка вычисления либо несовпадение типа, подробности
-    /// в diag, *out не тронут.
+    /// в diag, *out не тронут. На исходах Ok и Null diag не трогается вовсе:
+    /// он остаётся тем, чем был у вызывающего до вызова, — включая
+    /// устаревшую ошибку от прошлого раза, если вызывающий её не сбросил
+    /// (review round 3, M1).
     EvalStatus evalNumber(Store &store, double *out, Diagnostic &diag) const;
     EvalStatus evalBool  (Store &store, bool *out, Diagnostic &diag) const;
     EvalStatus evalString(Store &store, std::string *out, Diagnostic &diag) const;

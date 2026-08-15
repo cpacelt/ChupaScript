@@ -70,14 +70,14 @@ void runCode(CS::Store &store, std::string_view source, std::uint32_t indent,
     if (asScript) {
         // Скрипт при успехе молчит: значения у него нет, а результат виден
         // через :vars.
-        if (!CS::runScript(ast, store, diag)) {
+        if (!CS::runScript(ast, source, store, diag)) {
             chupa::reportDiagnostic(std::cout, source, indent, diag);
         }
         return;
     }
 
     CS::Value out = CS::Value::null();
-    if (!CS::evalExpression(ast, store, &out, diag)) {
+    if (!CS::evalExpression(ast, source, store, &out, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }

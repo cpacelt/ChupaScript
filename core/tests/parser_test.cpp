@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <string_view>
 
 #include "ast.hpp"
 #include "diagnostic.hpp"
@@ -20,7 +21,6 @@ struct Parsed {
     CS::Diagnostic diag;
 };
 
-/// Исходник обязан пережить Parsed: дерево держит на него срезы.
 Parsed parseExpr(const std::string &source) {
     Parsed result;
     result.ok = CS::parseExpression(source.data(),
@@ -69,55 +69,56 @@ std::string numberText(double value) {
     return buffer;
 }
 
-std::string dump(const CS::Ast &ast, CS::NodeId node);
+std::string dump(const CS::Ast &ast, std::string_view source, CS::NodeId node);
 
 /// "(head child child …)"
-std::string listOf(const CS::Ast &ast, CS::NodeId node, const std::string &head) {
+std::string listOf(const CS::Ast &ast, std::string_view source, CS::NodeId node,
+                   const std::string &head) {
     std::string result = "(" + head;
     for (std::uint32_t i = 0; i < ast.childCount(node); ++i) {
-        result += " " + dump(ast, ast.child(node, i));
+        result += " " + dump(ast, source, ast.child(node, i));
     }
     return result + ")";
 }
 
 /// Печатает поддерево S-выражением. Форма зафиксирована тестами.
-std::string dump(const CS::Ast &ast, CS::NodeId node) {
+std::string dump(const CS::Ast &ast, std::string_view source, CS::NodeId node) {
     switch (ast.kind(node)) {
         case NodeKind::Invalid:
             return "<invalid>";
         case NodeKind::Number:
             return numberText(ast.numberValue(node));
         case NodeKind::String:
-            return "'" + std::string(ast.text(node)) + "'";
+            return "'" + std::string(ast.text(node, source)) + "'";
         case NodeKind::Boolean:
             return ast.boolValue(node) ? "true" : "false";
         case NodeKind::Null:
             return "null";
         case NodeKind::Identifier:
-            return std::string(ast.text(node));
+            return std::string(ast.text(node, source));
         case NodeKind::Member:
-            return "(. " + dump(ast, ast.child(node, 0)) + " " +
-                   std::string(ast.text(node)) + ")";
+            return "(. " + dump(ast, source, ast.child(node, 0)) + " " +
+                   std::string(ast.text(node, source)) + ")";
         case NodeKind::Index:
-            return listOf(ast, node, "[]");
+            return listOf(ast, source, node, "[]");
         case NodeKind::Call:
-            return listOf(ast, node, "call " + std::string(ast.text(node)));
+            return listOf(ast, source, node, "call " + std::string(ast.text(node, source)));
         case NodeKind::Unary:
-            return listOf(ast, node, std::string("u") + opName(ast.op(node)));
+            return listOf(ast, source, node, std::string("u") + opName(ast.op(node)));
         case NodeKind::Binary:
-            return listOf(ast, node, opName(ast.op(node)));
+            return listOf(ast, source, node, opName(ast.op(node)));
         case NodeKind::Conditional:
-            return listOf(ast, node, "?:");
+            return listOf(ast, source, node, "?:");
         case NodeKind::Array:
-            return listOf(ast, node, "array");
+            return listOf(ast, source, node, "array");
         case NodeKind::Object:
-            return listOf(ast, node, "object");
+            return listOf(ast, source, node, "object");
         case NodeKind::Assign:
-            return listOf(ast, node, opName(ast.op(node)));
+            return listOf(ast, source, node, opName(ast.op(node)));
         case NodeKind::CallStatement:
-            return listOf(ast, node, "stmt");
+            return listOf(ast, source, node, "stmt");
         case NodeKind::Script:
-            return listOf(ast, node, "script");
+            return listOf(ast, source, node, "script");
     }
     return "<unknown>";
 }
@@ -128,7 +129,7 @@ std::string expr(const std::string &source) {
     if (!parsed.ok) {
         return "";
     }
-    return dump(parsed.ast, parsed.ast.root());
+    return dump(parsed.ast, source, parsed.ast.root());
 }
 
 /// То же для скрипта.
@@ -137,7 +138,7 @@ std::string script(const std::string &source) {
     if (!parsed.ok) {
         return "";
     }
-    return dump(parsed.ast, parsed.ast.root());
+    return dump(parsed.ast, source, parsed.ast.root());
 }
 
 // ─── §5.3: Primary ───────────────────────────────────────────────────
@@ -163,7 +164,7 @@ TEST(ParserPrimary, StringLiteralKeepsRawEscapes) {
     ASSERT_TRUE(parsed.ok);
     const CS::NodeId root = parsed.ast.root();
     EXPECT_EQ(parsed.ast.kind(root), NodeKind::String);
-    EXPECT_EQ(parsed.ast.text(root), "a\\nb");
+    EXPECT_EQ(parsed.ast.text(root, source), "a\\nb");
     EXPECT_TRUE(parsed.ast.hasEscape(root));
 }
 

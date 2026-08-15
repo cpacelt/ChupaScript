@@ -1,5 +1,7 @@
 #include "compile.hpp"
 
+#include <string_view>
+
 #include "check.hpp"
 #include "parser.hpp"
 
@@ -21,7 +23,7 @@ std::uint32_t compileExpression(const char *source, std::uint32_t length,
     if (!parseExpression(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
-    return check(ast, store, out, capacity);
+    return check(ast, std::string_view(source, length), store, out, capacity);
 }
 
 std::uint32_t compileScript(const char *source, std::uint32_t length, Ast &ast,
@@ -31,7 +33,7 @@ std::uint32_t compileScript(const char *source, std::uint32_t length, Ast &ast,
     if (!parseScript(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
-    return check(ast, store, out, capacity);
+    return check(ast, std::string_view(source, length), store, out, capacity);
 }
 
 }  // namespace CS

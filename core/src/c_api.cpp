@@ -100,12 +100,17 @@ struct ChupaContext {
     }
 };
 
+// sourceIndex — временный костыль: Ast больше не держит исходник, а
+// evalExpression/runScript требуют его параметром. Индекс указывает в
+// ChupaContext::sources. Уйдёт вместе с самим sources в задаче 4.
 struct ChupaExpression {
     CS::Ast* ast = nullptr;
+    std::size_t sourceIndex = 0;
 };
 
 struct ChupaScript {
     CS::Ast* ast = nullptr;
+    std::size_t sourceIndex = 0;
 };
 
 // ─── Version ───
@@ -246,10 +251,10 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
     //
     // Copy source — Ast stores string_views into this buffer
     c->sources.emplace_back(source, len);
+    const std::size_t sourceIndex = c->sources.size() - 1;
     const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
 
     auto ast = std::make_unique<CS::Ast>();
-    ast->reset(src);
 
     CS::Diagnostic diag;
     const std::uint32_t errors = CS::compileExpression(
@@ -261,7 +266,8 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
     }
 
     c->clearError();
-    auto expr = std::make_unique<ChupaExpression>(ChupaExpression{ast.get()});
+    auto expr =
+        std::make_unique<ChupaExpression>(ChupaExpression{ast.get(), sourceIndex});
     ChupaExpression* raw = expr.get();
     c->expressions.push_back(std::move(expr));
     c->asts.push_back(std::move(ast));
@@ -273,10 +279,10 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     // ⚠️⚠️⚠️ UAF-3 — ЗДЕСЬ ТОЖЕ ⚠️⚠️⚠️  (то же самое, что в compile_expression)
     c->sources.emplace_back(source, len);
+    const std::size_t sourceIndex = c->sources.size() - 1;
     const char* src = c->sources.back().c_str();   // ← этот адрес НЕ стабилен
 
     auto ast = std::make_unique<CS::Ast>();
-    ast->reset(src);
 
     CS::Diagnostic diag;
     const std::uint32_t errors = CS::compileScript(
@@ -288,7 +294,8 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
     }
 
     c->clearError();
-    auto script = std::make_unique<ChupaScript>(ChupaScript{ast.get()});
+    auto script =
+        std::make_unique<ChupaScript>(ChupaScript{ast.get(), sourceIndex});
     ChupaScript* raw = script.get();
     c->scripts.push_back(std::move(script));
     c->asts.push_back(std::move(ast));
@@ -304,7 +311,8 @@ ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
 
     CS::Value value = CS::Value::null();
     CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
+                            &value, diag)) {
         c->setError(diag);
         return CHUPA_ERROR;
     }
@@ -327,7 +335,8 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
 
     CS::Value value = CS::Value::null();
     CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
+                            &value, diag)) {
         c->setError(diag);
         return CHUPA_ERROR;
     }
@@ -350,7 +359,8 @@ ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
 
     CS::Value value = CS::Value::null();
     CS::Diagnostic diag;
-    if (!CS::evalExpression(*expr->ast, c->engine, &value, diag)) {
+    if (!CS::evalExpression(*expr->ast, c->sources[expr->sourceIndex], c->engine,
+                            &value, diag)) {
         c->setError(diag);
         return CHUPA_ERROR;
     }
@@ -405,7 +415,7 @@ bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
     CS::Diagnostic diag;
-    if (!CS::runScript(*s->ast, c->engine, diag)) {
+    if (!CS::runScript(*s->ast, c->sources[s->sourceIndex], c->engine, diag)) {
         c->setError(diag);
         return false;
     }

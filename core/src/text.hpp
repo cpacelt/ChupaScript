@@ -23,7 +23,8 @@ std::string_view decodeEscapes(std::string_view raw, std::string &scratch);
 /// случаев: экранирование редкость.
 ///
 /// Предусловие: ast.kind(node) == NodeKind::String.
-std::string_view literalText(const Ast &ast, NodeId node, std::string &scratch);
+std::string_view literalText(const Ast &ast, NodeId node,
+                             std::string_view source, std::string &scratch);
 
 /// Достаточный размер буфера под formatNumber.
 ///

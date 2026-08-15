@@ -37,7 +37,7 @@ Value evaluate(Store &store, std::string_view text) {
         return Value::null();
     }
     Value out = Value::null();
-    EXPECT_TRUE(CS::evalExpression(ast, store, &out, diag)) << diag.message;
+    EXPECT_TRUE(CS::evalExpression(ast, text, store, &out, diag)) << diag.message;
     return out;
 }
 
@@ -52,7 +52,7 @@ Diagnostic evalError(Store &store, std::string_view text) {
         return diag;
     }
     Value out = Value::null();
-    EXPECT_FALSE(CS::evalExpression(ast, store, &out, diag));
+    EXPECT_FALSE(CS::evalExpression(ast, text, store, &out, diag));
     return diag;
 }
 
@@ -413,8 +413,8 @@ TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
 
     Value first = Value::null();
     Value second = Value::null();
-    ASSERT_TRUE(CS::evalExpression(ast, store, &first, diag));
-    ASSERT_TRUE(CS::evalExpression(ast, store, &second, diag));
+    ASSERT_TRUE(CS::evalExpression(ast, text, store, &first, diag));
+    ASSERT_TRUE(CS::evalExpression(ast, text, store, &second, diag));
 
     // docs/semantics.md §2.3: литерал создаёт новый агрегат при каждом
     // вычислении. Без этого теста правило держится на честном слове.
@@ -633,7 +633,7 @@ void run(Store &store, std::string_view text) {
     const std::uint32_t errors = CS::compileScript(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, store, &diag, 1);
     ASSERT_EQ(errors, 0u) << diag.message;
-    ASSERT_TRUE(CS::runScript(ast, store, diag)) << diag.message;
+    ASSERT_TRUE(CS::runScript(ast, text, store, diag)) << diag.message;
 }
 
 /// Разбирает успешно, выполняет с отказом; возвращает диагностику выполнения.
@@ -646,7 +646,7 @@ Diagnostic runError(Store &store, std::string_view text) {
         ADD_FAILURE() << diag.message;
         return diag;
     }
-    EXPECT_FALSE(CS::runScript(ast, store, diag));
+    EXPECT_FALSE(CS::runScript(ast, text, store, diag));
     return diag;
 }
 

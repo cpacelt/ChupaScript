@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string_view>
 
 #include "ast.hpp"
 #include "diagnostic.hpp"
@@ -21,7 +22,7 @@ namespace CS {
 ///
 /// Проход не останавливается на первой ошибке — иначе исправлять пришлось бы по
 /// одной.
-std::uint32_t check(Ast &ast, const Store &store, Diagnostic *out,
-                    std::uint32_t capacity);
+std::uint32_t check(Ast &ast, std::string_view source, const Store &store,
+                    Diagnostic *out, std::uint32_t capacity);
 
 }  // namespace CS

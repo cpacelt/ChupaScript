@@ -3,8 +3,11 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "ast.hpp"
+#include "diagnostic.hpp"
+#include "parser.hpp"
 #include "token.hpp"
 
 namespace {
@@ -60,11 +63,11 @@ TEST(AstShape, NumberKeepsValueAndOffset) {
 TEST(AstShape, StringStripsQuotesAndKeepsEscapeFlag) {
     const std::string source = "x = 'абв'";
     CS::Ast ast;
-    ast.reset(source.data());
+    ast.reset(static_cast<std::uint32_t>(source.size()));
     // 'абв' занимает [4, 12): кавычки плюс шесть байт кириллицы.
     const CS::NodeId node = ast.string(string(4, 8, true));
     EXPECT_EQ(ast.kind(node), NodeKind::String);
-    EXPECT_EQ(ast.text(node), "абв");
+    EXPECT_EQ(ast.text(node, source), "абв");
     EXPECT_TRUE(ast.hasEscape(node));
     EXPECT_EQ(ast.offset(node), 4u);
 }
@@ -72,9 +75,9 @@ TEST(AstShape, StringStripsQuotesAndKeepsEscapeFlag) {
 TEST(AstShape, EmptyStringYieldsEmptyText) {
     const std::string source = "''";
     CS::Ast ast;
-    ast.reset(source.data());
+    ast.reset(static_cast<std::uint32_t>(source.size()));
     const CS::NodeId node = ast.string(string(0, 2, false));
-    EXPECT_EQ(ast.text(node), "");
+    EXPECT_EQ(ast.text(node, source), "");
     EXPECT_FALSE(ast.hasEscape(node));
 }
 
@@ -91,10 +94,10 @@ TEST(AstShape, BooleanTakesValueFromTokenKind) {
 TEST(AstShape, IdentifierTextIsSourceSlice) {
     const std::string source = "user.name";
     CS::Ast ast;
-    ast.reset(source.data());
+    ast.reset(static_cast<std::uint32_t>(source.size()));
     const CS::NodeId node = ast.identifier(ident(0, 4));
     EXPECT_EQ(ast.kind(node), NodeKind::Identifier);
-    EXPECT_EQ(ast.text(node), "user");
+    EXPECT_EQ(ast.text(node, source), "user");
 }
 
 TEST(AstShape, BinaryKeepsChildrenInOrder) {
@@ -113,13 +116,13 @@ TEST(AstShape, BinaryKeepsChildrenInOrder) {
 TEST(AstShape, CallCopiesArgumentsInOrder) {
     const std::string source = "min(1, 2, 3)";
     CS::Ast ast;
-    ast.reset(source.data());
+    ast.reset(static_cast<std::uint32_t>(source.size()));
     const CS::NodeId args[3] = {ast.number(number(1.0, 4)),
                                 ast.number(number(2.0, 7)),
                                 ast.number(number(3.0, 10))};
     const CS::NodeId node = ast.call(ident(0, 3), args, 3);
     EXPECT_EQ(ast.kind(node), NodeKind::Call);
-    EXPECT_EQ(ast.text(node), "min");
+    EXPECT_EQ(ast.text(node, source), "min");
     ASSERT_EQ(ast.childCount(node), 3u);
     EXPECT_EQ(ast.child(node, 0), args[0]);
     EXPECT_EQ(ast.child(node, 2), args[2]);
@@ -128,7 +131,7 @@ TEST(AstShape, CallCopiesArgumentsInOrder) {
 TEST(AstShape, ObjectKeepsPairsInterleaved) {
     const std::string source = "{ 'a': 1 }";
     CS::Ast ast;
-    ast.reset(source.data());
+    ast.reset(static_cast<std::uint32_t>(source.size()));
     const CS::NodeId pairs[2] = {ast.string(string(2, 3, false)),
                                  ast.number(number(1.0, 7))};
     const CS::NodeId node = ast.object(pairs, 2, 0);
@@ -176,6 +179,27 @@ TEST(AstShape, RootIsWhatWasSet) {
     const CS::NodeId node = ast.number(number(1.0, 0));
     ast.setRoot(node);
     EXPECT_EQ(ast.root(), node);
+}
+
+TEST(Ast, TextSurvivesSourceRelocation) {
+    // Короткая строка попадает в SSO: её байты лежат внутри самого
+    // std::string, и рост вектора их ФИЗИЧЕСКИ ДВИГАЕТ. Ровно так ломался
+    // UAF-3 (docs/backlog.md B39).
+    std::vector<std::string> sources;
+    sources.reserve(1);
+    sources.emplace_back("user.name");
+
+    CS::Ast ast;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::parseExpression(sources[0].data(),
+                                    static_cast<std::uint32_t>(sources[0].size()),
+                                    ast, diag));
+
+    // Вектор растёт — sources[0] уезжает на новый адрес.
+    for (int i = 0; i < 8; ++i) { sources.emplace_back("x"); }
+
+    // Дерево ничего не заметило: исходник приходит параметром.
+    EXPECT_EQ(ast.text(ast.child(ast.root(), 0), sources[0]), "user");
 }
 
 }  // namespace

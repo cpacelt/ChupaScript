@@ -779,14 +779,14 @@ bool Parser::runScript(Diagnostic &diag) {
 
 bool parseExpression(const char *source, std::uint32_t length, Ast &ast,
                      Diagnostic &diag) {
-    ast.reset(source);
+    ast.reset(length);
     Parser parser(source, length, ast);
     return parser.runExpression(diag);
 }
 
 bool parseScript(const char *source, std::uint32_t length, Ast &ast,
                   Diagnostic &diag) {
-    ast.reset(source);
+    ast.reset(length);
     Parser parser(source, length, ast);
     return parser.runScript(diag);
 }

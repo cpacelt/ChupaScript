@@ -57,7 +57,7 @@ void runEval(benchmark::State &state, std::string_view source) {
 
     for (auto _ : state) {
         Value out = Value::null();
-        bool ok = CS::evalExpression(ast, store, &out, diag);
+        bool ok = CS::evalExpression(ast, source, store, &out, diag);
         if (!ok) {
             state.SkipWithError("evalExpression failed");
             return;
@@ -168,7 +168,7 @@ void runScriptBench(benchmark::State &state, std::string_view source) {
             state.SkipWithError("setVariable failed");
             return;
         }
-        bool ok = CS::runScript(ast, store, diag);
+        bool ok = CS::runScript(ast, source, store, diag);
         if (!ok) {
             state.SkipWithError("runScript failed");
             return;
@@ -239,7 +239,7 @@ void runCheck(benchmark::State &state, std::string_view source, bool script) {
     }
     for (auto _ : state) {
         Diagnostic found[1];
-        std::uint32_t errors = CS::check(ast, store, found, 1);
+        std::uint32_t errors = CS::check(ast, source, store, found, 1);
         benchmark::DoNotOptimize(errors);
     }
 }

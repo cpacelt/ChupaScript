@@ -19,6 +19,22 @@ public struct Error: Swift.Error, CustomStringConvertible, Equatable, Sendable {
     /// бы каретку под первым символом безупречного выражения.
     public let offset: Int?
 
+    /// Собрать ошибку вручную.
+    ///
+    /// Публичный не для полноты картины: хост, оборачивающий движок в свои
+    /// типы, упирается ровно в тот же случай, что и обвязка, — значение
+    /// корректно, а тип хоста из него не собирается (`ErrorCode.unrepresentable`).
+    /// Так, OKBDUI разбирает значения свойств виджетов из JSON. Без этого
+    /// инициализатора каждому такому хосту пришлось бы завести собственную
+    /// ошибку о том же самом, и потребителю достались бы два типа вместо одного.
+    ///
+    /// `offset` при этом обычно `nil` — см. докблок свойства.
+    public init(code: ErrorCode, message: String, offset: Int?) {
+        self.code = code
+        self.message = message
+        self.offset = offset
+    }
+
     public var description: String {
         guard let offset else { return "\(code): \(message)" }
         return "\(code) at \(offset): \(message)"

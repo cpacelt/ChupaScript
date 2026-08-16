@@ -1,5 +1,4 @@
 import XCTest
-import ChupaScriptC
 @testable import ChupaScript
 
 /// Сквозная проверка Swift-обвязки: контекст, глобальные, компиляция,
@@ -61,21 +60,23 @@ final class EndToEndTests: XCTestCase {
     }
 
     func testCompileErrorCarriesCodeAndOffset() {
-        let context = Context()
+        let context = CSContext()
 
         XCTAssertThrowsError(try context.compile(expression: "1 +")) { error in
-            guard let error = error as? ChupaScript.Error else {
-                return XCTFail("ожидалась ChupaScript.Error, получена \(error)")
+            guard let error = error as? CSError else {
+                return XCTFail("ожидалась CSError, получена \(error)")
             }
-            XCTAssertNotEqual(error.code, CHUPA_ERR_NONE)
+            XCTAssertEqual(error.code, .syntax)
             XCTAssertFalse(error.message.isEmpty)
         }
     }
 
     func testUnknownGlobalIsRejectedAtCompileTime() {
-        let context = Context()
+        let context = CSContext()
 
-        XCTAssertThrowsError(try context.compile(expression: "nosuchthing + 1"))
+        XCTAssertThrowsError(try context.compile(expression: "nosuchthing + 1")) { error in
+            XCTAssertEqual((error as? CSError)?.code, .name)
+        }
     }
 
     /// Скомпилированное выражение владеет своим хэндлом и переживает контекст
@@ -83,13 +84,12 @@ final class EndToEndTests: XCTestCase {
     /// проверяется обратное и безопасное — что порядок «сначала выражение,
     /// потом контекст» разрушается без падения.
     func testExpressionOutlivesItsOwnScope() throws {
-        let context = Context()
+        let context = CSContext()
         context.set("x", 2.0)
 
-        // Имя квалифицировано: Foundation с iOS 18 объявляет собственный
-        // Expression, и без префикса поиск типа неоднозначен.
-        var expression: ChupaScript.Expression? =
-            try context.compile(expression: "x + x")
+        // CSExpression, а не Expression: с iOS 18 Foundation объявляет
+        // собственный Expression, и без префикса поиск типа неоднозначен.
+        var expression: CSExpression? = try context.compile(expression: "x + x")
         XCTAssertEqual(expression?.evalNumber(), 4.0)
         expression = nil
     }

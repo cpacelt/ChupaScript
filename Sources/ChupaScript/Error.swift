@@ -1,5 +1,4 @@
 import Foundation
-import ChupaScriptC
 
 /// Error from the ChupaScript engine.
 ///
@@ -8,9 +7,11 @@ import ChupaScriptC
 /// and `code` already tells the two apart. Naming it `Error` shadows the
 /// standard-library protocol inside this module, so the protocol is spelled
 /// `Swift.Error` here; outside the module both names stay unambiguous.
-public struct Error: Swift.Error, CustomStringConvertible {
-    public let code: ChupaErrorCode
+public struct Error: Swift.Error, CustomStringConvertible, Equatable {
+    public let code: ErrorCode
     public let message: String
+
+    /// Byte offset into the source the error points at.
     public let offset: Int
 
     public var description: String {

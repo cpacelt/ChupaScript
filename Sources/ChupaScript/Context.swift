@@ -109,13 +109,12 @@ public final class Context {
 
     /// Last error on this context, or nil if last operation succeeded.
     public var error: Error? {
-        let code = chupa_context_error_code(handle)
-        guard code != CHUPA_ERR_NONE else { return nil }
+        guard chupa_context_error_code(handle) != CHUPA_ERR_NONE else { return nil }
         return makeError()
     }
 
     internal func makeError() -> Error {
-        let code = chupa_context_error_code(handle)
+        let code = ErrorCode(chupa_context_error_code(handle))
         let offset = chupa_context_error_offset(handle)
         var len: Int = 0
         let msgPtr = chupa_context_error(handle, &len)

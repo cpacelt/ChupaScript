@@ -48,6 +48,15 @@ let package = Package(
             publicHeadersPath: "include",
             cxxSettings: [
                 // Matches CMakeLists.txt: only the C API is exported.
+                //
+                // ВНИМАНИЕ, прежде чем трогать. Из-за .unsafeFlags от этого
+                // пакета нельзя зависеть по версии — SwiftPM отвергает такую
+                // зависимость, причём проверяет всё замыкание продукта, так что
+                // расположение флага на зависимости не спасает. Библиотека
+                // подключается исходниками внутрь проекта, и путь `path:` от
+                // запрета свободен, поэтому флаг оставлен сознательно.
+                // Подробности и цена обратного решения — B43 и B45 в
+                // docs/backlog.md.
                 .unsafeFlags(["-fvisibility=hidden"], .when(configuration: .release)),
             ]
         ),

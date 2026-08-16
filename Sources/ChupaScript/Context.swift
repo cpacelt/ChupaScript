@@ -76,14 +76,32 @@ public final class Context {
 
     // MARK: - Compile
 
-    /// Compile a ChupaScript expression.
+    /// Compile a ChupaScript expression promising a result of type `T`.
+    ///
+    /// `T` обычно выводится из места, куда выражение кладут:
+    ///
+    ///     struct ButtonProps {
+    ///         var title: CSExpression<String>
+    ///     }
+    ///     props.title = try context.compile(expression: "user.name")
+    ///
+    /// Где вывода нет, тип называется явно — см. перегрузку с `as:`.
+    ///
     /// Throws on compile error (syntax, unknown global, etc.).
-    public func compile(expression source: String) throws -> Expression {
+    public func compile<T>(expression source: String) throws -> Expression<T> {
         let h = source.withCString { ptr in
             chupa_compile_expression(handle, ptr, source.utf8.count)
         }
         guard let h else { throw makeError() }
         return Expression(handle: h, context: self)
+    }
+
+    /// То же, но с явно названным типом результата.
+    ///
+    ///     let align = try context.compile(expression: "card.align", as: Align.self)
+    public func compile<T>(expression source: String,
+                           as type: T.Type) throws -> Expression<T> {
+        try compile(expression: source)
     }
 
     /// Compile a ChupaScript script (statements).
@@ -98,11 +116,12 @@ public final class Context {
 
     // MARK: - Run
 
-    /// Execute a compiled script. Returns false on runtime error.
-    /// Partial changes may have been applied (see C API spec §7).
-    @discardableResult
-    public func run(_ script: Script) -> Bool {
-        chupa_run(handle, script.handle)
+    /// Execute a compiled script.
+    ///
+    /// Бросает при ошибке выполнения. Часть изменений при этом могла успеть
+    /// примениться — скрипт не транзакция (C API спека §7).
+    public func run(_ script: Script) throws {
+        guard chupa_run(handle, script.handle) else { throw makeError() }
     }
 
     // MARK: - Error

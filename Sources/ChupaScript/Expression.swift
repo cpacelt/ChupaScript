@@ -1,18 +1,32 @@
-import Foundation
 import ChupaScriptC
 
-/// Compiled ChupaScript expression.
+/// Скомпилированное выражение, обещающее результат типа `T`.
 ///
-/// Owns its C handle and frees it in `deinit`; the context does not.
-/// The reference to the context is kept because evaluation needs it, not to
-/// keep the context alive for the handle's sake — the handle holds no
-/// reference to the context and may outlive it.
-public final class Expression {
+/// Владеет своим C-хэндлом и освобождает его в `deinit`; контекст этого не
+/// делает. Ссылка на контекст держится потому, что вычисление его требует, а не
+/// ради времени жизни хэндла: хэндл контекст не удерживает и может его
+/// пережить.
+///
+/// **Параметр `T` намеренно ничем не ограничен.** Ограничения живут в
+/// расширениях ниже, и это не педантизм, а то, из-за чего работает
+///
+///     enum Align: String { case left, right }
+///
+/// без единого упоминания `CSValue` в объявлении. Ограничь класс — и такое
+/// перечисление пришлось бы подписывать вручную.
+///
+/// **Чем `T` является и чем не является.** На компиляции движок типы не
+/// проверяет: статический проход смотрит имена, арность и плейсхолдеры, но не
+/// типы. Зато проверяет на каждом вычислении — при несовпадении возвращает
+/// ошибку с кодом `.type`. Так что `T` — не пустое обещание, а утверждение с
+/// поздней проверкой: неверно объявленный тип даёт внятную ошибку вместо
+/// тихого `nil`.
+public final class Expression<T> {
 
     internal let handle: OpaquePointer
     internal let context: Context
 
-    init(handle: OpaquePointer, context: Context) {
+    internal init(handle: OpaquePointer, context: Context) {
         self.handle = handle
         self.context = context
     }
@@ -20,40 +34,64 @@ public final class Expression {
     deinit {
         chupa_expression_destroy(handle)
     }
+}
 
-    /// Evaluate as a number. Returns nil if expression is null or wrong type.
-    public func evalNumber() -> Double? {
-        var out: Double = 0
-        let status = chupa_eval_number(context.handle, handle, &out)
-        return status == CHUPA_OK ? out : nil
-    }
+// MARK: - Базовые типы
 
-    /// Evaluate as a boolean. Returns nil if expression is null or wrong type.
-    public func evalBool() -> Bool? {
-        var out: Bool = false
-        let status = chupa_eval_bool(context.handle, handle, &out)
-        return status == CHUPA_OK ? out : nil
-    }
+extension Expression where T: CSValue {
 
-    /// Evaluate as a string. Returns nil if the expression evaluated to null.
-    /// Throws on evaluation error, including a wrong result type.
+    /// Вычислить выражение.
     ///
-    /// The engine hands the bytes over in a `ChupaString` this call owns and
-    /// must release; the returned `String` is a copy of them.
-    public func evalString() throws -> String? {
-        var raw: OpaquePointer?
-        switch chupa_eval_string(context.handle, handle, &raw) {
-        case CHUPA_OK:
-            guard let raw else { return nil }
-            defer { chupa_string_destroy(raw) }
-            var len: Int = 0
-            let bytes = chupa_string_bytes(raw, &len)
-            return String(decoding: UnsafeRawBufferPointer(start: bytes, count: len),
-                          as: UTF8.self)
-        case CHUPA_NULL:
-            return nil
-        default:
-            throw context.makeError()
+    /// `nil` — язык дал `null`. Это штатный исход, а не сбой: чтение
+    /// отсутствующего ключа мягкое (`docs/semantics.md` §6.3).
+    ///
+    /// Бросает `Error`, если движок сообщил об ошибке, — в том числе с кодом
+    /// `.type`, когда выражение дало не тот тип, который обещает `T`.
+    public func eval() throws -> T? {
+        try T.chupaEval(from: self)
+    }
+
+    /// Вычислить, ничего не бросая.
+    ///
+    /// Для горячего пути: выражение пересчитывается на каждую перерисовку, и
+    /// бросок на каждый кадр никому не нужен. `null` и ошибка одинаково дают
+    /// `fallback`.
+    ///
+    /// Причину при этом можно узнать — но только сразу: `context.error`
+    /// сбрасывается перед каждой следующей операцией над контекстом, включая
+    /// успешную. Логировать надо прямо после вызова, а не в конце кадра.
+    public func eval(default fallback: T) -> T {
+        (try? eval()) ?? fallback
+    }
+}
+
+// MARK: - Обёртки над базовыми типами
+
+extension Expression where T: RawRepresentable, T.RawValue: CSValue {
+
+    /// Вычислить выражение и обернуть результат в `T`.
+    ///
+    /// Даёт `eval()` любому типу с сырьём подходящего вида — перечислению со
+    /// строковым или числовым представлением, обёртке над `Double`. Подписывать
+    /// такой тип на `CSValue` не нужно.
+    ///
+    /// Помимо исходов базового `eval()` бросает `.unrepresentable`, когда сырьё
+    /// корректно, но `T` из него не собирается: движок вернул `'centre'`, а в
+    /// перечислении такого случая нет. Отдельный код, а не `.type`, потому что
+    /// чинить надо в разных местах — `.type` указывает на текст выражения,
+    /// `.unrepresentable` на контент либо на неполноту самого перечисления.
+    public func eval() throws -> T? {
+        guard let raw = try T.RawValue.chupaEval(from: self) else { return nil }
+        guard let value = T(rawValue: raw) else {
+            throw Error(code: .unrepresentable,
+                        message: "'\(raw)' is not a valid \(T.self)",
+                        offset: nil)
         }
+        return value
+    }
+
+    /// Вычислить, ничего не бросая. См. `eval(default:)` выше.
+    public func eval(default fallback: T) -> T {
+        (try? eval()) ?? fallback
     }
 }

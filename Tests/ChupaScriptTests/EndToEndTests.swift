@@ -10,31 +10,36 @@ import XCTest
 /// доходят до движка и что значения возвращаются обратно неискажёнными.
 final class EndToEndTests: XCTestCase {
 
+    // MARK: - Базовые типы
+
     func testNumberRoundTripsThroughTheEngine() throws {
-        let context = Context()
+        let context = CSContext()
         context.set("price", 19.99)
         context.set("count", 3.0)
 
-        let total = try context.compile(expression: "price * count")
-        XCTAssertEqual(try XCTUnwrap(total.evalNumber()), 59.97, accuracy: 1e-9)
+        let total: CSExpression<Double> = try context.compile(expression: "price * count")
+        XCTAssertEqual(try XCTUnwrap(total.eval()), 59.97, accuracy: 1e-9)
     }
 
     func testBooleanRoundTripsThroughTheEngine() throws {
-        let context = Context()
+        let context = CSContext()
         context.set("enabled", true)
 
-        XCTAssertEqual(try context.compile(expression: "enabled").evalBool(), true)
-        XCTAssertEqual(try context.compile(expression: "!enabled").evalBool(), false)
+        let yes = try context.compile(expression: "enabled", as: Bool.self)
+        let no = try context.compile(expression: "!enabled", as: Bool.self)
+        XCTAssertEqual(try yes.eval(), true)
+        XCTAssertEqual(try no.eval(), false)
     }
 
     func testStringRoundTripsThroughTheEngine() throws {
-        let context = Context()
+        let context = CSContext()
         context.set("name", "Мир")
 
         // Оператора конкатенации в языке нет — строки собирает format
         // (docs/semantics.md §8).
-        let greeting = try context.compile(expression: "format('Привет, ${}!', name)")
-        XCTAssertEqual(try greeting.evalString(), "Привет, Мир!")
+        let greeting = try context.compile(expression: "format('Привет, ${}!', name)",
+                                           as: String.self)
+        XCTAssertEqual(try greeting.eval(), "Привет, Мир!")
     }
 
     /// Число, приведённое к строке, проходит через `CS::formatNumber`, а тот —
@@ -42,7 +47,7 @@ final class EndToEndTests: XCTestCase {
     /// на платформах Apple плавающий `<charconv>` недоступен, и подмена его
     /// собой не должна менять контракт `docs/semantics.md` §4.3.
     func testNumberToStringFollowsTheSpec() throws {
-        let context = Context()
+        let context = CSContext()
 
         let cases: [(Double, String)] = [
             (1, "1"),
@@ -54,19 +59,106 @@ final class EndToEndTests: XCTestCase {
         ]
         for (value, expected) in cases {
             context.set("x", value)
-            let expression = try context.compile(expression: "str(x)")
-            XCTAssertEqual(try expression.evalString(), expected, "\(value)")
+            let text = try context.compile(expression: "str(x)", as: String.self)
+            XCTAssertEqual(try text.eval(), expected, "\(value)")
         }
     }
+
+    // MARK: - Обёртки над базовыми типами
+
+    /// Ни слова про `CSValue` в объявлении: `RawRepresentable` перечисление
+    /// получает даром, а `eval()` приходит из расширения по нему.
+    enum Align: String {
+        case left, right
+    }
+
+    struct Ratio: RawRepresentable, Equatable {
+        var rawValue: Double
+    }
+
+    func testRawRepresentableEnumNeedsNoConformance() throws {
+        let context = CSContext()
+        context.set("align", "right")
+
+        let align: CSExpression<Align> = try context.compile(expression: "align")
+        XCTAssertEqual(try align.eval(), .right)
+    }
+
+    func testRawRepresentableOverDoubleWorksToo() throws {
+        let context = CSContext()
+        context.set("ratio", 0.75)
+
+        let ratio = try context.compile(expression: "ratio", as: Ratio.self)
+        XCTAssertEqual(try ratio.eval(), Ratio(rawValue: 0.75))
+    }
+
+    /// Сырьё корректно, но случая с таким значением в перечислении нет. Это
+    /// ошибка обвязки, а не движка: текст выражения безупречен, поэтому
+    /// отдельный код и `offset == nil`.
+    func testValueOutsideTheEnumIsUnrepresentable() throws {
+        let context = CSContext()
+        context.set("align", "centre")
+
+        let align: CSExpression<Align> = try context.compile(expression: "align")
+        XCTAssertThrowsError(try align.eval()) { error in
+            guard let error = error as? CSError else {
+                return XCTFail("ожидалась CSError, получена \(error)")
+            }
+            XCTAssertEqual(error.code, .unrepresentable)
+            XCTAssertNil(error.offset)
+            XCTAssertTrue(error.message.contains("centre"), error.message)
+        }
+    }
+
+    // MARK: - Три исхода вычисления
+
+    func testNullIsAValueNotAnError() throws {
+        let context = CSContext()
+        XCTAssertTrue(context.set("state", text: "{'missing': null}"))
+
+        // Чтение отсутствующего ключа мягкое (docs/semantics.md §6.3).
+        let absent = try context.compile(expression: "state.nothingHere", as: Double.self)
+        XCTAssertNil(try absent.eval())
+    }
+
+    func testWrongTypeThrowsInsteadOfReturningNil() throws {
+        let context = CSContext()
+        context.set("name", "Мир")
+
+        let asNumber = try context.compile(expression: "name", as: Double.self)
+        XCTAssertThrowsError(try asNumber.eval()) { error in
+            XCTAssertEqual((error as? CSError)?.code, .type)
+        }
+    }
+
+    func testDefaultSwallowsBothNullAndError() throws {
+        let context = CSContext()
+        context.set("name", "Мир")
+        XCTAssertTrue(context.set("state", text: "{'a': 1}"))
+
+        let wrongType = try context.compile(expression: "name", as: Double.self)
+        XCTAssertEqual(wrongType.eval(default: -1), -1)
+
+        // Причину проглоченной ошибки видно — но только сразу: C API чистит её
+        // перед каждым следующим вычислением, включая успешное.
+        XCTAssertEqual(context.error?.code, .type)
+
+        let null = try context.compile(expression: "state.missing", as: Double.self)
+        XCTAssertEqual(null.eval(default: -1), -1)
+        XCTAssertNil(context.error)
+    }
+
+    // MARK: - Ошибки компиляции
 
     func testCompileErrorCarriesCodeAndOffset() {
         let context = CSContext()
 
-        XCTAssertThrowsError(try context.compile(expression: "1 +")) { error in
+        XCTAssertThrowsError(try context.compile(expression: "1 +", as: Double.self)) { error in
             guard let error = error as? CSError else {
                 return XCTFail("ожидалась CSError, получена \(error)")
             }
             XCTAssertEqual(error.code, .syntax)
+            XCTAssertNotNil(error.offset)
             XCTAssertFalse(error.message.isEmpty)
         }
     }
@@ -74,36 +166,36 @@ final class EndToEndTests: XCTestCase {
     func testUnknownGlobalIsRejectedAtCompileTime() {
         let context = CSContext()
 
-        XCTAssertThrowsError(try context.compile(expression: "nosuchthing + 1")) { error in
+        XCTAssertThrowsError(
+            try context.compile(expression: "nosuchthing + 1", as: Double.self)
+        ) { error in
             XCTAssertEqual((error as? CSError)?.code, .name)
         }
     }
 
-    /// Скомпилированное выражение владеет своим хэндлом и переживает контекст
-    /// только на бумаге: вычислять его после смерти контекста нельзя. Здесь
-    /// проверяется обратное и безопасное — что порядок «сначала выражение,
-    /// потом контекст» разрушается без падения.
+    // MARK: - Время жизни и скрипты
+
+    /// Выражение владеет своим хэндлом и освобождает его само. Проверяется
+    /// безопасный порядок: сначала уходит выражение, потом контекст.
     func testExpressionOutlivesItsOwnScope() throws {
         let context = CSContext()
         context.set("x", 2.0)
 
-        // CSExpression, а не Expression: с iOS 18 Foundation объявляет
-        // собственный Expression, и без префикса поиск типа неоднозначен.
-        var expression: CSExpression? = try context.compile(expression: "x + x")
-        XCTAssertEqual(expression?.evalNumber(), 4.0)
+        var expression: CSExpression<Double>? = try context.compile(expression: "x + x")
+        XCTAssertEqual(try expression?.eval(), 4.0)
         expression = nil
     }
 
     /// Целью присваивания может быть только путь внутрь агрегата, но не само
     /// имя (`docs/semantics.md` §7.2) — отсюда объект, а не голое число.
     func testScriptAssignsThroughAPath() throws {
-        let context = Context()
+        let context = CSContext()
         XCTAssertTrue(context.set("state", text: "{'count': 0}"))
 
         let script = try context.compile(script: "state.count = state.count + 5;")
-        XCTAssertTrue(context.run(script))
+        try context.run(script)
 
-        let read = try context.compile(expression: "state.count")
-        XCTAssertEqual(read.evalNumber(), 5.0)
+        let read = try context.compile(expression: "state.count", as: Double.self)
+        XCTAssertEqual(try read.eval(), 5.0)
     }
 }

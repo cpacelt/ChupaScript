@@ -34,6 +34,17 @@ public enum ErrorCode: Sendable, Equatable {
     /// Память не выделилась.
     case memory
 
+    /// Значение корректно, но тип хоста из него не собирается.
+    ///
+    /// Возникает только в обвязке: движок вернул строку `'centre'`, а в
+    /// перечислении, объявленном хостом, такого случая нет. Отдельный код, а не
+    /// `type`, потому что чинить надо в разных местах — `type` указывает на
+    /// текст выражения, этот на контент либо на неполноту перечисления.
+    ///
+    /// Единственный код, у которого `Error.offset` равен `nil`: позиции в
+    /// исходном тексте у такой ошибки нет, текст выражения безупречен.
+    case unrepresentable
+
     /// Код, которого не существовало на момент сборки этой обвязки.
     ///
     /// Случай нужен, чтобы обновление движка не превращалось в аварию на
@@ -72,6 +83,7 @@ extension ErrorCode: CustomStringConvertible {
         case .data:                    return "data"
         case .usage:                   return "usage"
         case .memory:                  return "memory"
+        case .unrepresentable:         return "unrepresentable"
         case .unrecognized(let value): return "unrecognized(\(value))"
         }
     }

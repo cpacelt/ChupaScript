@@ -11,10 +11,16 @@ public struct Error: Swift.Error, CustomStringConvertible, Equatable {
     public let code: ErrorCode
     public let message: String
 
-    /// Byte offset into the source the error points at.
-    public let offset: Int
+    /// Смещение в байтах внутри исходного текста, на которое указывает ошибка.
+    ///
+    /// `nil`, когда указывать не на что: ошибку подняла обвязка, а не движок, и
+    /// текст выражения при этом корректен. Единственный такой случай сегодня —
+    /// `ErrorCode.unrepresentable`. Ноль был бы враньём: инструмент нарисовал
+    /// бы каретку под первым символом безупречного выражения.
+    public let offset: Int?
 
     public var description: String {
-        "\(code) at \(offset): \(message)"
+        guard let offset else { return "\(code): \(message)" }
+        return "\(code) at \(offset): \(message)"
     }
 }

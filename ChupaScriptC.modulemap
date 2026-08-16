@@ -1,4 +1,0 @@
-module ChupaScriptC {
-    header "core/include/chupascript/chupascript.h"
-    export *
-}

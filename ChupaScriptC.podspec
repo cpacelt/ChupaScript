@@ -56,5 +56,11 @@ directly.
     ].join(' ')
   }
 
-  s.module_map = 'ChupaScriptC.modulemap'
+  # Своей модульной карты нет намеренно. Под зовётся ChupaScriptC, поэтому
+  # CocoaPods сгенерирует модуль ровно с этим именем из public_header_files —
+  # то самое, что пишет `import ChupaScriptC`.
+  #
+  # Ручная карта здесь ломается: CocoaPods копирует её в DerivedData, а пути
+  # внутри резолвятся относительно самой карты, а не корня пода. Те же грабли
+  # описаны в docs/backlog.md, B40.
 end

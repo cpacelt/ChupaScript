@@ -18,9 +18,14 @@ systems. Replaces verbose JSON expression DSLs with a clean, composable syntax.
   s.public_header_files = 'core/include/chupascript/chupascript.h'
 
   # C++ engine sources
+  #
+  # third_party/ — вендоренная зависимость (преобразования double <-> строка).
+  # Её заголовки в public_header_files не попадают, наружу торчит только
+  # chupascript.h. Подробности: third_party/double-conversion/VENDORING.md
   s.source_files = [
     'core/src/*.{cpp,hpp}',
     'core/include/chupascript/*.h',
+    'third_party/double-conversion/double-conversion/*.{h,cc}',
     'Sources/ChupaScript/*.swift'
   ]
 
@@ -35,7 +40,11 @@ systems. Replaces verbose JSON expression DSLs with a clean, composable syntax.
     'OTHER_CFLAGS' => '-fvisibility=hidden',
     'OTHER_CPLUSPLUSFLAGS' => '-fvisibility=hidden',
     'DEFINES_MODULE' => 'YES',
-    'SWIFT_OBJC_INTERFACE_HEADER_NAME' => 'ChupaScript-Swift.h'
+    'SWIFT_OBJC_INTERFACE_HEADER_NAME' => 'ChupaScript-Swift.h',
+    # Внутри double-conversion инклюды написаны как
+    # #include "double-conversion/utils.h", поэтому корнем поиска должен быть
+    # каталог, содержащий каталог библиотеки.
+    'HEADER_SEARCH_PATHS' => '"$(PODS_TARGET_SRCROOT)/third_party/double-conversion"'
   }
 
   # Custom modulemap: ChupaScriptC wraps the C header, ChupaScript wraps Swift

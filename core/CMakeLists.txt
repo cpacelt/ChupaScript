@@ -16,7 +16,10 @@ add_library(chupascript STATIC
 )
 
 target_include_directories(chupascript PUBLIC include)
-target_link_libraries(chupascript PRIVATE chupascript_compile_options)
+target_link_libraries(chupascript
+    PRIVATE chupascript_compile_options
+    PRIVATE double_conversion
+)
 
 if(CHUPASCRIPT_BUILD_TESTS)
     add_subdirectory(tests)

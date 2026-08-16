@@ -21,5 +21,16 @@ compile_commands.json
 /compile_commands.json
 .cache/
 
+# SwiftPM
+.build/
+.swiftpm/
+DerivedData/
+# Библиотека не пинит версии за потребителя — резолв принадлежит приложению.
+Package.resolved
+
+# CocoaPods
+Pods/
+*.xcworkspace
+
 # macOS
 .DS_Store

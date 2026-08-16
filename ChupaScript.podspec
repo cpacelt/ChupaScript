@@ -21,7 +21,7 @@ systems. Replaces verbose JSON expression DSLs with a clean, composable syntax.
   s.source_files = [
     'core/src/*.{cpp,hpp}',
     'core/include/chupascript/*.h',
-    'swift/*.swift'
+    'Sources/ChupaScript/*.swift'
   ]
 
   # Preserve the header directory structure

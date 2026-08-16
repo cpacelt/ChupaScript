@@ -369,7 +369,7 @@ Swift был цел случайно: тогдашний `ChupaExpression.evalSt
 
 Swift-сторона приведена задачей 7 того же плана: тип теперь зовётся
 `Expression` (Р8 снял префикс `Chupa`), метод — `Expression.evalString()` в
-`swift/Expression.swift`, сигнатура `throws -> String?`. Он берёт `ChupaString`
+`Sources/ChupaScript/Expression.swift`, сигнатура `throws -> String?`. Он берёт `ChupaString`
 во владение и освобождает через `defer { chupa_string_destroy(raw) }`;
 копирование в `String` осталось, но теперь оно не «случайная целость», а
 исполнение записанного контракта.
@@ -383,7 +383,7 @@ Swift-сторона приведена задачей 7 того же план�
 ### B38. UAF-2: колбэк перерисовки переживает того, на кого указывает
 
 **Где:** `core/src/c_api.cpp` (`redrawListener`, `redrawUserData`,
-`chupa_context_destroy`); `swift/Context.swift`
+`chupa_context_destroy`); `Sources/ChupaScript/Context.swift`
 **Статус:** отложено; дефект живой, связан с B36
 
 `ChupaContext` хранит непрозрачный `redrawUserData`, никого не удерживая и не

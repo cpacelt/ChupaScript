@@ -4,9 +4,11 @@ import ChupaScriptC
 /// Compiled ChupaScript script. Used only via `Context.run(_:)`.
 ///
 /// Owns its C handle and frees it in `deinit`; the context does not.
-/// The reference to the context is kept because running the script needs it,
-/// not to keep the context alive for the handle's sake — the handle holds no
-/// reference to the context and may outlive it.
+///
+/// Контекст живёт не меньше скрипта: ссылка сильная, поэтому через Swift он
+/// раньше не умрёт. C API разрешает и обратный порядок — хэндл скрипта контекст
+/// не удерживает, — но обвязка его не предоставляет по той же причине, что и у
+/// `Expression`: запускать скрипт без живого контекста всё равно нельзя.
 public final class Script {
 
     internal let handle: OpaquePointer

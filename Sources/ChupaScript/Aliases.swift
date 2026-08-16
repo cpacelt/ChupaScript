@@ -25,7 +25,6 @@ public typealias CSErrorCode = ErrorCode
 public typealias CSExpression<T> = Expression<T>
 public typealias CSScript = Script
 
-// `CSValue` и `CSEvaluation` в списке отсутствуют намеренно: они уже названы с
-// префиксом. Оба появляются в ограничениях пользовательского кода
-// (`where T.RawValue: CSValue`), а `Value` и `Evaluation` без префикса были бы
-// слишком общими именами, чтобы занимать их у потребителя.
+// `CSValue` в списке отсутствует намеренно: он уже назван с префиксом. Имя
+// появляется в ограничениях пользовательского кода (`where T.RawValue: CSValue`),
+// а `Value` без префикса — слишком общее имя, чтобы занимать его у потребителя.

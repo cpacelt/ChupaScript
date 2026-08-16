@@ -7,7 +7,7 @@ import Foundation
 /// and `code` already tells the two apart. Naming it `Error` shadows the
 /// standard-library protocol inside this module, so the protocol is spelled
 /// `Swift.Error` here; outside the module both names stay unambiguous.
-public struct Error: Swift.Error, CustomStringConvertible, Equatable {
+public struct Error: Swift.Error, CustomStringConvertible, Equatable, Sendable {
     public let code: ErrorCode
     public let message: String
 

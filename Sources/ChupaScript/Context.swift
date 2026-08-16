@@ -4,8 +4,9 @@ import ChupaScriptC
 /// Owns a ChupaScript engine context.
 ///
 /// Compiled units do not belong to the context: an `Expression` or a `Script`
-/// owns its own handle and frees it when it is deallocated, in any order
-/// relative to this context.
+/// owns its own handle and frees it when it is deallocated. Обратное неверно:
+/// каждая единица держит на контекст сильную ссылку, поэтому контекст всегда
+/// переживает свои выражения и скрипты.
 ///
 /// Thread safety: one context = one thread at a time. The context MUST be
 /// deallocated on the same thread it was last used on — `deinit` calls

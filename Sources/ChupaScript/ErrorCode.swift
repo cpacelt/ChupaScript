@@ -50,7 +50,12 @@ public enum ErrorCode: Sendable, Equatable {
     /// Случай нужен, чтобы обновление движка не превращалось в аварию на
     /// стороне хоста: неизвестный код доедет до него числом, а не потеряется
     /// и не свалит разбор.
-    case unrecognized(Int32)
+    ///
+    /// Тип совпадает с `ChupaErrorCode.rawValue` — сужать до `Int32` нельзя:
+    /// `Int32(_:)` на непомещающемся значении роняет процесс, и ветка,
+    /// существующая ради выживания, оказалась бы единственной, которая не
+    /// выживает.
+    case unrecognized(UInt32)
 }
 
 extension ErrorCode {
@@ -66,7 +71,7 @@ extension ErrorCode {
         case CHUPA_ERR_DATA:   self = .data
         case CHUPA_ERR_USAGE:  self = .usage
         case CHUPA_ERR_MEMORY: self = .memory
-        default:               self = .unrecognized(Int32(raw.rawValue))
+        default:               self = .unrecognized(raw.rawValue)
         }
     }
 }

@@ -314,16 +314,27 @@ CHUPA_API bool chupa_context_set(ChupaContext *ctx,
 /* Ставят значение корня напрямую, без текстового литерала: host уже
  * знает тип. Заменяют прежние chupa_context_set_value + chupa_value_*
  * фабрики. Сложные данные (массивы, объекты) поставляются через
- * chupa_context_set текстом литерала. */
-CHUPA_API void chupa_context_set_bool  (ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        bool value);
-CHUPA_API void chupa_context_set_number(ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        double value);
-CHUPA_API void chupa_context_set_string(ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        const char *text, size_t text_len);
+ * chupa_context_set текстом литерала.
+ *
+ * Имя проверяется так же, как в chupa_context_set: идентификатор и не
+ * ключевое слово, иначе к глобальной переменной не обратиться ни из
+ * какой программы. При отказе возвращают false, ставят ошибку
+ * CHUPA_ERR_NAME и не пишут в хранилище ничего — в частности,
+ * chupa_context_set_string проверяет имя ДО создания строки, чтобы
+ * отказ не оставлял мусор в пуле. Перерисовка при отказе не
+ * объявляется: данные не изменились. */
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_bool  (ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         bool value);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_number(ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         double value);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_string(ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         const char *text, size_t text_len);
 
 /* ─── Нотификация о перерисовке ────────────────────────────────────── */
 

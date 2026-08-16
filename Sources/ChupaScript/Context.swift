@@ -35,44 +35,53 @@ public final class Context {
     }
 
     // MARK: - Set variables
+    //
+    // Все четыре сеттера бросают — тот же контракт, что у compile и run.
+    // Отказ бывает двух природ, и хосту надо их различать: негодное имя
+    // (`.name`) — ошибка в коде, неразбираемый текст значения (`.data`)
+    // приходит с бэкенда и чинится контентом. Bool склеивал бы их в одно
+    // «не получилось».
 
     /// Set global from a ChupaScript literal text (not JSON).
     /// Examples: "42", "true", "'hello'", "{'name': 'John', 'age': 30}"
     ///
     /// Object keys must be quoted: a bare identifier is parsed as a name and
     /// rejected as unknown.
-    @discardableResult
-    public func set(_ name: String, text: String) -> Bool {
-        name.withCString { namePtr in
+    public func set(_ name: String, text: String) throws {
+        let ok = name.withCString { namePtr in
             text.withCString { textPtr in
                 chupa_context_set(handle, namePtr, name.utf8.count,
                                   textPtr, text.utf8.count)
             }
         }
+        guard ok else { throw makeError() }
     }
 
     /// Set global to a boolean value.
-    public func set(_ name: String, _ value: Bool) {
-        name.withCString { ptr in
+    public func set(_ name: String, _ value: Bool) throws {
+        let ok = name.withCString { ptr in
             chupa_context_set_bool(handle, ptr, name.utf8.count, value)
         }
+        guard ok else { throw makeError() }
     }
 
     /// Set global to a number value.
-    public func set(_ name: String, _ value: Double) {
-        name.withCString { ptr in
+    public func set(_ name: String, _ value: Double) throws {
+        let ok = name.withCString { ptr in
             chupa_context_set_number(handle, ptr, name.utf8.count, value)
         }
+        guard ok else { throw makeError() }
     }
 
     /// Set global to a string value (raw, no quoting needed).
-    public func set(_ name: String, _ value: String) {
-        name.withCString { namePtr in
+    public func set(_ name: String, _ value: String) throws {
+        let ok = name.withCString { namePtr in
             value.withCString { valuePtr in
                 chupa_context_set_string(handle, namePtr, name.utf8.count,
                                          valuePtr, value.utf8.count)
             }
         }
+        guard ok else { throw makeError() }
     }
 
     // MARK: - Compile

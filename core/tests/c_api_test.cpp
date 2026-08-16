@@ -50,22 +50,99 @@ TEST(CApiContext, SetLiteralFailsOnExpression) {
 TEST(CApiContext, SetBool) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_bool(ctx, "flag", 4, true);
-    // No return value to check — verify via eval in Task 3
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
+    // Значение проверяется вычислением ниже; здесь — что имя принято.
     chupa_context_destroy(ctx);
 }
 
 TEST(CApiContext, SetNumber) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_number(ctx, "pi", 2, 3.14);
+    EXPECT_TRUE(chupa_context_set_number(ctx, "pi", 2, 3.14));
     chupa_context_destroy(ctx);
 }
 
 TEST(CApiContext, SetString) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_string(ctx, "greeting", 8, "world", 5);
+    EXPECT_TRUE(chupa_context_set_string(ctx, "greeting", 8, "world", 5));
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiContext, ScalarSettersRejectNamesTheProgramCannotReference) {
+    // Проверка та же, что у chupa_context_set: имя обязано быть идентификатором
+    // и не быть ключевым словом (docs/grammar.md §4.4, §4.5). Без неё запись
+    // удавалась бы, а обратиться к глобальной переменной было бы нельзя.
+    struct Case {
+        const char* name;
+        std::size_t length;
+        const char* why;
+    };
+    const Case cases[] = {
+        {"my name", 7, "пробел внутри"},
+        {"", 0, "пустое имя"},
+        {"1abc", 4, "начинается с цифры"},
+        {"true", 4, "ключевое слово"},
+        {" state", 6, "ведущий пробел"},
+        {"state ", 6, "хвостовой пробел"},
+    };
+
+    for (const Case& c : cases) {
+        ChupaContext* ctx = chupa_context_create();
+        ASSERT_NE(ctx, nullptr) << c.why;
+
+        EXPECT_FALSE(chupa_context_set_bool(ctx, c.name, c.length, true)) << c.why;
+        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+
+        EXPECT_FALSE(chupa_context_set_number(ctx, c.name, c.length, 1.0)) << c.why;
+        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+
+        EXPECT_FALSE(chupa_context_set_string(ctx, c.name, c.length, "v", 1)) << c.why;
+        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+
+        chupa_context_destroy(ctx);
+    }
+}
+
+TEST(CApiContext, RejectedScalarSetterWritesNothing) {
+    // Отказ обязан оставить хранилище нетронутым. У set_string это отдельный
+    // риск: строка создаётся в пуле, и проверять имя после создания значило бы
+    // оставлять там мусор при каждом отказе.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+
+    ASSERT_TRUE(chupa_context_set_number(ctx, "kept", 4, 7.0));
+    EXPECT_FALSE(chupa_context_set_string(ctx, "bad name", 8, "x", 1));
+
+    // Уцелевшее имя по-прежнему читается — отказ соседа его не задел.
+    ChupaExpression* e = chupa_compile_expression(ctx, "kept", 4);
+    ASSERT_NE(e, nullptr);
+    double out = 0;
+    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_DOUBLE_EQ(out, 7.0);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiContext, RejectedScalarSetterDoesNotNotifyRedraw) {
+    // Перерисовка означает «данные изменились». Отказ ничего не изменил.
+    // Счётчик едет через user_data, а не через глобальную переменную: тест
+    // стоит выше её объявления и не должен от него зависеть.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+
+    int redraws = 0;
+    chupa_context_on_redraw(ctx, [](ChupaContext*, void* user_data) {
+        ++*static_cast<int*>(user_data);
+    }, &redraws);
+
+    EXPECT_FALSE(chupa_context_set_bool(ctx, "bad name", 8, true));
+    EXPECT_EQ(redraws, 0);
+
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "good", 4, true));
+    EXPECT_EQ(redraws, 1);
+
     chupa_context_destroy(ctx);
 }
 
@@ -222,7 +299,7 @@ TEST(CApiEval, EvalTernary) {
 TEST(CApiEval, SetBoolThenEval) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_bool(ctx, "flag", 4, true);
+    ASSERT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
     ChupaExpression* e = chupa_compile_expression(ctx, "flag", 4);
     ASSERT_NE(e, nullptr);
     bool out = false;
@@ -235,7 +312,7 @@ TEST(CApiEval, SetBoolThenEval) {
 TEST(CApiEval, SetNumberThenEval) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_number(ctx, "pi", 2, 3.14);
+    ASSERT_TRUE(chupa_context_set_number(ctx, "pi", 2, 3.14));
     ChupaExpression* e = chupa_compile_expression(ctx, "pi", 2);
     ASSERT_NE(e, nullptr);
     double out = 0;
@@ -248,7 +325,7 @@ TEST(CApiEval, SetNumberThenEval) {
 TEST(CApiEval, SetStringThenEval) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    chupa_context_set_string(ctx, "greeting", 8, "world", 5);
+    ASSERT_TRUE(chupa_context_set_string(ctx, "greeting", 8, "world", 5));
     ChupaExpression* e = chupa_compile_expression(ctx, "greeting", 8);
     ASSERT_NE(e, nullptr);
     ChupaString* out = nullptr;
@@ -301,8 +378,8 @@ TEST(CApi, EvalStringSurvivesStoreMutation) {
     std::string_view name = "filler";
     std::string_view filler = "довольно длинная строка для роста пула";
     for (int i = 0; i < 1000; ++i) {
-        chupa_context_set_string(ctx, name.data(), name.size(),
-                                 filler.data(), filler.size());
+        ASSERT_TRUE(chupa_context_set_string(ctx, name.data(), name.size(),
+                                             filler.data(), filler.size()));
     }
 
     size_t len = 0;
@@ -496,7 +573,7 @@ TEST(CApiError, DataErrorOnExpressionAsData) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     // "1 + 2" is an expression, not a literal — setVariable rejects it
-    chupa_context_set(ctx, "x", 1, "1 + 2", 5);
+    EXPECT_FALSE(chupa_context_set(ctx, "x", 1, "1 + 2", 5));
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_DATA);
     chupa_context_destroy(ctx);
 }
@@ -559,7 +636,7 @@ TEST(CApiRedraw, UserDataPassedThrough) {
         g_redrawCount++;
         EXPECT_EQ(*static_cast<int*>(user_data), 42);
     }, &marker);
-    chupa_context_set_bool(ctx, "flag", 4, true);
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
     EXPECT_EQ(g_redrawCount, 1);
     chupa_context_destroy(ctx);
 }

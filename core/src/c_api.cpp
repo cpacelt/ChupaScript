@@ -122,32 +122,56 @@ bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
 }
 
 // ─── Set: scalars ───
+//
+// Имя проверяется до любой работы: у set_string иначе строка успела бы попасть
+// в пул и осталась бы там мусором после отказа.
 
-void chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len,
+namespace {
+
+/// Общая часть трёх сеттеров: проверка имени с записью отказа в контекст.
+bool acceptName(::ChupaContext* c, std::string_view name) {
+    if (CS::isGlobalName(name)) { return true; }
+    c->setError({CS::ErrorCode::Name, 0, "global name must be an identifier"});
+    return false;
+}
+
+}  // namespace
+
+bool chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len,
                             bool value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    c->engine.setGlobal(std::string_view(name, name_len),
-                        CS::Value::boolean(value));
+    const std::string_view key(name, name_len);
+    if (!acceptName(c, key)) { return false; }
+
+    c->engine.setGlobal(key, CS::Value::boolean(value));
     c->clearError();
     c->notifyRedraw();
+    return true;
 }
 
-void chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_len,
+bool chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_len,
                               double value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    c->engine.setGlobal(std::string_view(name, name_len),
-                        CS::Value::number(value));
+    const std::string_view key(name, name_len);
+    if (!acceptName(c, key)) { return false; }
+
+    c->engine.setGlobal(key, CS::Value::number(value));
     c->clearError();
     c->notifyRedraw();
+    return true;
 }
 
-void chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_len,
+bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_len,
                               const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    const std::string_view key(name, name_len);
+    if (!acceptName(c, key)) { return false; }
+
     CS::Value str = c->engine.makeString(std::string_view(text, text_len));
-    c->engine.setGlobal(std::string_view(name, name_len), str);
+    c->engine.setGlobal(key, str);
     c->clearError();
     c->notifyRedraw();
+    return true;
 }
 
 // ─── Error reporting ───

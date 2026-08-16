@@ -75,19 +75,29 @@ CHUPA_API const char *chupa_version(void);
 CHUPA_API ChupaContext *CHUPA_NULLABLE chupa_context_create(void);
 CHUPA_API void chupa_context_destroy(ChupaContext *CHUPA_NULLABLE ctx);
 
-CHUPA_API bool chupa_context_set(ChupaContext *ctx,
-                                 const char *name, size_t name_len,
-                                 const char *text, size_t text_len);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set(ChupaContext *ctx,
+                  const char *name, size_t name_len,
+                  const char *text, size_t text_len);
 
-CHUPA_API void chupa_context_set_bool  (ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        bool value);
-CHUPA_API void chupa_context_set_number(ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        double value);
-CHUPA_API void chupa_context_set_string(ChupaContext *ctx,
-                                        const char *name, size_t name_len,
-                                        const char *text, size_t text_len);
+/* Typed setters for scalars — no parsing, the value is passed as is.
+ *
+ * Every setter validates the name: it must be an identifier and not a reserved
+ * word, otherwise no program could ever reference the global. On rejection the
+ * setter returns false, sets the context error to CHUPA_ERR_NAME and writes
+ * nothing — the store is left exactly as it was. */
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_bool  (ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         bool value);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_number(ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         double value);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_context_set_string(ChupaContext *ctx,
+                         const char *name, size_t name_len,
+                         const char *text, size_t text_len);
 
 typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);

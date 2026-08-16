@@ -20,28 +20,6 @@ bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
     return false;
 }
 
-/// Идентификатор ли это по docs/grammar.md §4.4 и не ключевое ли слово (§4.5).
-///
-/// Проверка выполняется лексером, а не своей таблицей: так набор ключевых слов
-/// и ограничение на ASCII заведомо совпадают с языком и не разъедутся с ним.
-bool isGlobalName(std::string_view name) noexcept {
-    if (name.empty() || name.size() > 0xffffffffu) { return false; }
-
-    Lexer lexer(name.data(), static_cast<std::uint32_t>(name.size()));
-    Diagnostic ignored;
-
-    Token first;
-    if (!lexer.next(first, ignored)) { return false; }
-    if (first.kind != TokenKind::Identifier) { return false; }
-    // Токен обязан покрывать имя целиком: иначе " state" и "state " прошли бы,
-    // а обратиться к такой глобальной переменной нельзя.
-    if (first.offset != 0 || first.length != name.size()) { return false; }
-
-    Token tail;
-    if (!lexer.next(tail, ignored)) { return false; }
-    return tail.kind == TokenKind::End;
-}
-
 bool materialize(const Ast &ast, std::string_view source, NodeId node,
                  Store &store, Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
@@ -120,6 +98,24 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
 }
 
 }  // namespace
+
+bool isGlobalName(std::string_view name) noexcept {
+    if (name.empty() || name.size() > 0xffffffffu) { return false; }
+
+    Lexer lexer(name.data(), static_cast<std::uint32_t>(name.size()));
+    Diagnostic ignored;
+
+    Token first;
+    if (!lexer.next(first, ignored)) { return false; }
+    if (first.kind != TokenKind::Identifier) { return false; }
+    // Токен обязан покрывать имя целиком: иначе " state" и "state " прошли бы,
+    // а обратиться к такой глобальной переменной нельзя.
+    if (first.offset != 0 || first.length != name.size()) { return false; }
+
+    Token tail;
+    if (!lexer.next(tail, ignored)) { return false; }
+    return tail.kind == TokenKind::End;
+}
 
 bool setVariable(Store &store, std::string_view name, std::string_view text,
                  Diagnostic &diag) {

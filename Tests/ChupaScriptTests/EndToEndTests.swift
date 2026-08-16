@@ -14,8 +14,8 @@ final class EndToEndTests: XCTestCase {
 
     func testNumberRoundTripsThroughTheEngine() throws {
         let context = CSContext()
-        context.set("price", 19.99)
-        context.set("count", 3.0)
+        try context.set("price", 19.99)
+        try context.set("count", 3.0)
 
         let total: CSExpression<Double> = try context.compile(expression: "price * count")
         XCTAssertEqual(try XCTUnwrap(total.eval()), 59.97, accuracy: 1e-9)
@@ -23,7 +23,7 @@ final class EndToEndTests: XCTestCase {
 
     func testBooleanRoundTripsThroughTheEngine() throws {
         let context = CSContext()
-        context.set("enabled", true)
+        try context.set("enabled", true)
 
         let yes = try context.compile(expression: "enabled", as: Bool.self)
         let no = try context.compile(expression: "!enabled", as: Bool.self)
@@ -33,7 +33,7 @@ final class EndToEndTests: XCTestCase {
 
     func testStringRoundTripsThroughTheEngine() throws {
         let context = CSContext()
-        context.set("name", "Мир")
+        try context.set("name", "Мир")
 
         // Оператора конкатенации в языке нет — строки собирает format
         // (docs/semantics.md §8).
@@ -58,7 +58,7 @@ final class EndToEndTests: XCTestCase {
             (1e-8, "1e-8"),
         ]
         for (value, expected) in cases {
-            context.set("x", value)
+            try context.set("x", value)
             let text = try context.compile(expression: "str(x)", as: String.self)
             XCTAssertEqual(try text.eval(), expected, "\(value)")
         }
@@ -78,7 +78,7 @@ final class EndToEndTests: XCTestCase {
 
     func testRawRepresentableEnumNeedsNoConformance() throws {
         let context = CSContext()
-        context.set("align", "right")
+        try context.set("align", "right")
 
         let align: CSExpression<Align> = try context.compile(expression: "align")
         XCTAssertEqual(try align.eval(), .right)
@@ -86,7 +86,7 @@ final class EndToEndTests: XCTestCase {
 
     func testRawRepresentableOverDoubleWorksToo() throws {
         let context = CSContext()
-        context.set("ratio", 0.75)
+        try context.set("ratio", 0.75)
 
         let ratio = try context.compile(expression: "ratio", as: Ratio.self)
         XCTAssertEqual(try ratio.eval(), Ratio(rawValue: 0.75))
@@ -97,7 +97,7 @@ final class EndToEndTests: XCTestCase {
     /// отдельный код и `offset == nil`.
     func testValueOutsideTheEnumIsUnrepresentable() throws {
         let context = CSContext()
-        context.set("align", "centre")
+        try context.set("align", "centre")
 
         let align: CSExpression<Align> = try context.compile(expression: "align")
         XCTAssertThrowsError(try align.eval()) { error in
@@ -114,7 +114,7 @@ final class EndToEndTests: XCTestCase {
 
     func testNullIsAValueNotAnError() throws {
         let context = CSContext()
-        XCTAssertTrue(context.set("state", text: "{'missing': null}"))
+        try context.set("state", text: "{'missing': null}")
 
         // Чтение отсутствующего ключа мягкое (docs/semantics.md §6.3).
         let absent = try context.compile(expression: "state.nothingHere", as: Double.self)
@@ -123,7 +123,7 @@ final class EndToEndTests: XCTestCase {
 
     func testWrongTypeThrowsInsteadOfReturningNil() throws {
         let context = CSContext()
-        context.set("name", "Мир")
+        try context.set("name", "Мир")
 
         let asNumber = try context.compile(expression: "name", as: Double.self)
         XCTAssertThrowsError(try asNumber.eval()) { error in
@@ -133,8 +133,8 @@ final class EndToEndTests: XCTestCase {
 
     func testDefaultSwallowsBothNullAndError() throws {
         let context = CSContext()
-        context.set("name", "Мир")
-        XCTAssertTrue(context.set("state", text: "{'a': 1}"))
+        try context.set("name", "Мир")
+        try context.set("state", text: "{'a': 1}")
 
         let wrongType = try context.compile(expression: "name", as: Double.self)
         XCTAssertEqual(wrongType.eval(default: -1), -1)
@@ -146,6 +146,33 @@ final class EndToEndTests: XCTestCase {
         let null = try context.compile(expression: "state.missing", as: Double.self)
         XCTAssertEqual(null.eval(default: -1), -1)
         XCTAssertNil(context.error)
+    }
+
+    // MARK: - Ошибки записи
+
+    /// Раньше скалярные сеттеры имя не проверяли: запись удавалась молча, а
+    /// обратиться к глобальной переменной было нельзя, и хост узнавал об этом
+    /// синтаксической ошибкой в другом месте.
+    func testScalarSettersRejectUnreferenceableNames() {
+        let context = CSContext()
+
+        for name in ["my name", "", "1abc", "true"] {
+            XCTAssertThrowsError(try context.set(name, 1.0), name) { error in
+                XCTAssertEqual((error as? CSError)?.code, .name, name)
+            }
+            XCTAssertThrowsError(try context.set(name, true), name)
+            XCTAssertThrowsError(try context.set(name, "v"), name)
+        }
+    }
+
+    /// Текст значения приходит с бэкенда, поэтому его отказ — не ошибка кода, и
+    /// код у него другой: `.data`, а не `.name`.
+    func testUnparseableValueTextIsRejectedAsData() {
+        let context = CSContext()
+
+        XCTAssertThrowsError(try context.set("x", text: "1 + 2")) { error in
+            XCTAssertEqual((error as? CSError)?.code, .data)
+        }
     }
 
     // MARK: - Ошибки компиляции
@@ -179,7 +206,7 @@ final class EndToEndTests: XCTestCase {
     /// безопасный порядок: сначала уходит выражение, потом контекст.
     func testExpressionOutlivesItsOwnScope() throws {
         let context = CSContext()
-        context.set("x", 2.0)
+        try context.set("x", 2.0)
 
         var expression: CSExpression<Double>? = try context.compile(expression: "x + x")
         XCTAssertEqual(try expression?.eval(), 4.0)
@@ -190,7 +217,7 @@ final class EndToEndTests: XCTestCase {
     /// имя (`docs/semantics.md` §7.2) — отсюда объект, а не голое число.
     func testScriptAssignsThroughAPath() throws {
         let context = CSContext()
-        XCTAssertTrue(context.set("state", text: "{'count': 0}"))
+        try context.set("state", text: "{'count': 0}")
 
         let script = try context.compile(script: "state.count = state.count + 5;")
         try context.run(script)

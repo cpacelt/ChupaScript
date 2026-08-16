@@ -66,17 +66,17 @@ final class EndToEndTests: XCTestCase {
 
     // MARK: - Обёртки над базовыми типами
 
-    /// Ни слова про `CSValue` в объявлении: `RawRepresentable` перечисление
-    /// получает даром, а `eval()` приходит из расширения по нему.
-    enum Align: String {
+    /// Одно слово в объявлении — и всё: тело разбора приезжает из умолчания на
+    /// `CSValue`, писать его не надо.
+    enum Align: String, CSValue {
         case left, right
     }
 
-    struct Ratio: RawRepresentable, Equatable {
+    struct Ratio: RawRepresentable, CSValue, Equatable {
         var rawValue: Double
     }
 
-    func testRawRepresentableEnumNeedsNoConformance() throws {
+    func testRawRepresentableEnumNeedsOnlyTheConformance() throws {
         let context = CSContext()
         try context.set("align", "right")
 

@@ -1,9 +1,9 @@
 #include "text.hpp"
 
 #include <cassert>
-#include <charconv>
 #include <cmath>
-#include <system_error>
+
+#include "double-conversion/double-to-string.h"
 
 namespace CS {
 
@@ -36,27 +36,54 @@ std::string_view literalText(const Ast &ast, NodeId node,
     return ast.hasEscape(node) ? decodeEscapes(raw, scratch) : raw;
 }
 
+namespace {
+
+/// Конвертер, настроенный под docs/semantics.md §4.3.
+///
+/// Порог фиксированной записи задаётся парой границ показателя: позиционная
+/// запись берётся на полуинтервале [10^-7, 10^21), научная — вне его. Это
+/// ровно правило 3 спеки, только выраженное настройкой, а не нашим кодом.
+///
+/// EMIT_POSITIVE_EXPONENT_SIGN даёт `1e+21` вместо `1e21`. Показатель
+/// печатается минимальным числом цифр, поэтому `1e-8` остаётся `1e-8` —
+/// правило 4 спеки, совпадающее с JavaScript.
+///
+/// Символы бесконечности и NaN не задаются: эти значения обрабатываются до
+/// вызова конвертера, и передавать ему nullptr безопаснее — если особое
+/// значение всё же дойдёт сюда, ToShortest вернёт false, а не тихо напечатает
+/// не тот текст.
+const double_conversion::DoubleToStringConverter &numberFormatter() noexcept {
+    using Converter = double_conversion::DoubleToStringConverter;
+    static const Converter formatter(Converter::EMIT_POSITIVE_EXPONENT_SIGN,
+                                     nullptr,  // бесконечность сюда не доходит
+                                     nullptr,  // NaN сюда не доходит
+                                     'e',
+                                     -7,   // нижняя граница позиционной записи
+                                     21,   // верхняя граница, не включая
+                                     0, 0);  // добивка нулями не используется
+    return formatter;
+}
+
+}  // namespace
+
 std::string_view formatNumber(double value, char *buffer, std::size_t size) {
+    static_assert(
+        kNumberBufferSize >
+            double_conversion::DoubleToStringConverter::kMaxCharsEcmaScriptShortest,
+        "буфера не хватит на кратчайшую запись");
     assert(size >= kNumberBufferSize);
 
     if (std::isnan(value)) { return "nan"; }
     if (std::isinf(value)) { return value > 0.0 ? "inf" : "-inf"; }
-    // Ноль отдельно: общее правило отправило бы его в научную запись, где он
-    // выглядит как 0e+00.
+    // Ноль отдельно: конвертер напечатал бы его как 0, потеряв знак, а
+    // отрицательный ноль обязан давать '-0' — от этого зависят ключи объектов.
     if (value == 0.0) { return std::signbit(value) ? "-0" : "0"; }
 
-    // Порог выбран так, чтобы 1000000 осталось 1000000, а 1e21 стало 1e+21 —
-    // ровно как в таблице примеров docs/semantics.md §4.3.
-    const double magnitude = std::fabs(value);
-    const std::chars_format format = (magnitude >= 1e-7 && magnitude < 1e21)
-                                         ? std::chars_format::fixed
-                                         : std::chars_format::scientific;
-
-    const std::to_chars_result result =
-        std::to_chars(buffer, buffer + size, value, format);
-    assert(result.ec == std::errc() && "kNumberBufferSize оказался мал");
-    return std::string_view(buffer,
-                            static_cast<std::size_t>(result.ptr - buffer));
+    double_conversion::StringBuilder out(buffer, static_cast<int>(size));
+    const bool written = numberFormatter().ToShortest(value, &out);
+    assert(written && "особые значения отсеяны выше");
+    (void)written;
+    return std::string_view(buffer, static_cast<std::size_t>(out.position()));
 }
 
 }  // namespace CS

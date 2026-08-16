@@ -36,7 +36,10 @@ public final class Context {
     // MARK: - Set variables
 
     /// Set global from a ChupaScript literal text (not JSON).
-    /// Examples: "42", "true", "'hello'", "{ name: 'John', age: 30 }"
+    /// Examples: "42", "true", "'hello'", "{'name': 'John', 'age': 30}"
+    ///
+    /// Object keys must be quoted: a bare identifier is parsed as a name and
+    /// rejected as unknown.
     @discardableResult
     public func set(_ name: String, text: String) -> Bool {
         name.withCString { namePtr in

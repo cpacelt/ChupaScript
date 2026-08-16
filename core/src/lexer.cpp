@@ -1,8 +1,7 @@
-#include <charconv>
 #include <cstring>
 #include <limits>
-#include <system_error>
 
+#include "double-conversion/string-to-double.h"
 #include "lexer.hpp"
 
 namespace CS {
@@ -11,6 +10,24 @@ namespace {
 
 bool sameAs(const char *text, const char *word, std::uint32_t length) noexcept {
     return std::memcmp(text, word, length) == 0;
+}
+
+// Разбор числового литерала. Флаги пустые намеренно: пролёт строит сканер ниже
+// и подаёт только [0-9]+ либо [0-9]+.[0-9]+ — ни знака, ни экспоненты, ни hex,
+// ни пробелов. Всё, что конвертер умеет сверх этого, нам не нужно и только
+// расширило бы принимаемый язык мимо docs/grammar.md §4.3.
+//
+// Значения для пустой строки и мусора — NaN: сканер таких пролётов не строит,
+// и попадание сюда означало бы рассинхрон сканера с конвертером. Отличить его
+// можно по числу разобранных символов, чем проверка ниже и занимается.
+const double_conversion::StringToDoubleConverter &numberParser() noexcept {
+    static const double_conversion::StringToDoubleConverter parser(
+        double_conversion::StringToDoubleConverter::NO_FLAGS,
+        std::numeric_limits<double>::quiet_NaN(),   // пустая строка
+        std::numeric_limits<double>::quiet_NaN(),   // мусор
+        nullptr,                                    // символа бесконечности нет
+        nullptr);                                   // символа NaN нет
+    return parser;
 }
 
 }  // namespace
@@ -287,24 +304,15 @@ bool Lexer::lexNumber(Token &out, Diagnostic &diag) noexcept {
         }
     }
 
-    const std::from_chars_result parsed = std::from_chars(
-        src_ + start, src_ + end, out.number, std::chars_format::fixed);
-    if (parsed.ec == std::errc::result_out_of_range) {
-        // Литерал вне диапазона double даёт значение IEEE, а не ошибку:
-        // Number включает ±Infinity (docs/semantics.md §2.1), и язык
-        // последовательно предпочитает значение IEEE отказу (§5.2).
-        // Переполнение вверх от переполнения вниз отличает ненулевая
-        // цифра в целой части. from_chars в этом случае out.number не
-        // трогает, поэтому значение выставляется здесь явно.
-        bool overflow = false;
-        for (std::uint32_t i = start; i < end && src_[i] != '.'; ++i) {
-            if (src_[i] != '0') {
-                overflow = true;
-                break;
-            }
-        }
-        out.number = overflow ? std::numeric_limits<double>::infinity() : 0.0;
-    } else if (parsed.ec != std::errc() || parsed.ptr != src_ + end) {
+    // Литерал вне диапазона double даёт значение IEEE, а не ошибку: Number
+    // включает ±Infinity (docs/semantics.md §2.1), и язык последовательно
+    // предпочитает значение IEEE отказу (§5.2). Конвертер сам возвращает
+    // бесконечность при переполнении вверх и ноль при переполнении вниз, так
+    // что различать их здесь нечем и незачем.
+    int consumed = 0;
+    out.number = numberParser().StringToDouble(
+        src_ + start, static_cast<int>(end - start), &consumed);
+    if (consumed != static_cast<int>(end - start)) {
         // Защитная проверка: для пролётов, которые строит этот сканер (только
         // цифры, либо цифры '.' цифры), недостижима, но остаётся единственной
         // структурной защитой разбора.

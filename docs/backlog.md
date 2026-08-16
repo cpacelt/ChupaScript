@@ -1132,7 +1132,14 @@ JSON формально неупорядочены, поэтому вопрос,
 ### B40. Swift-обвязку нечем запустить
 
 **Где:** `swift/`, `ChupaScript.podspec`, `ChupaScript.modulemap`
-**Статус:** отложено; сузилось — проверка типов появилась, сборки и тестов нет
+**Статус:** закрыто 16.08.2026 — `Package.swift` собирает пакет, восемь сквозных
+тестов в `Tests/ChupaScriptTests/EndToEndTests.swift` проходят на `swift test`,
+`xcodebuild -destination 'generic/platform=iOS'` даёт `BUILD SUCCEEDED` с
+`minos 15.6`. Ниже — постановка на момент заведения записи; пути в ней
+устаревшие, `swift/` переехал в `Sources/ChupaScript/`.
+
+Что осталось за пределами: `pod lib lint` не прогонялся, и подспек ещё не
+разложен по subspec'ам. Это отдельная работа, не эта запись.
 
 В `swift/` пять файлов и ни одного теста. Нет ни `Package.swift`, ни
 `.xcodeproj`, ни `Podfile` — то есть Swift-половина движка ни разу не была

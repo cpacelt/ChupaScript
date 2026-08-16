@@ -44,14 +44,23 @@ TEST(FormatNumber, UpperThreshold) {
 TEST(FormatNumber, LowerThreshold) {
     // 1e-7 ещё фиксированная, 1e-8 уже научная.
     EXPECT_EQ(format(1e-7), "0.0000001");
-    EXPECT_EQ(format(1e-8), "1e-08");
+    EXPECT_EQ(format(1e-8), "1e-8");
 }
 
-TEST(FormatNumber, ExponentKeepsTwoDigits) {
-    // За порогом отдаём ровно то, что даёт to_chars: расхождение с JavaScript,
-    // который написал бы 1e-8, сознательное (спека §7.1).
-    EXPECT_EQ(format(1e-8), "1e-08");
+TEST(FormatNumber, ExponentIsAsShortAsPossible) {
+    // Показатель печатается минимальным числом цифр, без ведущего нуля
+    // (docs/semantics.md §4.3, правило 4). Так же ведёт себя JavaScript.
+    EXPECT_EQ(format(1e-8), "1e-8");
+    EXPECT_EQ(format(1e-9), "1e-9");
+    EXPECT_EQ(format(1e-10), "1e-10");
     EXPECT_EQ(format(1e300), "1e+300");
+}
+
+TEST(FormatNumber, ExtremesOfTheRange) {
+    // Границы double: денормализованный минимум и максимум. Оба обязаны
+    // помещаться в kNumberBufferSize и читаться обратно.
+    EXPECT_EQ(format(5e-324), "5e-324");
+    EXPECT_EQ(format(1.7976931348623157e308), "1.7976931348623157e+308");
 }
 
 TEST(FormatNumber, NegativeValues) {

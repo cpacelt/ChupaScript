@@ -1272,6 +1272,30 @@ TEST(EvalFormat, EscapedPlaceholderIsLiteral) {
     EXPECT_EQ(store.string(evaluate(store, "format('$${} и ${}', 1)")), "${} и 1");
 }
 
+TEST(EvalFormat, DollarWithoutBracesIsOrdinaryText) {
+    Store store;
+    // Маркером делает не '$', а всё "${}" целиком: одиночный доллар — обычный
+    // байт шаблона, где бы он ни стоял.
+    EXPECT_EQ(store.string(evaluate(store, "format('a$b${}', 1)")), "a$b1");
+    EXPECT_EQ(store.string(evaluate(store, "format('цена: 100$')")), "цена: 100$");
+    EXPECT_EQ(store.string(evaluate(store, "format('$')")), "$");
+    EXPECT_EQ(store.string(evaluate(store, "format('${')")), "${");
+    EXPECT_EQ(store.string(evaluate(store, "format('$}')")), "$}");
+    EXPECT_EQ(store.string(evaluate(store, "format('{}')")), "{}");
+}
+
+TEST(EvalFormat, MarkerIsFoundAfterARunOfDollars) {
+    Store store;
+    // Цепочка долларов перед маркером — случай, на котором ошибается всякий
+    // разбор, ищущий маркер по первому символу и не отступающий назад.
+    // '$$$${}' — это литеральные '$$', затем экранирование '$${}'.
+    EXPECT_EQ(store.string(evaluate(store, "format('$$$${}')")), "$$${}");
+    // Ещё один доллар впереди — ещё один литеральный.
+    EXPECT_EQ(store.string(evaluate(store, "format('$$$$${}')")), "$$$${}");
+    // Тот же разбег, но следом настоящий плейсхолдер.
+    EXPECT_EQ(store.string(evaluate(store, "format('$$$${}${}', 1)")), "$$${}1");
+}
+
 TEST(EvalFormat, NoPlaceholdersGivesTheTemplate) {
     Store store;
     EXPECT_EQ(store.string(evaluate(store, "format('без подстановок')")),

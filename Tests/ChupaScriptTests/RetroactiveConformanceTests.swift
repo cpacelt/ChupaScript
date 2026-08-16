@@ -11,7 +11,7 @@ import XCTest
 ///
 /// Расширение ниже воспроизводит тот конформанс дословно. Пока `eval()` был
 /// объявлен дважды — для `T: CSValue` и для `T: RawRepresentable` — под ним
-/// `Expression<String>.eval()` переставал компилироваться: сигнатуры у обеих
+/// `ChupaScript.Expression<String>.eval()` переставал компилироваться: сигнатуры у обеих
 /// перегрузок одинаковые (`() throws -> T?`), различали их только ограничения, а
 /// при выполнении обоих правила выбора у языка нет. На месте вызова развести их
 /// было нечем — ни аннотацией типа, ни `as String?`.
@@ -30,7 +30,7 @@ final class RetroactiveConformanceTests: XCTestCase {
     /// Базовый случай: `String` — и `CSValue`, и (по милости чужого модуля)
     /// `RawRepresentable`. Вызов обязан остаться однозначным.
     func testStringStaysCallableUnderRetroactiveConformance() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("name", "Мир")
 
         let name = try context.compile(expression: "name", as: String.self)
@@ -42,7 +42,7 @@ final class RetroactiveConformanceTests: XCTestCase {
     /// для обёрток. Иначе `String` с `RawValue == String` ушёл бы разбирать сам
     /// себя — и это была бы бесконечная рекурсия, а не ошибка компиляции.
     func testStringUsesItsOwnWitnessNotTheWrapperDefault() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("name", "Мир")
 
         let name = try context.compile(expression: "name", as: String.self)
@@ -58,10 +58,10 @@ final class RetroactiveConformanceTests: XCTestCase {
     }
 
     func testWrapperStillResolvesUnderRetroactiveConformance() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("align", "right")
 
-        let align: CSExpression<Align> = try context.compile(expression: "align")
+        let align: ChupaScript.Expression<Align> = try context.compile(expression: "align")
 
         XCTAssertEqual(try align.eval(), .right)
     }

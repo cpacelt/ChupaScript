@@ -13,16 +13,16 @@ final class EndToEndTests: XCTestCase {
     // MARK: - Базовые типы
 
     func testNumberRoundTripsThroughTheEngine() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("price", 19.99)
         try context.set("count", 3.0)
 
-        let total: CSExpression<Double> = try context.compile(expression: "price * count")
+        let total: ChupaScript.Expression<Double> = try context.compile(expression: "price * count")
         XCTAssertEqual(try XCTUnwrap(total.eval()), 59.97, accuracy: 1e-9)
     }
 
     func testBooleanRoundTripsThroughTheEngine() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("enabled", true)
 
         let yes = try context.compile(expression: "enabled", as: Bool.self)
@@ -32,7 +32,7 @@ final class EndToEndTests: XCTestCase {
     }
 
     func testStringRoundTripsThroughTheEngine() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("name", "Мир")
 
         // Оператора конкатенации в языке нет — строки собирает format
@@ -47,7 +47,7 @@ final class EndToEndTests: XCTestCase {
     /// на платформах Apple плавающий `<charconv>` недоступен, и подмена его
     /// собой не должна менять контракт `docs/semantics.md` §4.3.
     func testNumberToStringFollowsTheSpec() throws {
-        let context = CSContext()
+        let context = Context()
 
         let cases: [(Double, String)] = [
             (1, "1"),
@@ -77,15 +77,15 @@ final class EndToEndTests: XCTestCase {
     }
 
     func testRawRepresentableEnumNeedsOnlyTheConformance() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("align", "right")
 
-        let align: CSExpression<Align> = try context.compile(expression: "align")
+        let align: ChupaScript.Expression<Align> = try context.compile(expression: "align")
         XCTAssertEqual(try align.eval(), .right)
     }
 
     func testRawRepresentableOverDoubleWorksToo() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("ratio", 0.75)
 
         let ratio = try context.compile(expression: "ratio", as: Ratio.self)
@@ -96,13 +96,13 @@ final class EndToEndTests: XCTestCase {
     /// ошибка обвязки, а не движка: текст выражения безупречен, поэтому
     /// отдельный код и `offset == nil`.
     func testValueOutsideTheEnumIsUnrepresentable() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("align", "centre")
 
-        let align: CSExpression<Align> = try context.compile(expression: "align")
+        let align: ChupaScript.Expression<Align> = try context.compile(expression: "align")
         XCTAssertThrowsError(try align.eval()) { error in
-            guard let error = error as? CSError else {
-                return XCTFail("ожидалась CSError, получена \(error)")
+            guard let error = error as? ChupaScript.Error else {
+                return XCTFail("ожидалась ChupaScript.Error, получена \(error)")
             }
             XCTAssertEqual(error.code, .unrepresentable)
             XCTAssertNil(error.offset)
@@ -113,7 +113,7 @@ final class EndToEndTests: XCTestCase {
     // MARK: - Три исхода вычисления
 
     func testNullIsAValueNotAnError() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("state", text: "{'missing': null}")
 
         // Чтение отсутствующего ключа мягкое (docs/semantics.md §6.3).
@@ -122,17 +122,17 @@ final class EndToEndTests: XCTestCase {
     }
 
     func testWrongTypeThrowsInsteadOfReturningNil() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("name", "Мир")
 
         let asNumber = try context.compile(expression: "name", as: Double.self)
         XCTAssertThrowsError(try asNumber.eval()) { error in
-            XCTAssertEqual((error as? CSError)?.code, .type)
+            XCTAssertEqual((error as? ChupaScript.Error)?.code, .type)
         }
     }
 
     func testDefaultSwallowsBothNullAndError() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("name", "Мир")
         try context.set("state", text: "{'a': 1}")
 
@@ -154,11 +154,11 @@ final class EndToEndTests: XCTestCase {
     /// обратиться к глобальной переменной было нельзя, и хост узнавал об этом
     /// синтаксической ошибкой в другом месте.
     func testScalarSettersRejectUnreferenceableNames() {
-        let context = CSContext()
+        let context = Context()
 
         for name in ["my name", "", "1abc", "true"] {
             XCTAssertThrowsError(try context.set(name, 1.0), name) { error in
-                XCTAssertEqual((error as? CSError)?.code, .name, name)
+                XCTAssertEqual((error as? ChupaScript.Error)?.code, .name, name)
             }
             XCTAssertThrowsError(try context.set(name, true), name)
             XCTAssertThrowsError(try context.set(name, "v"), name)
@@ -168,21 +168,21 @@ final class EndToEndTests: XCTestCase {
     /// Текст значения приходит с бэкенда, поэтому его отказ — не ошибка кода, и
     /// код у него другой: `.data`, а не `.name`.
     func testUnparseableValueTextIsRejectedAsData() {
-        let context = CSContext()
+        let context = Context()
 
         XCTAssertThrowsError(try context.set("x", text: "1 + 2")) { error in
-            XCTAssertEqual((error as? CSError)?.code, .data)
+            XCTAssertEqual((error as? ChupaScript.Error)?.code, .data)
         }
     }
 
     // MARK: - Ошибки компиляции
 
     func testCompileErrorCarriesCodeAndOffset() {
-        let context = CSContext()
+        let context = Context()
 
         XCTAssertThrowsError(try context.compile(expression: "1 +", as: Double.self)) { error in
-            guard let error = error as? CSError else {
-                return XCTFail("ожидалась CSError, получена \(error)")
+            guard let error = error as? ChupaScript.Error else {
+                return XCTFail("ожидалась ChupaScript.Error, получена \(error)")
             }
             XCTAssertEqual(error.code, .syntax)
             XCTAssertNotNil(error.offset)
@@ -191,12 +191,12 @@ final class EndToEndTests: XCTestCase {
     }
 
     func testUnknownGlobalIsRejectedAtCompileTime() {
-        let context = CSContext()
+        let context = Context()
 
         XCTAssertThrowsError(
             try context.compile(expression: "nosuchthing + 1", as: Double.self)
         ) { error in
-            XCTAssertEqual((error as? CSError)?.code, .name)
+            XCTAssertEqual((error as? ChupaScript.Error)?.code, .name)
         }
     }
 
@@ -205,10 +205,10 @@ final class EndToEndTests: XCTestCase {
     /// Выражение владеет своим хэндлом и освобождает его само. Проверяется
     /// безопасный порядок: сначала уходит выражение, потом контекст.
     func testExpressionOutlivesItsOwnScope() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("x", 2.0)
 
-        var expression: CSExpression<Double>? = try context.compile(expression: "x + x")
+        var expression: ChupaScript.Expression<Double>? = try context.compile(expression: "x + x")
         XCTAssertEqual(try expression?.eval(), 4.0)
         expression = nil
     }
@@ -216,7 +216,7 @@ final class EndToEndTests: XCTestCase {
     /// Целью присваивания может быть только путь внутрь агрегата, но не само
     /// имя (`docs/semantics.md` §7.2) — отсюда объект, а не голое число.
     func testScriptAssignsThroughAPath() throws {
-        let context = CSContext()
+        let context = Context()
         try context.set("state", text: "{'count': 0}")
 
         let script = try context.compile(script: "state.count = state.count + 5;")

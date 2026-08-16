@@ -91,9 +91,14 @@ public final class Context {
     /// `T` обычно выводится из места, куда выражение кладут:
     ///
     ///     struct ButtonProps {
-    ///         var title: CSExpression<String>
+    ///         var title: ChupaScript.Expression<String>
     ///     }
     ///     props.title = try context.compile(expression: "user.name")
+    ///
+    /// Имя квалифицировано не для красоты: с iOS 18 `Expression` объявляет и
+    /// Foundation, поэтому без модуля запись неоднозначна везде, где импортирован
+    /// он. Хосту, которому это многословно, ничего не мешает завести у себя
+    /// `typealias` — какие имена у него заняты, знает только он сам.
     ///
     /// Где вывода нет, тип называется явно — см. перегрузку с `as:`.
     ///

@@ -238,8 +238,17 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             return true;
 
         case NodeKind::String: {
-            std::string scratch;
-            *out = store.makeString(literalText(ast, node, source, scratch));
+            // Байты уложены в пул текста на компиляции, вместе с
+            // раскодированным экранированием (core/src/compile.hpp). Здесь
+            // остаётся собрать значение из координат — ровно как берётся число
+            // из узла Number строкой выше. Раньше на каждом вычислении
+            // заводился черновик и байты дописывались в пул заново, а он
+            // поштучно не освобождается: выражение со строкой растило память на
+            // каждом кадре (docs/backlog.md B51).
+            std::uint32_t offset = 0;
+            std::uint32_t length = 0;
+            ast.stringLiteral(node, &offset, &length);
+            *out = store.stringAt(offset, length);
             return true;
         }
 
@@ -314,15 +323,21 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             // грамматике, приведение §4 к нему не применяется.
             const std::uint32_t count = ast.childCount(node);
             const Value object = store.makeObject(count / 2);
-            std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
                 if (!eval(ast, source, ast.child(node, i + 1), store, &value, diag)) {
                     return false;
                 }
+                // Ключ берётся уложенным, а не разбирается заново: сам objectSet
+                // всё равно копирует байты себе, но раскодировать экранирование
+                // на каждом вычислении незачем. Срез указывает внутрь пула
+                // текста, и appendText такой источник распознаёт (store.cpp).
+                std::uint32_t keyOffset = 0;
+                std::uint32_t keyLength = 0;
+                ast.stringLiteral(ast.child(node, i), &keyOffset, &keyLength);
                 store.objectSet(object,
-                              literalText(ast, ast.child(node, i), source, scratch),
-                              value);
+                                store.string(store.stringAt(keyOffset, keyLength)),
+                                value);
             }
             *out = object;
             return true;

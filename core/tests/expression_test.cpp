@@ -215,4 +215,61 @@ TEST(Expression, EvalStringPropagatesEvalError) {
     EXPECT_EQ(s, "было");
 }
 
+// Байты литерала уложены в пул текста один раз, на компиляции: пул поштучно не
+// освобождается, поэтому копия на каждом вычислении означала бы память,
+// растущую от числа кадров (docs/backlog.md B51).
+TEST(Expression, StringLiteralIsStoredOnceAtCompileTime) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    CS::Diagnostic diag;
+    ASSERT_EQ(CS::Expression::compile("'привет'", store, &expr, diags, 1), 0u);
+
+    std::string s;
+    ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
+    const std::size_t after = store.bytesUsed();
+
+    for (int i = 0; i < 100; ++i) {
+        ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
+        EXPECT_EQ(s, "привет");
+    }
+    EXPECT_EQ(store.bytesUsed(), after);
+}
+
+// Экранирование раскодировано тоже один раз: черновик заводился на каждое
+// вычисление и на каждый литерал.
+TEST(Expression, EscapedLiteralIsDecodedOnceAtCompileTime) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    CS::Diagnostic diag;
+    ASSERT_EQ(CS::Expression::compile("'до\\nпосле'", store, &expr, diags, 1), 0u);
+
+    std::string s;
+    ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
+    EXPECT_EQ(s, "до\nпосле");
+    const std::size_t after = store.bytesUsed();
+
+    ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
+    EXPECT_EQ(s, "до\nпосле");
+    EXPECT_EQ(store.bytesUsed(), after);
+}
+
+// Ключ литерала объекта — тоже уложенный литерал, но копию в объект objectSet
+// всё равно делает: ключ обязан пережить выражение, значит лежать в записи
+// объекта. Проверяется, что укладка ключа не сбила ни состав, ни порядок.
+TEST(Expression, ObjectLiteralKeysComeFromStoredLiterals) {
+    CS::Store store;
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    CS::Diagnostic diag;
+    ASSERT_EQ(
+        CS::Expression::compile("{'б': 2, 'а\\t': 1}['а\\t']", store, &expr, diags, 1),
+        0u);
+
+    double out = 0.0;
+    EXPECT_EQ(expr.evalNumber(store, &out, diag), CS::EvalStatus::Ok);
+    EXPECT_DOUBLE_EQ(out, 1.0);
+}
+
 }  // namespace

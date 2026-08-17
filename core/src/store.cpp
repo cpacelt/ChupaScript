@@ -86,6 +86,23 @@ std::string_view Store::string(Value v) const noexcept {
     return textAt(v.index(), v.length());
 }
 
+void Store::stringParts(Value v, std::uint32_t *offset,
+                        std::uint32_t *length) const noexcept {
+    assert(v.kind() == Value::Kind::String);
+    *offset = v.index();
+    *length = v.length();
+}
+
+Value Store::stringAt(std::uint32_t offset,
+                      std::uint32_t length) const noexcept {
+    // Сложение в size_t: сумма двух uint32 переполнила бы uint32 и утверждение
+    // прошло бы на диапазоне, который на самом деле за пулом.
+    assert(static_cast<std::size_t>(offset) + length <= text_.size() &&
+           "строка за пределами пула текста: координаты выданы не этим "
+           "хранилищем");
+    return Value::string(offset, length);
+}
+
 std::uint32_t Store::beginString() noexcept {
     assert(build_.size() <= 0xffffffffu && "буфер сборки строки перерос uint32");
     return static_cast<std::uint32_t>(build_.size());

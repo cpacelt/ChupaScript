@@ -9,7 +9,8 @@ namespace {
 /// они один байт без всякой оговорки.
 constexpr std::uint8_t kFlagEscape = 1u << 0;   ///< String: есть экранирование
 constexpr std::uint8_t kFlagBoolean = 1u << 1;  ///< Boolean: значение узла
-constexpr std::uint8_t kFlagSlot = 1u << 2;     ///< Identifier: имя разрешено
+constexpr std::uint8_t kFlagLiteral = 1u << 2;  ///< String: литерал уложен
+constexpr std::uint8_t kFlagSlot = 1u << 3;     ///< Identifier: имя разрешено
 
 /// Бывают ли у этого вида дети. Одно сравнение — на этом стоит порядок
 /// перечисления NodeKind.
@@ -229,9 +230,9 @@ std::uint32_t Ast::offset(NodeId node) const noexcept {
 std::uint32_t Ast::childCount(NodeId node) const noexcept {
     assert(node < nodes_.size());
     const Node &n = nodes_[node];
-    // Проверка по виду обязательна: у листа те же восемь байт заняты числом
-    // либо номером ячейки, и прочитанное оттуда «число детей» увело бы
-    // child() за пределы children_.
+    // Проверка по виду обязательна: у листа те же восемь байт заняты числом,
+    // номером ячейки либо координатами литерала, и прочитанное оттуда «число
+    // детей» увело бы child() за пределы children_.
     return hasChildren(n.kind) ? n.payload.children.count : 0;
 }
 
@@ -312,6 +313,31 @@ void Ast::setGlobalValuesSlot(NodeId node, GlobalSlot slot) noexcept {
 bool Ast::hasGlobalValuesSlot(NodeId node) const noexcept {
     assert(node < nodes_.size());
     return (nodes_[node].flags & kFlagSlot) != 0;
+}
+
+void Ast::stringLiteral(NodeId node, std::uint32_t *offset,
+                        std::uint32_t *length) const noexcept {
+    assert(node < nodes_.size());
+    assert(nodes_[node].kind == NodeKind::String &&
+           "уложенный литерал бывает только у строкового литерала");
+    assert(hasStringLiteral(node) && "литерал обязан быть уложен");
+    *offset = nodes_[node].payload.literal.offset;
+    *length = nodes_[node].payload.literal.length;
+}
+
+void Ast::setStringLiteral(NodeId node, std::uint32_t offset,
+                           std::uint32_t length) noexcept {
+    assert(node < nodes_.size());
+    assert(nodes_[node].kind == NodeKind::String &&
+           "уложенный литерал бывает только у строкового литерала");
+    nodes_[node].payload.literal.offset = offset;
+    nodes_[node].payload.literal.length = length;
+    nodes_[node].flags |= kFlagLiteral;
+}
+
+bool Ast::hasStringLiteral(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return (nodes_[node].flags & kFlagLiteral) != 0;
 }
 
 Builtin Ast::builtinId(NodeId node) const noexcept {

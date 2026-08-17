@@ -5,7 +5,7 @@
 
 namespace CS {
 
-std::uint32_t Script::compile(std::string_view source, const Store &store,
+std::uint32_t Script::compile(std::string_view source, Store &store,
                               Script *out, Diagnostic *diags,
                               std::uint32_t capacity) {
     // Компиляция идёт в отдельную единицу и переносится в *out только при

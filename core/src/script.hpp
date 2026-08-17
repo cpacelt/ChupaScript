@@ -35,9 +35,12 @@ class Script {
     /// При отказе *out остаётся тем, чем был: неудачная компиляция не портит
     /// уже собранную единицу.
     ///
-    /// Из store читается только состав имён (check.hpp); значения роли не
-    /// играют, и удерживать store единица не будет.
-    static std::uint32_t compile(std::string_view source, const Store &store,
+    /// Из store читается только состав имён (check.hpp): значения роли не
+    /// играют. Пишется в него ровно одно — байты строковых литералов, разово
+    /// (compile.hpp). Ссылки на store единица не удерживает, но с этого
+    /// момента годна только для него: и номера ячеек, и уложенные литералы
+    /// адресуют его пулы.
+    static std::uint32_t compile(std::string_view source, Store &store,
                                  Script *out, Diagnostic *diags,
                                  std::uint32_t capacity);
 

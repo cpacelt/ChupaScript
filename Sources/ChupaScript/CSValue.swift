@@ -104,10 +104,16 @@ extension String: CSValue {
     /// `chupa_eval_string_borrowed`). Здесь это выполняется само собой: между
     /// вызовом и построением строки движок не трогается ничем.
     ///
-    /// Байты декодируются с заменой: `String` в языке — последовательность байт
-    /// (`docs/semantics.md` §2.1), а не заведомо корректный UTF-8, и негодная
-    /// последовательность станет U+FFFD, а не ошибкой. Для рендера это верно:
-    /// испорченный контент показывается испорченным, а не роняет кадр.
+    /// Проверка кодировки при построении строки не выполняется — см.
+    /// `String.chupaFromValidUTF8`, где разобрано и почему (три четверти цены
+    /// чтения длинной строки), и на чём держится её предусловие.
+    ///
+    /// Прежде байты декодировались с заменой: `String` в языке — это
+    /// последовательность байт (`docs/semantics.md` §2.1), а не заведомо
+    /// корректный UTF-8, и негодная последовательность становилась U+FFFD.
+    /// Теперь такой замены нет, и через сырой C API негодные байты приводят не
+    /// к испорченному тексту, а к неопределённому поведению. Через эту обёртку
+    /// они недостижимы: всё, что попадает в движок, пришло из `String.utf8`.
     public static func chupaEval<U>(from expression: Expression<U>) throws -> String? {
         var bytes: UnsafePointer<CChar>?
         var length = 0
@@ -115,10 +121,8 @@ extension String: CSValue {
                                           expression.handle, &bytes, &length) {
         case CHUPA_OK:
             // Пустой результат приходит с нулевой длиной и, возможно, с пустым
-            // указателем — это строка, а не null.
-            guard let bytes, length > 0 else { return "" }
-            return String(decoding: UnsafeRawBufferPointer(start: bytes, count: length),
-                          as: UTF8.self)
+            // указателем — это строка, а не null; chupaFromValidUTF8 это знает.
+            return String.chupaFromValidUTF8(bytes, count: length)
         case CHUPA_NULL:
             return nil
         default:

@@ -152,13 +152,9 @@ public final class Context {
         let offset = chupa_context_error_offset(handle)
         var len: Int = 0
         let msgPtr = chupa_context_error(handle, &len)
-        let message: String
-        if let msgPtr, len > 0 {
-            message = String(decoding: UnsafeRawBufferPointer(start: msgPtr, count: len),
-                             as: UTF8.self)
-        } else {
-            message = ""
-        }
+        // Сообщения — литералы из C++, ASCII целиком, так что проверять их
+        // кодировку нечего (String.chupaFromValidUTF8).
+        let message = String.chupaFromValidUTF8(msgPtr, count: len)
         return Error(code: code, message: message, offset: offset)
     }
 

@@ -61,13 +61,13 @@ EvalStatus Expression::evalBool(Store &store, bool *out,
     return status;
 }
 
-EvalStatus Expression::evalString(Store &store, std::string *out,
+EvalStatus Expression::evalString(Store &store, std::string_view *out,
                                   Diagnostic &diag) const {
     Value value = Value::null();
     const EvalStatus status = evalOfKind(store, Value::Kind::String,
                                          "eval_string: value is not a string",
                                          &value, diag);
-    if (status == EvalStatus::Ok) { *out = std::string(store.string(value)); }
+    if (status == EvalStatus::Ok) { *out = store.string(value); }
     return status;
 }
 

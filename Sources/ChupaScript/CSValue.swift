@@ -96,29 +96,27 @@ extension Bool: CSValue {
 
 extension String: CSValue {
 
-    /// Байты движок отдаёт в `ChupaString`, которую этот вызов обязан
-    /// освободить; возвращаемая строка — их копия.
+    /// Байты движок отдаёт срезом в свой текстовый пул — без владения и без
+    /// копии; возвращаемая строка копирует их себе, и это единственная копия
+    /// на весь путь.
+    ///
+    /// Срез действителен до следующего обращения к контексту (`chupascript.h`,
+    /// `chupa_eval_string_borrowed`). Здесь это выполняется само собой: между
+    /// вызовом и построением строки движок не трогается ничем.
     ///
     /// Байты декодируются с заменой: `String` в языке — последовательность байт
     /// (`docs/semantics.md` §2.1), а не заведомо корректный UTF-8, и негодная
     /// последовательность станет U+FFFD, а не ошибкой. Для рендера это верно:
     /// испорченный контент показывается испорченным, а не роняет кадр.
     public static func chupaEval<U>(from expression: Expression<U>) throws -> String? {
-        var raw: OpaquePointer?
-        switch chupa_eval_string(expression.context.handle, expression.handle, &raw) {
+        var bytes: UnsafePointer<CChar>?
+        var length = 0
+        switch chupa_eval_string_borrowed(expression.context.handle,
+                                          expression.handle, &bytes, &length) {
         case CHUPA_OK:
-            guard let raw else {
-                // По контракту (chupascript.h, chupa_eval_string) на CHUPA_OK
-                // указатель непустой. Ветка недостижима, но вернуть отсюда nil
-                // нельзя: nil означает «язык дал null», и сломанный движок
-                // отрапортовал бы валидным значением.
-                throw Error(code: .usage,
-                            message: "chupa_eval_string returned OK with no string",
-                            offset: nil)
-            }
-            defer { chupa_string_destroy(raw) }
-            var length = 0
-            let bytes = chupa_string_bytes(raw, &length)
+            // Пустой результат приходит с нулевой длиной и, возможно, с пустым
+            // указателем — это строка, а не null.
+            guard let bytes, length > 0 else { return "" }
             return String(decoding: UnsafeRawBufferPointer(start: bytes, count: length),
                           as: UTF8.self)
         case CHUPA_NULL:

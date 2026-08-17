@@ -8,9 +8,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
-#include <string>
 #include <string_view>
-#include <utility>
 
 #include "data.hpp"
 #include "diagnostic.hpp"
@@ -64,13 +62,6 @@ struct ChupaContext {
 // хост — контекст о скомпилированных единицах больше не знает (B35).
 struct ChupaExpression { CS::Expression impl; };
 struct ChupaScript     { CS::Script     impl; };
-
-/// Строка, отданная хосту во владение (спека Р6).
-///
-/// Однополевая обёртка: наружу видно только имя типа, внутри — обычная
-/// std::string. Отдельное выделение на строку — сознательный долг; сменить
-/// его на пул внутри контекста можно не трогая ни заголовок, ни Swift.
-struct ChupaString     { std::string    text; };
 
 // ─── Version ───
 
@@ -305,34 +296,22 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
     return toStatus(expr->impl.evalBool(c->engine, out, c->lastError));
 }
 
-ChupaStatus chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
-                              ChupaString** out) {
+ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
+                                       const char** bytes, size_t* len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
 
-    std::string text;
+    std::string_view text;
     const CS::EvalStatus status = expr->impl.evalString(c->engine, &text,
                                                         c->lastError);
     if (status != CS::EvalStatus::Ok) { return toStatus(status); }
 
-    auto* s = new (std::nothrow) ::ChupaString{std::move(text)};
-    if (s == nullptr) {
-        c->setError({CS::ErrorCode::Memory, 0, "eval_string: out of memory"});
-        return CHUPA_ERROR;
-    }
-    *out = reinterpret_cast<ChupaString*>(s);
+    // Срез в текстовый пул движка, без владения и без копии. Окно валидности
+    // и его обоснование — в заголовке, у объявления.
+    *bytes = text.data();
+    *len = text.size();
     return CHUPA_OK;
-}
-
-const char* chupa_string_bytes(const ChupaString* s, size_t* len) {
-    const auto* impl = reinterpret_cast<const ::ChupaString*>(s);
-    if (len) { *len = impl->text.size(); }
-    return impl->text.c_str();
-}
-
-void chupa_string_destroy(ChupaString* s) {
-    delete reinterpret_cast<::ChupaString*>(s);
 }
 
 // ─── Run ───

@@ -42,7 +42,6 @@ CHUPA_NONNULL_BEGIN
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
-typedef struct ChupaString     ChupaString;
 
 typedef enum ChupaKind {
     CHUPA_KIND_NULL   = 0,
@@ -99,6 +98,31 @@ chupa_context_set_string(ChupaContext *ctx,
                          const char *name, size_t name_len,
                          const char *text, size_t text_len);
 
+/* ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ text MUST be valid UTF-8. This is the host's obligation.             ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * The engine itself does not care: to it a string is a sequence of bytes
+ * (docs/semantics.md 2.1), it only ever concatenates them, and the one place
+ * that splits — the format template — splits on the ASCII markers '$', '{',
+ * '}', so it cannot cut a scalar in half. Whatever goes in comes out
+ * unchanged.
+ *
+ * The obligation exists because of what is on the other side. The Swift
+ * wrapper builds its String from these bytes WITHOUT re-validating them
+ * (Sources/ChupaScript/UTF8.swift): that validation was three quarters of the
+ * cost of reading a long string. Feeding invalid UTF-8 in through this
+ * function is therefore not "garbled text on screen" — it is undefined
+ * behaviour in the host process.
+ *
+ * A host that reaches this API from Swift, Kotlin or any other language whose
+ * strings are already valid UTF-8 satisfies the obligation for free. A host
+ * that assembles bytes itself must check them.
+ *
+ * The same obligation covers the source text handed to chupa_compile_expression
+ * and chupa_compile_script: its string literals become string values by the
+ * same route.
+ */
+
 typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 
@@ -141,24 +165,42 @@ chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
 
 /* Evaluates the expression as a string.
  *
- * On CHUPA_OK, *out receives a ChupaString the CALLER now owns and must
- * release with chupa_string_destroy. On CHUPA_NULL and CHUPA_ERROR, *out is
- * left untouched and there is nothing to destroy.
+ * On CHUPA_OK, *bytes points at the string's bytes inside the engine's own
+ * text pool and *len is their count. Nothing is allocated and nothing has to
+ * be released. On CHUPA_NULL and CHUPA_ERROR neither output is touched.
  *
- * A ChupaString may be destroyed in any order relative to the context it was
- * evaluated against — it holds no reference to it. It owns its bytes outright,
- * so destroying the context neither frees it nor invalidates its bytes. */
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ The bytes are BORROWED. They stay valid until the next call that     ║
+ * ║ touches this context, and not one moment longer. Copy them first.    ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * Any call that writes into the pool — chupa_context_set*, compiling a unit
+ * with string literals in it, another evaluation that builds a string — may
+ * move the pool and leave the pointer dangling. Destroying the context frees
+ * the pool outright.
+ *
+ * This used to hand ownership over instead, through a heap-allocated
+ * ChupaString the caller destroyed. It bought exactly one guarantee — free
+ * destruction order — and no caller ever wanted it: every one of them copies
+ * the bytes into its own string immediately, so the owning string existed
+ * only to be duplicated and thrown away. Two allocations, a copy and two
+ * frees per string read, for a promise nobody collected.
+ *
+ * The bytes are NOT NUL-terminated: they are a slice of a packed pool, and
+ * what follows them is the next string. Use len.
+ *
+ * An empty result is CHUPA_OK with *len == 0, and *bytes may be NULL — an
+ * empty string has nothing to point at. It is still a string, not a null.
+ *
+ * The _borrowed suffix is in the name and not only in this comment because
+ * const char ** and size_t * say nothing about lifetime, so the one thing a
+ * caller can get catastrophically wrong is the one thing the signature keeps
+ * quiet about. Its C++ counterpart, Expression::evalString, needs no such
+ * suffix: it hands back a std::string_view, and non-ownership is what that
+ * type means. */
 CHUPA_API CHUPA_MUST_USE ChupaStatus
-chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
-                  ChupaString *CHUPA_NULLABLE *CHUPA_NONNULL out);
-
-/* The bytes are valid until chupa_string_destroy and not one moment longer.
- * They are not NUL-terminated by contract; pass len if you need the length.
- * Never freed by the caller — the ChupaString owns them. */
-CHUPA_API const char *chupa_string_bytes(const ChupaString *s,
-                                         size_t *CHUPA_NULLABLE len);
-
-CHUPA_API void chupa_string_destroy(ChupaString *CHUPA_NULLABLE s);
+chupa_eval_string_borrowed(ChupaContext *ctx, ChupaExpression *e,
+                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                           size_t *len);
 
 CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
 

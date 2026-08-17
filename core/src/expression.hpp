@@ -73,7 +73,16 @@ class Expression {
     /// (review round 3, M1).
     EvalStatus evalNumber(Store &store, double *out, Diagnostic &diag) const;
     EvalStatus evalBool  (Store &store, bool *out, Diagnostic &diag) const;
-    EvalStatus evalString(Store &store, std::string *out, Diagnostic &diag) const;
+
+    /// Строка отдаётся срезом в текстовый пул store, а не копией: владеющую
+    /// строку вызывающий всё равно строит у себя (обёртка Swift — сразу же и
+    /// всегда), так что копия по дороге жила бы ровно до его копии.
+    ///
+    /// Срез действителен, пока в пул не дописали: любое следующее обращение к
+    /// store, укладывающее байты (set*, компиляция литералов, format в
+    /// следующем вычислении), может его переселить. Читать надо сразу.
+    EvalStatus evalString(Store &store, std::string_view *out,
+                          Diagnostic &diag) const;
 
    private:
     /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит

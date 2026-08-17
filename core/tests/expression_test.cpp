@@ -183,7 +183,7 @@ TEST(Expression, EvalBoolAndString) {
 
     CS::Expression text;
     ASSERT_EQ(CS::Expression::compile("'привет'", store, &text, diags, 1), 0u);
-    std::string s;
+    std::string_view s;
     EXPECT_EQ(text.evalString(store, &s, diag), CS::EvalStatus::Ok);
     EXPECT_EQ(s, "привет");
 }
@@ -205,7 +205,7 @@ TEST(Expression, EvalStringPropagatesEvalError) {
     // Сторожевое значение по той же причине, что и у out=42.0 выше
     // (review round 3, M2): если *out на исходе Error действительно не
     // тронут, "было" переживёт вызов неизменным.
-    std::string s = "было";
+    std::string_view s = "было";
     EXPECT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Error);
     EXPECT_EQ(diag.code, CS::ErrorCode::Range);
     // Смещение указывает на сам индекс — байт '[' в "items[-1]" (review
@@ -225,7 +225,7 @@ TEST(Expression, StringLiteralIsStoredOnceAtCompileTime) {
     CS::Diagnostic diag;
     ASSERT_EQ(CS::Expression::compile("'привет'", store, &expr, diags, 1), 0u);
 
-    std::string s;
+    std::string_view s;
     ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
     const std::size_t after = store.bytesUsed();
 
@@ -245,7 +245,7 @@ TEST(Expression, EscapedLiteralIsDecodedOnceAtCompileTime) {
     CS::Diagnostic diag;
     ASSERT_EQ(CS::Expression::compile("'до\\nпосле'", store, &expr, diags, 1), 0u);
 
-    std::string s;
+    std::string_view s;
     ASSERT_EQ(expr.evalString(store, &s, diag), CS::EvalStatus::Ok);
     EXPECT_EQ(s, "до\nпосле");
     const std::size_t after = store.bytesUsed();

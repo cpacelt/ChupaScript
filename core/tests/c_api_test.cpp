@@ -229,14 +229,11 @@ TEST(CApiEval, EvalString) {
     EXPECT_TRUE(setGlobal(ctx, "name", "'hello'"));
     ChupaExpression* e = chupa_compile_expression(ctx, "name", 4);
     ASSERT_NE(e, nullptr);
-    ChupaString* out = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
-    ASSERT_NE(out, nullptr);
+    const char* bytes = nullptr;
     size_t len = 0;
-    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
     EXPECT_EQ(len, 5u);
     EXPECT_EQ(std::string(bytes, len), "hello");
-    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -285,13 +282,10 @@ TEST(CApiEval, EvalTernary) {
     EXPECT_TRUE(setGlobal(ctx, "x", "5"));
     ChupaExpression* e = chupa_compile_expression(ctx, "x > 3 ? 'big' : 'small'", 23);
     ASSERT_NE(e, nullptr);
-    ChupaString* out = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
-    ASSERT_NE(out, nullptr);
+    const char* bytes = nullptr;
     size_t len = 0;
-    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
     EXPECT_EQ(std::string(bytes, len), "big");
-    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -328,51 +322,84 @@ TEST(CApiEval, SetStringThenEval) {
     ASSERT_TRUE(chupa_context_set_string(ctx, "greeting", 8, "world", 5));
     ChupaExpression* e = chupa_compile_expression(ctx, "greeting", 8);
     ASSERT_NE(e, nullptr);
-    ChupaString* out = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
-    ASSERT_NE(out, nullptr);
+    const char* bytes = nullptr;
     size_t len = 0;
-    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
     EXPECT_EQ(std::string(bytes, len), "world");
-    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
-// ─── ChupaString: строка во владении хоста ───
+// ─── Строковый результат: срез в пул движка, без владения ───
+//
+// Владеющей обёртки (ChupaString) больше нет. Она существовала ради одной
+// гарантии — свободного порядка разрушения, — и за ней никто не пришёл:
+// единственный хост копирует байты немедленно и всегда. Два теста, державшие
+// ту гарантию (EvalStringOutlivesTheContext и EvalStringSurvivesStoreMutation),
+// удалены вместе с ней: проверять неопределённое поведение нечем. Вместо них
+// ниже проверяется положительное — что срез настоящий, что копия успевает
+// сняться, и что на неудачных исходах выходные параметры не трогаются.
 
-TEST(CApi, EvalStringHandsOverOwnership) {
+TEST(CApi, EvalStringGivesTheBytesWithoutOwnership) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     std::string_view src = "'привет'";
     ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
-    ChupaString* s = nullptr;
-    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
-    ASSERT_NE(s, nullptr);
-
+    const char* bytes = nullptr;
     size_t len = 0;
-    const char* bytes = chupa_string_bytes(s, &len);
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    ASSERT_NE(bytes, nullptr);
     EXPECT_EQ(std::string(bytes, len), "привет");
 
-    chupa_string_destroy(s);
+    // Освобождать нечего: парной функции нет, и её отсутствие — часть
+    // контракта, а не забывчивость теста.
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
-TEST(CApi, EvalStringSurvivesStoreMutation) {
-    // Это и есть UAF-1: раньше указатель смотрел внутрь пула движка, и любая
-    // следующая операция над контекстом могла его подвесить.
+TEST(CApi, EvalStringReturnsTheSameSliceEveryTime) {
+    // Срез, а не копия: повторное вычисление того же литерала обязано отдать
+    // тот же самый указатель. Копия давала бы каждый раз новый адрес — это
+    // единственный способ увидеть снаружи, что аллокации на пути больше нет.
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     std::string_view src = "'привет'";
     ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
-    ChupaString* s = nullptr;
-    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
-    ASSERT_NE(s, nullptr);
+    const char* first = nullptr;
+    size_t firstLen = 0;
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &first, &firstLen), CHUPA_OK);
+
+    const char* second = nullptr;
+    size_t secondLen = 0;
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &second, &secondLen),
+              CHUPA_OK);
+
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(firstLen, secondLen);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApi, EvalStringBytesAreCopiedBeforeTheNextCall) {
+    // Окно валидности — до следующего обращения к контексту. Проверить
+    // нарушение нечем (это UB), поэтому тест держит сам порядок работы: снять
+    // копию сразу, потом сколько угодно шевелить хранилище, потом вычислить
+    // заново и получить годный срез снова.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    std::string_view src = "'привет'";
+    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
+    ASSERT_NE(e, nullptr);
+
+    const char* bytes = nullptr;
+    size_t len = 0;
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    const std::string copy(bytes, len);  // копия снята немедленно
 
     // Растим пул текста так, чтобы он заведомо переехал.
     std::string_view name = "filler";
@@ -381,25 +408,29 @@ TEST(CApi, EvalStringSurvivesStoreMutation) {
         ASSERT_TRUE(chupa_context_set_string(ctx, name.data(), name.size(),
                                              filler.data(), filler.size()));
     }
+    EXPECT_EQ(copy, "привет");  // копия переезд пережила
 
-    size_t len = 0;
-    const char* bytes = chupa_string_bytes(s, &len);
-    EXPECT_EQ(std::string(bytes, len), "привет");  // байты наши, не движка
+    // А сам срез берётся заново — и он снова годен.
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    EXPECT_EQ(std::string(bytes, len), "привет");
 
-    chupa_string_destroy(s);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
-TEST(CApi, EvalStringOnNullLeavesOutUntouched) {
+TEST(CApi, EvalStringOnNullLeavesOutputsUntouched) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     ChupaExpression* e = chupa_compile_expression(ctx, "null", 4);
     ASSERT_NE(e, nullptr);
 
-    ChupaString* s = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_NULL);
-    EXPECT_EQ(s, nullptr);  // отдавать нечего — и не отдано
+    // Сторожевые значения: если исход Null действительно не трогает выходные
+    // параметры, они переживут вызов неизменными.
+    const char* bytes = reinterpret_cast<const char*>(1);
+    size_t len = 42;
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_NULL);
+    EXPECT_EQ(bytes, reinterpret_cast<const char*>(1));
+    EXPECT_EQ(len, 42u);
 
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -415,36 +446,16 @@ TEST(CApi, EvalStringOnNumberIsTypeError) {
     ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
-    ChupaString* s = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_ERROR);
-    EXPECT_EQ(s, nullptr);
+    const char* bytes = reinterpret_cast<const char*>(1);
+    size_t len = 42;
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_ERROR);
+    EXPECT_EQ(bytes, reinterpret_cast<const char*>(1));
+    EXPECT_EQ(len, 42u);
     EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
     EXPECT_EQ(chupa_context_error_offset(ctx), 2u);  // '+', корень выражения
 
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
-}
-
-TEST(CApi, EvalStringOutlivesTheContext) {
-    // Порядок разрушения свободный: строка владеет своими байтами и на
-    // контекст не ссылается. Заголовок это обещает — тест это держит.
-    ChupaContext* ctx = chupa_context_create();
-    ASSERT_NE(ctx, nullptr);
-    std::string_view src = "'привет'";
-    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
-    ASSERT_NE(e, nullptr);
-
-    ChupaString* s = nullptr;
-    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
-    ASSERT_NE(s, nullptr);
-
-    chupa_expression_destroy(e);
-    chupa_context_destroy(ctx);  // контекст умер РАНЬШЕ строки
-
-    size_t len = 0;
-    const char* bytes = chupa_string_bytes(s, &len);
-    EXPECT_EQ(std::string(bytes, len), "привет");
-    chupa_string_destroy(s);
 }
 
 TEST(CApi, EvalStringOnEmptyStringIsOkAndNotNull) {
@@ -454,39 +465,15 @@ TEST(CApi, EvalStringOnEmptyStringIsOkAndNotNull) {
     ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
-    ChupaString* s = nullptr;
-    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);  // пустая — не null
-    ASSERT_NE(s, nullptr);
-
+    const char* bytes = nullptr;
     size_t len = 1;
-    const char* bytes = chupa_string_bytes(s, &len);
-    EXPECT_NE(bytes, nullptr);  // ноль байт — но указатель всё равно есть
+    // не null
+    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
     EXPECT_EQ(len, 0u);
+    // Указатель при этом не обещан: у пустой строки в пуле нечего показывать,
+    // и раньше непустым он был лишь потому, что std::string::c_str() всегда
+    // возвращает адрес своего нуля. Годен любой — читать по нему нечего.
 
-    chupa_string_destroy(s);
-    chupa_expression_destroy(e);
-    chupa_context_destroy(ctx);
-}
-
-TEST(CApi, StringDestroyAcceptsNull) {
-    chupa_string_destroy(nullptr);
-}
-
-TEST(CApi, StringBytesAcceptsNullLength) {
-    ChupaContext* ctx = chupa_context_create();
-    ASSERT_NE(ctx, nullptr);
-    std::string_view src = "'ok'";
-    ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
-    ASSERT_NE(e, nullptr);
-    ChupaString* s = nullptr;
-    ASSERT_EQ(chupa_eval_string(ctx, e, &s), CHUPA_OK);
-    ASSERT_NE(s, nullptr);
-    size_t len = 0;
-    const char* with_len = chupa_string_bytes(s, &len);
-    EXPECT_EQ(std::string_view(with_len, len), "ok");
-    // len == nullptr принимается, и байты те же самые.
-    EXPECT_EQ(std::string_view(chupa_string_bytes(s, nullptr), len), "ok");
-    chupa_string_destroy(s);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -520,13 +507,10 @@ TEST(CApiRun, RunScriptWithMemberAccess) {
     EXPECT_TRUE(chupa_run(ctx, s));
     ChupaExpression* e = chupa_compile_expression(ctx, "user.name", 9);
     ASSERT_NE(e, nullptr);
-    ChupaString* out = nullptr;
-    EXPECT_EQ(chupa_eval_string(ctx, e, &out), CHUPA_OK);
-    ASSERT_NE(out, nullptr);
+    const char* bytes = nullptr;
     size_t len = 0;
-    const char* bytes = chupa_string_bytes(out, &len);
+    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
     EXPECT_EQ(std::string(bytes, len), "new");
-    chupa_string_destroy(out);
     chupa_expression_destroy(e);
     chupa_script_destroy(s);
     chupa_context_destroy(ctx);

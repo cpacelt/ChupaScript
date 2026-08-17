@@ -1,0 +1,100 @@
+── Вычисление: константы ── 20000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          1%
+int малый                 5.2          9.6          0.54       0% / 0%
+int большой               5.2          9.6          0.54       0% / 1%
+double                    5.2          9.3          0.56       2% / 1%
+bool true                 5.2          11.3         0.46       0% / 3%
+bool false                4.9          10.9         0.45       5% / 4%
+строка пустая             5.7          36.0         0.16       0% / 76%  ⚠ шум
+строка короткая           5.7          54.0         0.11       0% / 5%
+строка средняя            7.8          135.0        0.06       0% / 1%
+строка длинная            7.8          536.1        0.01       0% / 2%
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testConstants]' passed (0.190 seconds).
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testInterpolation]' started.
+
+── Вычисление: интерполяция ── 20000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          1%
+1 переменная              114.4        230.6        0.50       2% / 4%
+2 переменные              119.5        296.3        0.40       3% / 3%
+5 переменных              187.0        613.1        0.30       3% / 2%
+число в подстановке       110.0        229.1        0.48       6% / 3%
+длинный текст вокруг      141.0        816.2        0.17       2% / 3%
+длинное значение          156.5        677.0        0.23       5% / 6%
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testInterpolation]' passed (0.746 seconds).
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testMaps]' started.
+
+── Вычисление: отображение ── 20000 повторений × 15 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          1%
+попадание, 2 ключа        190.1        128.9        1.47       5% / 4%
+попадание, 5 ключей       185.3        157.6        1.18       7% / 7%
+попадание, 20 ключей      188.8        175.0        1.08       1% / 6%
+промах, 2 ключа           173.7        132.2        1.31       13% / 4%
+промах, 5 ключей          225.3        169.1        1.33       132% / 8%  ⚠ шум
+числовой ключ, 5 ключей   399.2        167.0        2.39       8% / 4%
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testMaps]' passed (0.960 seconds).
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testVariables]' started.
+
+── Вычисление: переменные ── 20000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          2%
+int                       11.9         37.1         0.32       1% / 1%
+double                    12.1         55.6         0.22       2% / 1%
+bool                      11.4         65.7         0.17       5% / 1%
+строка короткая           11.7         69.3         0.17       2% / 7%
+строка длинная            14.5         442.8        0.03       0% / 2%
+Test Case '-[OKBDUI_Unit_Tests.ExpressionEvalBenchmark_Tests testVariables]' passed (0.144 seconds).
+Test Suite 'ExpressionEvalBenchmark_Tests' passed at 2026-08-17 03:11:44.513.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 2.040 (2.042) seconds
+Test Suite 'PropertyParsingBenchmark_Tests' started at 2026-08-17 03:11:44.513.
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testConstants]' started.
+
+── Разбор: константы ── 5000 повторений × 7 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          1%
+число                     2226.3       363.9        6.12       2% / 2%
+флаг                      2241.7       357.5        6.27       2% / 4%
+строка короткая           2712.2       548.7        4.94       1% / 4%
+строка длинная            11453.5      560.1        20.45      2% / 1%
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testConstants]' passed (0.843 seconds).
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testInterpolation]' started.
+
+── Разбор: интерполяция ── 5000 повторений × 7 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          0%
+1 переменная              7195.7       2060.8       3.49       2% / 3%
+длинный текст вокруг      17213.5      10892.3      1.58       2% / 2%
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testInterpolation]' passed (1.564 seconds).
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testMaps]' started.
+
+── Разбор: отображение ── 5000 повторений × 7 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          3%
+отображение, 2 ключа      9124.6       772.0        11.82      2% / 5%
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testMaps]' passed (0.411 seconds).
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testVariables]' started.
+
+── Разбор: переменные ── 5000 повторений × 7 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          0%
+число                     2832.7       434.9        6.51       2% / 3%
+строка                    2805.7       440.6        6.37       0% / 2%
+Test Case '-[OKBDUI_Unit_Tests.PropertyParsingBenchmark_Tests testVariables]' passed (0.266 seconds).
+Test Suite 'PropertyParsingBenchmark_Tests' passed at 2026-08-17 03:11:47.599.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 3.084 (3.085) seconds
+Test Suite 'OKBDUI-Unit-Tests.xctest' passed at 2026-08-17 03:11:47.599.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 5.125 (5.127) seconds
+Test Suite 'Selected tests' passed at 2026-08-17 03:11:47.599.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 5.125 (5.128) seconds
+2026-08-17 03:11:47.884 xcodebuild[44130:233675167] [MT] IDETestOperationsObserverDebug: 10.055 elapsed -- Testing started completed.
+2026-08-17 03:11:47.884 xcodebuild[44130:233675167] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-17 03:11:47.884 xcodebuild[44130:233675167] [MT] IDETestOperationsObserverDebug: 10.055 sec, +10.055 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/roman.putincev/Library/Developer/Xcode/DerivedData/OK-ehzghbikdhtqwodqhqxdeigdwlyr/Logs/Test/Test-OKBDUI-Unit-Tests-2026.08.17_03-11-23-+0300.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started

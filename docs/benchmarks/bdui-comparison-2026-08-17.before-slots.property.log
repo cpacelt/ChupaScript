@@ -1,0 +1,40 @@
+── Свойство: константы ── 50000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          0%
+число                     9.3          2.3          3.98       1% / 0%
+флаг                      10.1         2.3          4.31       1% / 0%
+строка короткая           12.9         9.8          1.32       0% / 0%
+строка длинная            16.0         10.1         1.58       1% / 8%
+Test Case '-[OKBDUI_Unit_Tests.WidgetPropertyBenchmark_Tests testConstants]' passed (0.040 seconds).
+Test Case '-[OKBDUI_Unit_Tests.WidgetPropertyBenchmark_Tests testMapAndInterpolation]' started.
+
+── Свойство: отображение и интерполяция ── 50000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          0%
+отображение, попадание    237.9        110.7        2.15       1% / 6%
+интерполяция              120.7        223.6        0.54       8% / 5%
+Test Case '-[OKBDUI_Unit_Tests.WidgetPropertyBenchmark_Tests testMapAndInterpolation]' passed (0.341 seconds).
+Test Case '-[OKBDUI_Unit_Tests.WidgetPropertyBenchmark_Tests testVariables]' started.
+
+── Свойство: переменные ── 50000 повторений × 9 раундов
+кейс                      старый, нс   новый, нс    стар/нов   разброс
+· пол харнесса ·          0.8          0.8          —          2%
+число                     15.3         44.8         0.34       6% / 6%
+строка                    19.4         54.3         0.36       3% / 11%
+Test Case '-[OKBDUI_Unit_Tests.WidgetPropertyBenchmark_Tests testVariables]' passed (0.068 seconds).
+Test Suite 'WidgetPropertyBenchmark_Tests' passed at 2026-08-17 03:10:33.684.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.450 (0.451) seconds
+Test Suite 'OKBDUI-Unit-Tests.xctest' passed at 2026-08-17 03:10:33.684.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.450 (0.451) seconds
+Test Suite 'Selected tests' passed at 2026-08-17 03:10:33.684.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.450 (0.451) seconds
+2026-08-17 03:10:33.962 xcodebuild[37487:233658660] [MT] IDETestOperationsObserverDebug: 6.685 elapsed -- Testing started completed.
+2026-08-17 03:10:33.962 xcodebuild[37487:233658660] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-17 03:10:33.962 xcodebuild[37487:233658660] [MT] IDETestOperationsObserverDebug: 6.685 sec, +6.685 sec -- end
+
+Test session results, code coverage, and logs:
+	/Users/roman.putincev/Library/Developer/Xcode/DerivedData/OK-ehzghbikdhtqwodqhqxdeigdwlyr/Logs/Test/Test-OKBDUI-Unit-Tests-2026.08.17_03-10-04-+0300.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started

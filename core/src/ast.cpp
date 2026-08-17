@@ -256,6 +256,18 @@ bool Ast::hasEscape(NodeId node) const noexcept {
     return nodes_[node].hasEscape;
 }
 
+GlobalSlot Ast::globalValuesSlot(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return nodes_[node].globalValuesSlot;
+}
+
+void Ast::setGlobalValuesSlot(NodeId node, GlobalSlot slot) noexcept {
+    assert(node < nodes_.size());
+    assert(nodes_[node].kind == NodeKind::Identifier &&
+           "ячейка бывает только у обращения к имени");
+    nodes_[node].globalValuesSlot = slot;
+}
+
 std::uint32_t Ast::nodeCount() const noexcept {
     return static_cast<std::uint32_t>(nodes_.size());
 }

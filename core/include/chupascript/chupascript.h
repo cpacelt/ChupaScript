@@ -123,7 +123,13 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 /* Compiled units are owned by the caller, not by the context. Destroying the
  * context does not free them; destroying a unit does not touch the context.
  * A unit may be destroyed in any order relative to the context it was
- * compiled against — it holds no reference to it. */
+ * compiled against — it holds no reference to it.
+ *
+ * A unit MUST be evaluated on the very context it was compiled against.
+ * Passing it to another context is undefined behaviour: compilation resolves
+ * every global name to a slot in that context's store, and another store's
+ * slots address other variables. Debug builds trap on it; release builds do
+ * not check. */
 CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
 CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 

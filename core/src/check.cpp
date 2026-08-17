@@ -9,7 +9,7 @@ namespace {
 
 /// Состояние одного прохода: копит находки, не останавливаясь.
 struct Checker {
-    const Ast &ast;
+    Ast &ast;
     std::string_view source;
     const Store &store;
     Diagnostic *out;
@@ -79,13 +79,23 @@ struct Checker {
                 checkCall(node);
                 break;
 
-            case NodeKind::Identifier:
+            case NodeKind::Identifier: {
                 // Узлы Identifier — это в точности обращения к именам: имя поля
                 // у Member лежит текстом, а не ребёнком.
-                if (!store.hasGlobal(ast.text(node, source))) {
+                //
+                // Здесь же имя разрешается в номер ячейки и кладётся в узел:
+                // проход и так ищет имя, чтобы отвергнуть незнакомое, и второй
+                // раз искать его на каждом вычислении незачем. Это
+                // единственное место, где имя глобальной переменной вообще
+                // ищется на пути чтения.
+                const GlobalSlot slot = store.globalSlot(ast.text(node, source));
+                if (slot == kNoGlobalSlot) {
                     report(node, ErrorCode::Name, "unknown name");
+                } else {
+                    ast.setGlobalValuesSlot(node, slot);
                 }
                 break;
+            }
 
             case NodeKind::Assign:
                 // Целью не может быть само имя (docs/semantics.md §7.2).

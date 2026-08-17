@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "token.hpp"
+#include "value.hpp"
 
 namespace CS {
 
@@ -110,6 +111,18 @@ class Ast {
 
     [[nodiscard]] bool hasEscape(NodeId node) const noexcept;
 
+    /// Номер ячейки значения глобальной переменной для узла Identifier.
+    ///
+    /// kNoGlobalSlot, пока имя не разрешено. Разрешает его check
+    /// (core/src/check.hpp) — единственное место, где имя вообще ищется, — и
+    /// вычислению остаётся индексация вместо поиска.
+    ///
+    /// Для узлов прочих видов смысла не имеет и остаётся kNoGlobalSlot.
+    [[nodiscard]] GlobalSlot globalValuesSlot(NodeId node) const noexcept;
+
+    /// Записывает разрешённый номер. Зовёт только check.
+    void setGlobalValuesSlot(NodeId node, GlobalSlot slot) noexcept;
+
     /// Число узлов, включая пустышку с индексом kNoNode. Для тестов и замеров.
     [[nodiscard]] std::uint32_t nodeCount() const noexcept;
 
@@ -134,6 +147,8 @@ class Ast {
         double number = 0.0;
         bool boolean = false;
         bool hasEscape = false;
+        /// Только у Identifier; заполняет check. См. globalValuesSlot().
+        GlobalSlot globalValuesSlot = kNoGlobalSlot;
     };
 
     NodeId add(const Node &node);

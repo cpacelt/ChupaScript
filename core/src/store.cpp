@@ -26,9 +26,20 @@ struct ObjectRep {
     std::uint32_t capacity;
 };
 
+/// Запись таблицы имён: имя и номер его ячейки в globalValues_.
+///
+/// Значения здесь нет намеренно — оно живёт в ячейке. Вставка нового имени
+/// двигает эти записи, чтобы сохранить сортировку, и если бы значение лежало
+/// тут, вместе с ним переехал бы и его адрес. Номер ячейки переезд переживает.
+struct GlobalName {
+    std::uint32_t nameOffset;  // индекс первого байта имени в text_
+    std::uint32_t nameLength;
+    GlobalSlot slot;
+};
+
 }  // namespace detail
 
-Store::Store() { globals_ = makeObject(); }
+Store::Store() = default;
 Store::~Store() = default;
 
 std::uint32_t Store::appendText(std::string_view bytes) {
@@ -296,27 +307,94 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
     rep.count += 1;
 }
 
+std::uint32_t Store::findGlobal(std::string_view name,
+                                bool *found) const noexcept {
+    // Тот же двоичный поиск, что и findKey, но по своему массиву. Ходят сюда
+    // только компиляция и запись — на вычислении имя больше не разрешается.
+    std::uint32_t low = 0;
+    std::uint32_t high = static_cast<std::uint32_t>(globalNames_.size());
+    while (low < high) {
+        const std::uint32_t mid = low + (high - low) / 2;
+        const detail::GlobalName &entry = globalNames_[mid];
+        const std::string_view candidate = textAt(entry.nameOffset, entry.nameLength);
+        if (candidate < name) {
+            low = mid + 1;
+        } else if (name < candidate) {
+            high = mid;
+        } else {
+            *found = true;
+            return mid;
+        }
+    }
+    *found = false;
+    return low;
+}
+
+GlobalSlot Store::globalSlot(std::string_view name) const noexcept {
+    bool found = false;
+    const std::uint32_t at = findGlobal(name, &found);
+    return found ? globalNames_[at].slot : kNoGlobalSlot;
+}
+
+Value Store::globalValueAt(GlobalSlot slot) const noexcept {
+    // Чужой номер сюда попасть не может иначе как через выражение, вычисляемое
+    // на не своём контексте, — а это нарушение контракта (chupascript.h).
+    assert(slot < globalValues_.size() && "номер ячейки выдан другим хранилищем");
+    return globalValues_[slot];
+}
+
 Value Store::global(std::string_view name) const noexcept {
-    return objectGet(globals_, name);
+    const GlobalSlot slot = globalSlot(name);
+    if (slot == kNoGlobalSlot) { return Value::null(); }
+    return globalValues_[slot];
 }
 
 bool Store::hasGlobal(std::string_view name) const noexcept {
-    return objectHas(globals_, name);
+    bool found = false;
+    findGlobal(name, &found);
+    return found;
 }
 
-void Store::setGlobal(std::string_view name, Value v) { objectSet(globals_, name, v); }
+void Store::setGlobal(std::string_view name, Value v) {
+    bool found = false;
+    const std::uint32_t at = findGlobal(name, &found);
+    if (found) {
+        globalValues_[globalNames_[at].slot] = v;
+        return;
+    }
 
-std::uint32_t Store::globalCount() const noexcept { return objectCount(globals_); }
+    // Длина снимается до appendText: тот вправе переселить text_, и хотя сам
+    // срез длину переживает, порядок здесь тот же, что в objectSet, — после
+    // этой строки name не трогаем.
+    const std::uint32_t nameLength = static_cast<std::uint32_t>(name.size());
+    const std::uint32_t nameOffset = appendText(name);
+
+    // Ячейка дописывается в конец, и её номер — прежний размер. Место в
+    // globalNames_ найдено до appendText и осталось верным: тот в таблицу имён
+    // не пишет.
+    const GlobalSlot slot = static_cast<GlobalSlot>(globalValues_.size());
+    globalValues_.push_back(v);
+    globalNames_.insert(globalNames_.begin() + at,
+                        detail::GlobalName{nameOffset, nameLength, slot});
+}
+
+std::uint32_t Store::globalCount() const noexcept {
+    return static_cast<std::uint32_t>(globalNames_.size());
+}
 
 std::string_view Store::globalNameAt(std::uint32_t i) const noexcept {
-    return objectKeyAt(globals_, i);
+    if (i >= globalNames_.size()) { return {}; }
+    const detail::GlobalName &entry = globalNames_[i];
+    return textAt(entry.nameOffset, entry.nameLength);
 }
 
 std::size_t Store::bytesUsed() const noexcept {
     return pool_.size() * sizeof(Value) +
            arrays_.size() * sizeof(detail::ArrayRep) +
            objects_.size() * sizeof(detail::ObjectRep) +
-           entries_.size() * sizeof(detail::Entry) + text_.size();
+           entries_.size() * sizeof(detail::Entry) + text_.size() +
+           globalNames_.size() * sizeof(detail::GlobalName) +
+           globalValues_.size() * sizeof(Value);
 }
 
 std::size_t Store::bytesReserved() const noexcept {
@@ -324,7 +402,9 @@ std::size_t Store::bytesReserved() const noexcept {
            arrays_.capacity() * sizeof(detail::ArrayRep) +
            objects_.capacity() * sizeof(detail::ObjectRep) +
            entries_.capacity() * sizeof(detail::Entry) + text_.capacity() +
-           build_.capacity();
+           build_.capacity() +
+           globalNames_.capacity() * sizeof(detail::GlobalName) +
+           globalValues_.capacity() * sizeof(Value);
 }
 
 }  // namespace CS

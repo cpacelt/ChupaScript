@@ -57,13 +57,14 @@ TEST(StoreString, AcceptsSliceOfItsOwnTextPool) {
     EXPECT_EQ(store.string(seed), "исходная строка");
 }
 
-TEST(StoreMetrics, FreshStoreHoldsOnlyTheGlobalTable) {
+TEST(StoreMetrics, FreshStoreHoldsNothing) {
     Store store;
-    // Единственное, что есть у нового хранилища, — пустой объект глобальных переменных:
-    // один заголовок и ни одной пары.
+    // Раньше здесь лежал пустой объект глобальных переменных — один заголовок,
+    // и хранилище с рождения было непустым. Теперь у глобальных переменных своя
+    // пара массивов (таблица имён и ячейки значений), оба пустые, и новое
+    // хранилище не занимает вообще ничего.
     EXPECT_EQ(store.globalCount(), 0u);
-    EXPECT_GT(store.bytesUsed(), 0u);
-    EXPECT_LT(store.bytesUsed(), 64u);
+    EXPECT_EQ(store.bytesUsed(), 0u);
 }
 
 TEST(StoreMetrics, StringAddsItsBytes) {

@@ -246,15 +246,13 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
         case NodeKind::Identifier: {
             // docs/semantics.md §7.1: объявлений в языке нет, всякий
             // идентификатор — чтение из хранилища.
-            const std::string_view name = ast.text(node, source);
-            // Неизвестная глобальная переменная — ошибка, а не null: состав
-            // глобальных имён хранилищу известен, состав ключей внутри них —
-            // нет. Поэтому опечатка в имени глобальной переменной ловится,
-            // а опечатка глубже даёт null по §6.3.
-            if (!store.hasGlobal(name)) {
-                return fail(ast, node, ErrorCode::Name, "unknown global", diag);
-            }
-            *out = store.global(name);
+            //
+            // Имя здесь больше не ищется: check уже разрешил его в номер
+            // ячейки и положил в узел, а неизвестное имя до вычисления не
+            // доходит вовсе — компиляция отвергает его ошибкой Name. Отметка
+            // прохода check утверждается ниже по функции, поэтому номер тут
+            // заведомо проставлен.
+            *out = store.globalValueAt(ast.globalValuesSlot(node));
             return true;
         }
 

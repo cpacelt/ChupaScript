@@ -401,13 +401,13 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
         }
 
         case NodeKind::Call: {
-            Builtin id = Builtin::Count;
-            const bool known = findBuiltin(ast.text(node, source), &id);
-            // Неизвестное имя отсеял статический проход, а дереву мы доверяем
-            // (спека §5.3): здесь это утверждение, а не диагностика.
-            assert(known && "дерево обязано пройти check");
-            (void)known;
-
+            // Имя разрешено на компиляции (core/src/check.cpp): в узле лежит
+            // готовая функция. Раньше здесь на каждом вычислении звался
+            // findBuiltin — двоичный поиск по таблице со сравнением байт, — и
+            // вместе с ним из исходника читался текст имени (docs/backlog.md
+            // B54). Неизвестное имя до вычисления не доходит: check отвергает
+            // его ошибкой Name, а отметку прохода утверждает evalExpression.
+            const Builtin id = ast.builtinId(node);
             // format вариадичен, и буфер аргументов ниже на него не рассчитан:
             // он вычисляет аргументы по мере надобности и придёт своим путём
             // (core/src/eval.cpp, задача 6). assert тут не годится — в

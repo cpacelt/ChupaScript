@@ -259,6 +259,63 @@ TEST(Check, ResetClearsTheMark) {
     EXPECT_FALSE(ast.isChecked());
 }
 
+TEST(Check, ResolvesTheBuiltinIntoTheCallNode) {
+    Store store;
+    put(store, "items", "[1]");
+    Ast ast;
+    Diagnostic buffer[4];
+    const std::string_view text = "count(items)";
+    ASSERT_EQ(CS::compileExpression(text.data(),
+                                    static_cast<std::uint32_t>(text.size()),
+                                    ast, store, buffer, 4),
+              0u);
+    // Имя разрешено на компиляции: вычислению искать его в таблице незачем.
+    const CS::NodeId call = ast.root();
+    ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
+    EXPECT_TRUE(ast.hasBuiltinId(call));
+    EXPECT_EQ(ast.builtinId(call), CS::Builtin::Count);
+}
+
+TEST(Check, LeavesTheCallNodeUnresolvedForAnUnknownName) {
+    Store store;
+    put(store, "items", "[1]");
+    Ast ast;
+    Diagnostic buffer[4];
+    const std::string_view text = "cnt(items)";
+    ASSERT_GT(CS::compileExpression(text.data(),
+                                    static_cast<std::uint32_t>(text.size()),
+                                    ast, store, buffer, 4),
+              0u);
+    // Дерево с ошибкой до вычисления не доходит, но узел обязан честно
+    // сообщать, что имя не разрешено: на этом стоит проверка употребления
+    // результата, которая иначе прочла бы чужую функцию.
+    const CS::NodeId call = ast.root();
+    ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
+    EXPECT_FALSE(ast.hasBuiltinId(call));
+}
+
+TEST(Check, ResetClearsTheResolvedBuiltin) {
+    Store store;
+    put(store, "items", "[1]");
+    Ast ast;
+    Diagnostic buffer[4];
+    const std::string_view good = "count(items)";
+    ASSERT_EQ(CS::compileExpression(good.data(),
+                                    static_cast<std::uint32_t>(good.size()),
+                                    ast, store, buffer, 4),
+              0u);
+    // Повторный разбор выбрасывает дерево — разрешение уходит вместе с узлами,
+    // и новый узел на том же индексе не наследует чужую функцию.
+    const std::string_view other = "min(1, 2)";
+    ASSERT_EQ(CS::compileExpression(other.data(),
+                                    static_cast<std::uint32_t>(other.size()),
+                                    ast, store, buffer, 4),
+              0u);
+    const CS::NodeId call = ast.root();
+    ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
+    EXPECT_EQ(ast.builtinId(call), CS::Builtin::Min);
+}
+
 TEST(Check, CountsWithoutABufferAtAll) {
     Store store;
     put(store, "items", "[1]");

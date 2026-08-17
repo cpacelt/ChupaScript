@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 
+#include "builtin_id.hpp"
 #include "token.hpp"
 #include "value.hpp"
 
@@ -140,6 +141,28 @@ class Ast {
     /// ячейки другие виды узлов (см. Node).
     [[nodiscard]] bool hasGlobalValuesSlot(NodeId node) const noexcept;
 
+    /// Встроенная функция, в которую разрешено имя узла Call.
+    ///
+    /// Разрешает его check (core/src/check.hpp) — единственное место, где имя
+    /// функции вообще ищется, — и вычислению остаётся прочесть готовое.
+    /// Раньше findBuiltin звался заново на каждом вычислении каждого вызова, а
+    /// вместе с ним читался и текст имени из исходника: двоичный поиск по
+    /// таблице с посимвольным сравнением там, где ответ известен с компиляции
+    /// (docs/backlog.md B54).
+    ///
+    /// Предусловие: дерево прошло check, а узел — Call с известным именем.
+    /// Неизвестное имя до вычисления не доходит: check отвергает его ошибкой
+    /// Name, и значение остаётся kNoBuiltin.
+    [[nodiscard]] Builtin builtinId(NodeId node) const noexcept;
+
+    /// Записывает разрешённую функцию. Зовёт только check.
+    void setBuiltinId(NodeId node, Builtin id) noexcept;
+
+    /// Разрешено ли имя узла Call. Проходу — чтобы не искать имя второй раз
+    /// при проверке употребления результата; вычислению этот вопрос не нужен,
+    /// у него ответ гарантирован.
+    [[nodiscard]] bool hasBuiltinId(NodeId node) const noexcept;
+
     /// Число узлов, включая пустышку с индексом kNoNode. Для тестов и замеров.
     [[nodiscard]] std::uint32_t nodeCount() const noexcept;
 
@@ -172,12 +195,13 @@ class Ast {
     struct Node {
         NodeKind kind = NodeKind::Invalid;  ///< смещение 0
         TokenKind op = TokenKind::End;      ///< 1 — Unary, Binary, Assign
-        /// 2 — набор битов kFlag* (ast.cpp): экранирование у String, значение
+        /// 2 — Call; заполняет check. См. builtinId().
+        Builtin builtin = kNoBuiltin;
+        /// 3 — набор битов kFlag* (ast.cpp): экранирование у String, значение
         /// у Boolean, признак разрешённого имени у Identifier. Биты вместо
         /// байтов: каждый принадлежит одному виду узла и с прочими не
         /// встречается.
         std::uint8_t flags = 0;
-        // 3 — байт выравнивания.
 
         std::uint32_t offset = 0;  ///< 4 — место узла в исходнике; у всех
 

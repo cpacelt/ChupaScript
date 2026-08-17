@@ -2,18 +2,12 @@
 #include <cstdint>
 #include <string_view>
 
+#include "builtin_id.hpp"
 #include "diagnostic.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
 namespace CS {
-
-/// Встроенные функции языка (docs/semantics.md §8).
-///
-/// Порядок совпадает с алфавитным порядком имён: таблица ищется двоично.
-enum class Builtin : std::uint8_t {
-    Abs, Count, Format, Has, Keys, Last, Max, Min, Pop, Push, Round, Str
-};
 
 /// Верхняя граница числа аргументов отсутствует. Только у format (§8.8).
 inline constexpr std::uint8_t kVariadic = 255;

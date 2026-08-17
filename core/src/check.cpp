@@ -24,19 +24,21 @@ struct Checker {
     }
 
     /// Вызов, чей результат употреблён, обязан возвращать значение (§6.2).
+    ///
+    /// Имя берётся разрешённым: пост-обход гарантирует, что checkCall прошёл по
+    /// этому узлу раньше, чем родитель добрался до него отсюда. Нет разрешения
+    /// — имя неизвестно, и об этом уже сообщено.
     void requireValue(NodeId call) {
-        Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(call, source), &id)) { return; }  // уже сообщено
-        if (!builtinInfo(id).returnsValue) {
+        if (!ast.hasBuiltinId(call)) { return; }  // уже сообщено
+        if (!builtinInfo(ast.builtinId(call)).returnsValue) {
             report(call, ErrorCode::Name, "builtin does not return a value");
         }
     }
 
     /// Вызов в позиции стейтмента обязан значения не возвращать (§6.1).
     void requireVoid(NodeId call) {
-        Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(call, source), &id)) { return; }
-        if (builtinInfo(id).returnsValue) {
+        if (!ast.hasBuiltinId(call)) { return; }
+        if (builtinInfo(ast.builtinId(call)).returnsValue) {
             report(call, ErrorCode::Name, "call result is not used");
         }
     }
@@ -47,6 +49,13 @@ struct Checker {
             report(node, ErrorCode::Name, "unknown function");
             return;
         }
+        // Здесь же имя разрешается и кладётся в узел: проход и так ищет его,
+        // чтобы отвергнуть незнакомое, и второй раз искать его на каждом
+        // вычислении незачем. Это единственное место, где имя функции вообще
+        // ищется. Кладётся до проверки арности намеренно: неверное число
+        // аргументов — ошибка, до вычисления такое дерево не доходит, а
+        // разрешение всё равно верное, и хранить его половинчато не за что.
+        ast.setBuiltinId(node, id);
         const BuiltinInfo &info = builtinInfo(id);
         const std::uint32_t count = ast.childCount(node);
         if (count < info.minArgs ||

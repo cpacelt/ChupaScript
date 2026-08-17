@@ -3,6 +3,21 @@
 #include <cassert>
 
 namespace CS {
+namespace {
+
+/// Биты поля Node::flags. Каждый принадлежит одному виду узла, поэтому делят
+/// они один байт без всякой оговорки.
+constexpr std::uint8_t kFlagEscape = 1u << 0;   ///< String: есть экранирование
+constexpr std::uint8_t kFlagBoolean = 1u << 1;  ///< Boolean: значение узла
+constexpr std::uint8_t kFlagSlot = 1u << 2;     ///< Identifier: имя разрешено
+
+/// Бывают ли у этого вида дети. Одно сравнение — на этом стоит порядок
+/// перечисления NodeKind.
+constexpr bool hasChildren(NodeKind kind) noexcept {
+    return kind <= kLastKindWithChildren;
+}
+
+}  // namespace
 
 Ast::Ast() {
     // Индекс kNoNode занят пустышкой, чтобы 0 означал «нет узла» и обращение
@@ -39,17 +54,18 @@ NodeId Ast::number(const Token &token) {
     Node node;
     node.kind = NodeKind::Number;
     node.offset = token.offset;
-    node.number = token.number;
+    node.payload.number = token.number;
     return add(node);
 }
 
 NodeId Ast::string(const Token &token) {
     Node node;
     node.kind = NodeKind::String;
+    // Смещение содержимого не хранится: оно на байт правее offset, потому что
+    // кавычка однобайтовая (token.hpp, stringContentOffset). Смотри textStart.
     node.offset = token.offset;
-    node.textOffset = stringContentOffset(token);
     node.textLength = stringContentLength(token);
-    node.hasEscape = token.hasEscape;
+    if (token.hasEscape) { node.flags |= kFlagEscape; }
     return add(node);
 }
 
@@ -57,7 +73,7 @@ NodeId Ast::boolean(const Token &token) {
     Node node;
     node.kind = NodeKind::Boolean;
     node.offset = token.offset;
-    node.boolean = token.kind == TokenKind::True;
+    if (token.kind == TokenKind::True) { node.flags |= kFlagBoolean; }
     return add(node);
 }
 
@@ -72,7 +88,6 @@ NodeId Ast::identifier(const Token &token) {
     Node node;
     node.kind = NodeKind::Identifier;
     node.offset = token.offset;
-    node.textOffset = token.offset;
     node.textLength = token.length;
     return add(node);
 }
@@ -80,12 +95,12 @@ NodeId Ast::identifier(const Token &token) {
 NodeId Ast::member(NodeId base, const Token &name) {
     Node node;
     node.kind = NodeKind::Member;
-    // Смещение — имя поля: на него указывает сообщение об отсутствующем ключе.
+    // Смещение — имя поля: на него указывает сообщение об отсутствующем ключе,
+    // с него же начинается текст имени.
     node.offset = name.offset;
-    node.textOffset = name.offset;
     node.textLength = name.length;
-    node.childStart = pushChildren(&base, 1);
-    node.childCount = 1;
+    node.payload.children.start = pushChildren(&base, 1);
+    node.payload.children.count = 1;
     return add(node);
 }
 
@@ -94,8 +109,8 @@ NodeId Ast::index(NodeId base, NodeId subscript, std::uint32_t offset) {
     Node node;
     node.kind = NodeKind::Index;
     node.offset = offset;
-    node.childStart = pushChildren(kids, 2);
-    node.childCount = 2;
+    node.payload.children.start = pushChildren(kids, 2);
+    node.payload.children.count = 2;
     return add(node);
 }
 
@@ -104,8 +119,8 @@ NodeId Ast::unary(TokenKind op, NodeId operand, std::uint32_t offset) {
     node.kind = NodeKind::Unary;
     node.op = op;
     node.offset = offset;
-    node.childStart = pushChildren(&operand, 1);
-    node.childCount = 1;
+    node.payload.children.start = pushChildren(&operand, 1);
+    node.payload.children.count = 1;
     return add(node);
 }
 
@@ -115,8 +130,8 @@ NodeId Ast::binary(TokenKind op, NodeId lhs, NodeId rhs, std::uint32_t offset) {
     node.kind = NodeKind::Binary;
     node.op = op;
     node.offset = offset;
-    node.childStart = pushChildren(kids, 2);
-    node.childCount = 2;
+    node.payload.children.start = pushChildren(kids, 2);
+    node.payload.children.count = 2;
     return add(node);
 }
 
@@ -126,8 +141,8 @@ NodeId Ast::conditional(NodeId condition, NodeId whenTrue, NodeId whenFalse,
     Node node;
     node.kind = NodeKind::Conditional;
     node.offset = offset;
-    node.childStart = pushChildren(kids, 3);
-    node.childCount = 3;
+    node.payload.children.start = pushChildren(kids, 3);
+    node.payload.children.count = 3;
     return add(node);
 }
 
@@ -135,10 +150,9 @@ NodeId Ast::call(const Token &name, const NodeId *args, std::uint32_t count) {
     Node node;
     node.kind = NodeKind::Call;
     node.offset = name.offset;
-    node.textOffset = name.offset;
     node.textLength = name.length;
-    node.childStart = pushChildren(args, count);
-    node.childCount = count;
+    node.payload.children.start = pushChildren(args, count);
+    node.payload.children.count = count;
     return add(node);
 }
 
@@ -147,8 +161,8 @@ NodeId Ast::array(const NodeId *items, std::uint32_t count,
     Node node;
     node.kind = NodeKind::Array;
     node.offset = offset;
-    node.childStart = pushChildren(items, count);
-    node.childCount = count;
+    node.payload.children.start = pushChildren(items, count);
+    node.payload.children.count = count;
     return add(node);
 }
 
@@ -158,8 +172,8 @@ NodeId Ast::object(const NodeId *pairs, std::uint32_t count,
     Node node;
     node.kind = NodeKind::Object;
     node.offset = offset;
-    node.childStart = pushChildren(pairs, count);
-    node.childCount = count;
+    node.payload.children.start = pushChildren(pairs, count);
+    node.payload.children.count = count;
     return add(node);
 }
 
@@ -170,8 +184,8 @@ NodeId Ast::assign(TokenKind op, NodeId target, NodeId value,
     node.kind = NodeKind::Assign;
     node.op = op;
     node.offset = offset;
-    node.childStart = pushChildren(kids, 2);
-    node.childCount = 2;
+    node.payload.children.start = pushChildren(kids, 2);
+    node.payload.children.count = 2;
     return add(node);
 }
 
@@ -179,8 +193,8 @@ NodeId Ast::callStatement(NodeId callNode, std::uint32_t offset) {
     Node node;
     node.kind = NodeKind::CallStatement;
     node.offset = offset;
-    node.childStart = pushChildren(&callNode, 1);
-    node.childCount = 1;
+    node.payload.children.start = pushChildren(&callNode, 1);
+    node.payload.children.count = 1;
     return add(node);
 }
 
@@ -188,8 +202,8 @@ NodeId Ast::script(const NodeId *statements, std::uint32_t count) {
     Node node;
     node.kind = NodeKind::Script;
     node.offset = 0;
-    node.childStart = pushChildren(statements, count);
-    node.childCount = count;
+    node.payload.children.start = pushChildren(statements, count);
+    node.payload.children.count = count;
     return add(node);
 }
 
@@ -214,29 +228,50 @@ std::uint32_t Ast::offset(NodeId node) const noexcept {
 
 std::uint32_t Ast::childCount(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].childCount;
+    const Node &n = nodes_[node];
+    // Проверка по виду обязательна: у листа те же восемь байт заняты числом
+    // либо номером ячейки, и прочитанное оттуда «число детей» увело бы
+    // child() за пределы children_.
+    return hasChildren(n.kind) ? n.payload.children.count : 0;
 }
 
 NodeId Ast::child(NodeId node, std::uint32_t index) const noexcept {
     assert(node < nodes_.size());
     const Node &n = nodes_[node];
-    if (index >= n.childCount) {
+    if (!hasChildren(n.kind) || index >= n.payload.children.count) {
         return kNoNode;
     }
-    return children_[n.childStart + index];
+    return children_[n.payload.children.start + index];
 }
 
 double Ast::numberValue(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].number;
+    assert(nodes_[node].kind == NodeKind::Number && "число бывает только у Number");
+    return nodes_[node].payload.number;
 }
 
 bool Ast::boolValue(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].boolean;
+    assert(nodes_[node].kind == NodeKind::Boolean &&
+           "истинность бывает только у Boolean");
+    return (nodes_[node].flags & kFlagBoolean) != 0;
 }
 
 std::uint32_t Ast::sourceLength() const noexcept { return sourceLength_; }
+
+namespace {
+
+/// Где в исходнике начинается текст узла.
+///
+/// Отдельного поля под это нет: у Identifier, Member и Call имя начинается там
+/// же, куда указывает offset, а у String содержимое — байтом правее, потому что
+/// кавычка однобайтовая (core/src/token.hpp, stringContentOffset). Хранить эту
+/// величину значило бы держать копию offset у трёх видов из четырёх.
+std::uint32_t textStart(NodeKind kind, std::uint32_t offset) noexcept {
+    return kind == NodeKind::String ? offset + 1 : offset;
+}
+
+}  // namespace
 
 std::string_view Ast::text(NodeId node, std::string_view source) const noexcept {
     assert(node < nodes_.size());
@@ -244,28 +279,39 @@ std::string_view Ast::text(NodeId node, std::string_view source) const noexcept 
     assert(source.size() == sourceLength_);
     const Node &n = nodes_[node];
     if (n.textLength == 0) { return {}; }
-    assert(n.textOffset + n.textLength <= source.size());
-    // Не substr: он бросает out_of_range при textOffset > size(), а text()
+    const std::uint32_t start = textStart(n.kind, n.offset);
+    assert(start + n.textLength <= source.size());
+    // Не substr: он бросает out_of_range при start > size(), а text()
     // объявлена noexcept — в релизной сборке, где assert'ы выше сняты, это
     // был бы std::terminate вместо мусора. Конструктор среза не бросает.
-    return std::string_view(source.data() + n.textOffset, n.textLength);
+    return std::string_view(source.data() + start, n.textLength);
 }
 
 bool Ast::hasEscape(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].hasEscape;
+    return (nodes_[node].flags & kFlagEscape) != 0;
 }
 
 GlobalSlot Ast::globalValuesSlot(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].globalValuesSlot;
+    assert(nodes_[node].kind == NodeKind::Identifier &&
+           "ячейка бывает только у обращения к имени");
+    assert(hasGlobalValuesSlot(node) && "имя обязано быть разрешено проходом");
+    return nodes_[node].payload.globalValuesSlot;
 }
 
 void Ast::setGlobalValuesSlot(NodeId node, GlobalSlot slot) noexcept {
     assert(node < nodes_.size());
     assert(nodes_[node].kind == NodeKind::Identifier &&
            "ячейка бывает только у обращения к имени");
-    nodes_[node].globalValuesSlot = slot;
+    assert(slot != kNoGlobalSlot && "разрешением kNoGlobalSlot не бывает");
+    nodes_[node].payload.globalValuesSlot = slot;
+    nodes_[node].flags |= kFlagSlot;
+}
+
+bool Ast::hasGlobalValuesSlot(NodeId node) const noexcept {
+    assert(node < nodes_.size());
+    return (nodes_[node].flags & kFlagSlot) != 0;
 }
 
 std::uint32_t Ast::nodeCount() const noexcept {

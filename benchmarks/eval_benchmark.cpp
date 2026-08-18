@@ -11,6 +11,7 @@
 #include "ast.hpp"
 #include "check.hpp"
 #include "compile.hpp"
+#include "context.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "eval.hpp"
@@ -735,6 +736,95 @@ BENCHMARK_CAPTURE(BM_Eval_String_New, Short, kShortStringValue);
 BENCHMARK_CAPTURE(BM_Eval_String_Old, Short, kShortStringValue);
 BENCHMARK_CAPTURE(BM_Eval_String_New, Long, kLongStringValue);
 BENCHMARK_CAPTURE(BM_Eval_String_Old, Long, kLongStringValue);
+
+// ─── граница операции ───
+//
+// Пара про то, ради чего заводился временный регион ([B57]). Все строки выше
+// зовут evalExpression напрямую и границу операции не переходят: временный
+// регион у них не сбрасывается никогда. Значит цену разделения они мерят, а
+// выгоду — нет.
+//
+// Выражение одно и то же и обязано что-то создавать, иначе мерить нечего:
+// объектный литерал из трёх ключей, тот же, что в BM_Eval_ObjectLiteral.
+// Разница только в том, кто его вычисляет.
+//
+// Считается не столько время, сколько счётчик temp_bytes_per_iter — сколько
+// байт временного региона осталось на итерацию. У контекста он обязан быть
+// около нуля независимо от числа итераций: регион сбрасывается на входе в
+// каждую операцию. У примитива он равен размеру агрегата и не убывает — там
+// граница не проходит, и каждый литерал остаётся лежать.
+//
+// Отсюда и защита от регресса: если граница операции когда-нибудь перестанет
+// срабатывать, первый счётчик перестанет быть нулевым, и это видно, а не
+// проходит молча.
+constexpr std::string_view kAggregateSource =
+    "{'id': 1, 'name': 'Вася', 'active': true}";
+
+/// Через контекст: граница операции проходит на каждом eval.
+void BM_Eval_ContextAggregate(benchmark::State &state) {
+    CS::Context ctx;
+    if (!fill(ctx.store())) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    CS::Expression expr;
+    Diagnostic diag;
+    if (CS::Expression::compile(kAggregateSource, ctx.store(), &expr, &diag,
+                                1) != 0) {
+        state.SkipWithError("Expression::compile failed");
+        return;
+    }
+
+    std::uint64_t iterations = 0;
+    for (auto _ : state) {
+        Value out = Value::null();
+        if (!ctx.eval(expr, &out, diag)) {
+            state.SkipWithError("Context::eval failed");
+            return;
+        }
+        benchmark::DoNotOptimize(out);
+        ++iterations;
+    }
+    state.counters["temp_bytes_per_iter"] =
+        iterations == 0
+            ? 0.0
+            : static_cast<double>(ctx.temporaryBytesUsed()) /
+                  static_cast<double>(iterations);
+}
+BENCHMARK(BM_Eval_ContextAggregate);
+
+/// Мимо контекста: то же вычисление примитивом, границы операции нет.
+void BM_Eval_RawAggregate(benchmark::State &state) {
+    Store store;
+    if (!fill(store)) {
+        state.SkipWithError("setVariable failed");
+        return;
+    }
+    CS::Expression expr;
+    Diagnostic diag;
+    if (CS::Expression::compile(kAggregateSource, store, &expr, &diag, 1) !=
+        0) {
+        state.SkipWithError("Expression::compile failed");
+        return;
+    }
+
+    CS::Execution exec(store);
+    std::uint64_t iterations = 0;
+    for (auto _ : state) {
+        Value out = Value::null();
+        if (!expr.eval(exec, &out, diag)) {
+            state.SkipWithError("Expression::eval failed");
+            return;
+        }
+        benchmark::DoNotOptimize(out);
+        ++iterations;
+    }
+    state.counters["temp_bytes_per_iter"] =
+        iterations == 0 ? 0.0
+                        : static_cast<double>(exec.scratch.bytesUsed()) /
+                              static_cast<double>(iterations);
+}
+BENCHMARK(BM_Eval_RawAggregate);
 
 }  // namespace
 

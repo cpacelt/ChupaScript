@@ -83,13 +83,13 @@ Value Store::makeString(std::string_view bytes) {
 }
 
 std::string_view Store::string(Value v) const noexcept {
-    assert(v.kind() == Value::Kind::String);
+    assert(v.kind() == Value::Kind::String && sameRegion(v));
     return textAt(v.index(), v.length());
 }
 
 void Store::stringParts(Value v, std::uint32_t *offset,
                         std::uint32_t *length) const noexcept {
-    assert(v.kind() == Value::Kind::String);
+    assert(v.kind() == Value::Kind::String && sameRegion(v));
     *offset = v.index();
     *length = v.length();
 }
@@ -164,19 +164,19 @@ Value Store::makeArray(std::uint32_t capacity) {
 }
 
 std::uint32_t Store::arrayCount(Value a) const noexcept {
-    assert(a.kind() == Value::Kind::Array);
+    assert(a.kind() == Value::Kind::Array && sameRegion(a));
     return arrays_[a.index()].count;
 }
 
 Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
-    assert(a.kind() == Value::Kind::Array);
+    assert(a.kind() == Value::Kind::Array && sameRegion(a));
     const detail::ArrayRep &rep = arrays_[a.index()];
     if (index >= rep.count) { return Value::null(); }
     return pool_[rep.start + index];
 }
 
 bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
-    assert(a.kind() == Value::Kind::Array);
+    assert(a.kind() == Value::Kind::Array && sameRegion(a));
     detail::ArrayRep &rep = arrays_[a.index()];
     if (index >= rep.count) { return false; }
     pool_[rep.start + index] = v;
@@ -184,7 +184,7 @@ bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
 }
 
 void Store::arrayPush(Value a, Value v) {
-    assert(a.kind() == Value::Kind::Array);
+    assert(a.kind() == Value::Kind::Array && sameRegion(a));
     // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
     // Заголовок перечитывается после роста: под единой ареной (docs/backlog.md
     // B1) заголовки будут жить в той же памяти, что и данные, и ссылка,
@@ -196,7 +196,7 @@ void Store::arrayPush(Value a, Value v) {
 }
 
 bool Store::arrayPop(Value a, Value *out) noexcept {
-    assert(a.kind() == Value::Kind::Array);
+    assert(a.kind() == Value::Kind::Array && sameRegion(a));
     detail::ArrayRep &rep = arrays_[a.index()];
     if (rep.count == 0) { return false; }
     rep.count -= 1;
@@ -262,12 +262,12 @@ Value Store::makeObject(std::uint32_t capacity) {
 }
 
 std::uint32_t Store::objectCount(Value o) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
     return objects_[o.index()].count;
 }
 
 Value Store::objectGet(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
     const detail::ObjectRep &rep = objects_[o.index()];
     bool found = false;
     const std::uint32_t at = findKey(rep, key, &found);
@@ -276,14 +276,14 @@ Value Store::objectGet(Value o, std::string_view key) const noexcept {
 }
 
 bool Store::objectHas(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
     bool found = false;
     findKey(objects_[o.index()], key, &found);
     return found;
 }
 
 std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
     const detail::ObjectRep &rep = objects_[o.index()];
     if (i >= rep.count) { return {}; }
     const detail::Entry &entry = entries_[rep.start + i];
@@ -291,14 +291,14 @@ std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
 }
 
 Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
     const detail::ObjectRep &rep = objects_[o.index()];
     if (i >= rep.count) { return Value::null(); }
     return entries_[rep.start + i].value;
 }
 
 void Store::objectSet(Value o, std::string_view key, Value v) {
-    assert(o.kind() == Value::Kind::Object);
+    assert(o.kind() == Value::Kind::Object && sameRegion(o));
 
     bool found = false;
     const std::uint32_t at = findKey(objects_[o.index()], key, &found);

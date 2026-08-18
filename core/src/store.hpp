@@ -234,6 +234,17 @@ class Store {
 
    private:
     const Value::Region region_;
+
+    /// Из того ли значение региона, что и это хранилище. Не «выдано этим
+    /// хранилищем»: регион — категория, а не личность, и два временных
+    /// хранилища друг от друга не отличить. Путаницу постоянного с временным
+    /// ловит полностью, путаницу двух временных между собой — нет.
+    ///
+    /// Проверять отдельно от вида нужно потому, что вид тут бесполезен: индекс
+    /// из чужого пула — валидный индекс, просто указывает не туда.
+    [[nodiscard]] bool sameRegion(Value v) const noexcept {
+        return v.region() == region_;
+    }
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
     /// exact — выделить ровно needed, а не ближайшую степень двойки. Так

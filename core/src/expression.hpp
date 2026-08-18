@@ -5,6 +5,7 @@
 
 #include "ast.hpp"
 #include "diagnostic.hpp"
+#include "execution.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -54,7 +55,7 @@ class Expression {
 
     /// Вычисляет выражение. При отказе возвращает false и заполняет diag;
     /// смещение считается от начала source(). При отказе *out не трогается.
-    bool eval(Store &store, Value *out, Diagnostic &diag) const;
+    bool eval(Store &store, Execution &exec, Value *out, Diagnostic &diag) const;
 
     /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:
     /// после разрушения объекта либо после следующего compile() срез
@@ -71,8 +72,10 @@ class Expression {
     /// он остаётся тем, чем был у вызывающего до вызова, — включая
     /// устаревшую ошибку от прошлого раза, если вызывающий её не сбросил
     /// (review round 3, M1).
-    EvalStatus evalNumber(Store &store, double *out, Diagnostic &diag) const;
-    EvalStatus evalBool  (Store &store, bool *out, Diagnostic &diag) const;
+    EvalStatus evalNumber(Store &store, Execution &exec, double *out,
+                          Diagnostic &diag) const;
+    EvalStatus evalBool  (Store &store, Execution &exec, bool *out,
+                          Diagnostic &diag) const;
 
     /// Строка отдаётся срезом в текстовый пул store, а не копией: владеющую
     /// строку вызывающий всё равно строит у себя (обёртка Swift — сразу же и
@@ -81,15 +84,16 @@ class Expression {
     /// Срез действителен, пока в пул не дописали: любое следующее обращение к
     /// store, укладывающее байты (set*, компиляция литералов, format в
     /// следующем вычислении), может его переселить. Читать надо сразу.
-    EvalStatus evalString(Store &store, std::string_view *out,
-                          Diagnostic &diag) const;
+    EvalStatus evalString(Store &store, Execution &exec,
+                          std::string_view *out, Diagnostic &diag) const;
 
    private:
     /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит
     /// в *out и остаётся только достать его. Остальные исходы — как у
     /// публичных методов.
-    EvalStatus evalOfKind(Store &store, Value::Kind wanted, const char *message,
-                          Value *out, Diagnostic &diag) const;
+    EvalStatus evalOfKind(Store &store, Execution &exec, Value::Kind wanted,
+                          const char *message, Value *out,
+                          Diagnostic &diag) const;
 
     std::string source_;
     Ast ast_;

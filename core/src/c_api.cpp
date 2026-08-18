@@ -23,6 +23,12 @@
 struct ChupaContext {
     CS::Store engine;
 
+    /// Состояние выполнения: временный регион и всё, что понадобится дальше
+    /// одному вычислению (core/src/execution.hpp). Живёт в контексте, а не в
+    /// единице, поэтому единицы разделяемы, а ёмкость временного региона
+    /// переживает вычисление.
+    CS::Execution exec;
+
     /// Состояние последней ошибки в стиле errno — идиома C, вынужденная тем,
     /// что второе значение из функции здесь вернуть нечем. В C++ ошибка
     /// приходит выходным параметром Diagnostic & (core/src/expression.hpp).
@@ -285,7 +291,7 @@ ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
-    return toStatus(expr->impl.evalNumber(c->engine, out, c->lastError));
+    return toStatus(expr->impl.evalNumber(c->engine, c->exec, out, c->lastError));
 }
 
 ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
@@ -293,7 +299,7 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
-    return toStatus(expr->impl.evalBool(c->engine, out, c->lastError));
+    return toStatus(expr->impl.evalBool(c->engine, c->exec, out, c->lastError));
 }
 
 ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
@@ -303,7 +309,7 @@ ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
     c->clearError();
 
     std::string_view text;
-    const CS::EvalStatus status = expr->impl.evalString(c->engine, &text,
+    const CS::EvalStatus status = expr->impl.evalString(c->engine, c->exec, &text,
                                                         c->lastError);
     if (status != CS::EvalStatus::Ok) { return toStatus(status); }
 
@@ -322,7 +328,7 @@ bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
     CS::Diagnostic diag;
-    if (!s->impl.run(c->engine, diag)) {
+    if (!s->impl.run(c->engine, c->exec, diag)) {
         c->setError(diag);
         return false;
     }

@@ -5,6 +5,7 @@
 
 #include "ast.hpp"
 #include "diagnostic.hpp"
+#include "execution.hpp"
 #include "store.hpp"
 
 namespace CS {
@@ -47,7 +48,7 @@ class Script {
     /// Выполняет скрипт. У скрипта нет значения (docs/semantics.md §3.1);
     /// при отказе возвращает false и заполняет diag; смещение считается от
     /// начала source().
-    bool run(Store &store, Diagnostic &diag) const;
+    bool run(Store &store, Execution &exec, Diagnostic &diag) const;
 
     /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:
     /// после разрушения объекта либо после следующего compile() срез

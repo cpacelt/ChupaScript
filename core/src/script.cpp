@@ -20,8 +20,8 @@ std::uint32_t Script::compile(std::string_view source, Store &store,
     return 0;
 }
 
-bool Script::run(Store &store, Diagnostic &diag) const {
-    return runScript(ast_, source_, store, diag);
+bool Script::run(Store &store, Execution &exec, Diagnostic &diag) const {
+    return runScript(ast_, source_, store, exec, diag);
 }
 
 }  // namespace CS

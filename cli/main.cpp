@@ -60,7 +60,8 @@ bool reportCompile(std::uint32_t errors, std::string_view source,
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runExpression(CS::Store &store, std::string_view source,
+void runExpression(CS::Store &store, CS::Execution &exec,
+                   std::string_view source,
                    std::uint32_t indent) {
     CS::Diagnostic found[kMaxReported];
     CS::Expression expr;
@@ -73,7 +74,7 @@ void runExpression(CS::Store &store, std::string_view source,
     // мешал бы.
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
-    if (!expr.eval(store, &out, diag)) {
+    if (!expr.eval(store, exec, &out, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }
@@ -84,8 +85,8 @@ void runExpression(CS::Store &store, std::string_view source,
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runScriptSource(CS::Store &store, std::string_view source,
-                     std::uint32_t indent) {
+void runScriptSource(CS::Store &store, CS::Execution &exec,
+                     std::string_view source, std::uint32_t indent) {
     CS::Diagnostic found[kMaxReported];
     CS::Script script;
     const std::uint32_t errors =
@@ -95,7 +96,7 @@ void runScriptSource(CS::Store &store, std::string_view source,
     // Скрипт при успехе молчит: значения у него нет, а результат виден через
     // :vars.
     CS::Diagnostic diag;
-    if (!script.run(store, diag)) {
+    if (!script.run(store, exec, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
     }
 }
@@ -174,7 +175,7 @@ void runVars(const CS::Store &store) {
 }
 
 /// Выполняет одну строку.
-After handleLine(CS::Store &store, std::string_view line) {
+After handleLine(CS::Store &store, CS::Execution &exec, std::string_view line) {
     const std::string_view text = trim(line);
     if (text.empty()) { return After::Continue; }
 
@@ -228,9 +229,9 @@ After handleLine(CS::Store &store, std::string_view line) {
                                                      sourceStart));
 
         if (isScript) {
-            runScriptSource(store, source, indent);
+            runScriptSource(store, exec, source, indent);
         } else {
-            runExpression(store, source, indent);
+            runExpression(store, exec, source, indent);
         }
         return After::Continue;
     }
@@ -254,6 +255,12 @@ int runRepl() {
     std::optional<CS::Store> store;
     store.emplace();
 
+    // Состояние выполнения пересоздаётся вместе с хранилищем: временный
+    // регион — такое же хранилище, и переживший сброс Value указывал бы в
+    // чужие пулы.
+    std::optional<CS::Execution> exec;
+    exec.emplace();
+
     std::cout << "chupa " << chupa_version() << ", :help for commands\n";
 
     std::string line;
@@ -265,10 +272,11 @@ int runRepl() {
             std::cout << "\n";
             break;
         }
-        const After after = handleLine(*store, line);
+        const After after = handleLine(*store, *exec, line);
         if (after == After::Quit) { break; }
         if (after == After::Reset) {
             store.emplace();
+            exec.emplace();
             std::cout << "the context is empty\n";
         }
     }

@@ -190,7 +190,7 @@ Value Store::makeArray(std::uint32_t capacity) {
     return Value::array(index, region_);
 }
 
-Value Store::promote(const Store &from, Value v) {
+Value Store::promoteDeep(const Store &from, Value v) {
     std::vector<detail::Promoted> promoted;
     return promoteInto(from, v, promoted);
 }

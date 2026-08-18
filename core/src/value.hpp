@@ -62,8 +62,15 @@ class Value {
 
     [[nodiscard]] Kind kind() const noexcept { return kind_; }
 
-    /// Осмыслен только у String, Object и Array — см. поле region_.
+    /// Осмыслен только у String, Object и Array — см. addressesStore.
     [[nodiscard]] Region region() const noexcept { return region_; }
+
+    /// Адресует ли значение пулы хранилища — то есть осмыслен ли у него
+    /// регион. У скаляров нет ни того, ни другого: копия числа ни с каким
+    /// хранилищем не связана.
+    [[nodiscard]] bool addressesStore() const noexcept {
+        return kind_ == Kind::String || kind_ == Kind::Object || kind_ == Kind::Array;
+    }
 
     /// Предусловие: kind() == Kind::Boolean.
     [[nodiscard]] bool booleanValue() const noexcept {

@@ -165,6 +165,15 @@ TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
     EXPECT_TRUE(persistent.promote(scratch, a).sameAggregate(a));
 }
 
+TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
+    // У скаляра региона нет, и поле у него равно постоянному по умолчанию.
+    // Продвижение во временное хранилище не должно принимать это за чужой
+    // регион и пытаться скопировать то, чего нет.
+    Store scratch(Value::Region::Scratch);
+    Store persistent(Value::Region::Persistent);
+    EXPECT_EQ(scratch.promote(persistent, Value::number(7.0)).numberValue(), 7.0);
+}
+
 TEST(StorePromote, CopiesNestedStringsAndKeys) {
     Store scratch(Value::Region::Scratch);
     Store persistent(Value::Region::Persistent);

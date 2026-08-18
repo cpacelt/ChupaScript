@@ -176,9 +176,8 @@ Value Store::promote(const Store &from, Value v) {
 
 Value Store::promoteInto(const Store &from, Value v,
                          std::vector<detail::Promoted> &promoted) {
-    // Свой регион — и сюда же попадают все скаляры: они ничего не адресуют,
-    // копировать в них нечего.
-    if (sameRegion(v)) { return v; }
+    // Копировать нечего: либо скаляр, либо уже свой регион.
+    if (writable(v)) { return v; }
 
     // Строки в таблицу не попадают: идентичности у них нет, равенство строк
     // сравнивает содержимое (operator.cpp), поэтому вторая копия тех же байтов
@@ -231,6 +230,7 @@ Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
 
 bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     assert(a.kind() == Value::Kind::Array && sameRegion(a));
+    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
     detail::ArrayRep &rep = arrays_[a.index()];
     if (index >= rep.count) { return false; }
     pool_[rep.start + index] = v;
@@ -239,6 +239,7 @@ bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
 
 void Store::arrayPush(Value a, Value v) {
     assert(a.kind() == Value::Kind::Array && sameRegion(a));
+    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
     // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
     // Заголовок перечитывается после роста: под единой ареной (docs/backlog.md
     // B1) заголовки будут жить в той же памяти, что и данные, и ссылка,
@@ -353,6 +354,7 @@ Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
 
 void Store::objectSet(Value o, std::string_view key, Value v) {
     assert(o.kind() == Value::Kind::Object && sameRegion(o));
+    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
 
     bool found = false;
     const std::uint32_t at = findKey(objects_[o.index()], key, &found);
@@ -428,6 +430,8 @@ bool Store::hasGlobal(std::string_view name) const noexcept {
 }
 
 void Store::setGlobal(std::string_view name, Value v) {
+    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
+
     bool found = false;
     const std::uint32_t at = findGlobal(name, &found);
     if (found) {

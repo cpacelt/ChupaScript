@@ -116,6 +116,15 @@ TEST(StoreArray, TwoEmptyArraysAreDistinct) {
     EXPECT_FALSE(store.makeArray().sameAggregate(store.makeArray()));
 }
 
+TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
+    // Индекс уникален внутри пула, а не между хранилищами: первый массив есть
+    // и там, и там, но это разная память. Двух временных хранилищ проверка не
+    // различит — регион категория, а не личность (docs/backlog.md [B57]).
+    Store persistent(Value::Region::Persistent);
+    Store scratch(Value::Region::Scratch);
+    EXPECT_FALSE(persistent.makeArray().sameAggregate(scratch.makeArray()));
+}
+
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
     Store store;
     const Value a = store.makeArray();

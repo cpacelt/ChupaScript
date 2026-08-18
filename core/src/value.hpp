@@ -84,6 +84,7 @@ class Value {
     [[nodiscard]] bool sameAggregate(Value other) const noexcept {
         if (kind_ != other.kind_) { return false; }
         if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
+        if (region_ != other.region_) { return false; }
         return index_ == other.index_;
     }
 

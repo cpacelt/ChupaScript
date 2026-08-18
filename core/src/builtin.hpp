@@ -82,13 +82,13 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
 ///
 /// offset — смещение узла вызова, для диагностики.
 ///
-/// Хранилищ два, потому что три роли здесь разные: аргумент читается тем
-/// хранилищем, которое его выдало (storeOf, core/src/execution.hpp), результат
-/// создаётся во временном регионе, а push пишет туда, где лежит его цель — и
-/// потому единственный зовёт promote (docs/backlog.md [B57]).
-bool applyBuiltin(Builtin id, Store &store, Execution &exec,
-                  const Value *args, std::uint32_t count, std::uint32_t offset,
-                  Value *out, Diagnostic &diag);
+/// exec, а не хранилище, потому что три роли здесь разные: аргумент читается
+/// тем хранилищем, которое его выдало (Execution::storeOf), результат создаётся
+/// во временном регионе, а push пишет туда, где лежит его цель — и потому
+/// единственный зовёт promote (docs/backlog.md [B57]).
+bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
+                  std::uint32_t count, std::uint32_t offset, Value *out,
+                  Diagnostic &diag);
 
 /// Приводит скаляр к строке по docs/semantics.md §4. Агрегат — ошибка.
 ///

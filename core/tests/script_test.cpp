@@ -12,7 +12,7 @@ namespace {
 
 TEST(Script, CompilesAndRuns) {
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Diagnostic diag;
     ASSERT_TRUE(CS::setVariable(store, "user", "{'name': 'Вася'}", diag));
 
@@ -20,7 +20,7 @@ TEST(Script, CompilesAndRuns) {
     CS::Diagnostic diags[1];
     ASSERT_EQ(CS::Script::compile("user.name = 'Петя';", store, &script, diags, 1),
               0u);
-    ASSERT_TRUE(script.run(store, exec, diag));
+    ASSERT_TRUE(script.run(exec, diag));
 
     // Store::global и Store::objectGet возвращают Value, а не пишут в
     // выходной параметр (core/src/store.hpp:107,152).
@@ -37,7 +37,7 @@ TEST(Script, OwnsItsSource) {
     // (владение исходником, временный буфер умирает сразу), синтаксис —
     // тот, что разрешает check.cpp.
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Diagnostic diag;
     ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
 
@@ -48,7 +48,7 @@ TEST(Script, OwnsItsSource) {
         ASSERT_EQ(CS::Script::compile(temporary, store, &script, diags, 1), 0u);
     }
     EXPECT_EQ(script.source(), "obj.n = obj.n + 1;");
-    EXPECT_TRUE(script.run(store, exec, diag));
+    EXPECT_TRUE(script.run(exec, diag));
 }
 
 TEST(Script, ReportsUnknownName) {
@@ -62,7 +62,7 @@ TEST(Script, ReportsUnknownName) {
     // и "cannot assign to a variable name" — тест был бы зелёным, поймав
     // не ту.
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Script script;
     CS::Diagnostic diags[2];
     EXPECT_EQ(CS::Script::compile("missing.field = 1;", store, &script, diags, 2),
@@ -76,7 +76,7 @@ TEST(Script, SurvivesBeingMoved) {
     // *out = std::move(built) в script.cpp — отдельная строка кода, зелень
     // соседнего теста про Expression о ней ничего не говорит.
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Diagnostic diag;
     ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
 
@@ -89,7 +89,7 @@ TEST(Script, SurvivesBeingMoved) {
               0u);
     for (int i = 0; i < 8; ++i) { units.emplace_back(); }  // вектор переехал
 
-    ASSERT_TRUE(units[0].run(store, exec, diag));
+    ASSERT_TRUE(units[0].run(exec, diag));
     const CS::Value obj = store.global("obj");
     const CS::Value n = store.objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 2.0);
@@ -97,7 +97,7 @@ TEST(Script, SurvivesBeingMoved) {
 
 TEST(Script, RecompileReplacesEverything) {
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Diagnostic diag;
     ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
 
@@ -109,7 +109,7 @@ TEST(Script, RecompileReplacesEverything) {
               0u);
     EXPECT_EQ(script.source(), "obj.n = obj.n + 10;");
 
-    ASSERT_TRUE(script.run(store, exec, diag));
+    ASSERT_TRUE(script.run(exec, diag));
     const CS::Value obj = store.global("obj");
     const CS::Value n = store.objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 11.0);
@@ -119,7 +119,7 @@ TEST(Script, FailedCompileDoesNotTouchOut) {
     // Контракт «неудачная компиляция не портит *out» (script.hpp) не
     // покрыт ничем другим (review round 2, I1).
     CS::Store store;
-    CS::Execution exec;
+    CS::Execution exec(store);
     CS::Diagnostic diag;
     ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
 
@@ -133,7 +133,7 @@ TEST(Script, FailedCompileDoesNotTouchOut) {
     EXPECT_EQ(diags[0].code, CS::ErrorCode::Name);
     EXPECT_EQ(script.source(), "obj.n = obj.n + 1;");
 
-    ASSERT_TRUE(script.run(store, exec, diag));
+    ASSERT_TRUE(script.run(exec, diag));
     const CS::Value obj = store.global("obj");
     const CS::Value n = store.objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 2.0);

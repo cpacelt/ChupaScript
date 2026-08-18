@@ -195,15 +195,15 @@ bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
     }
 }
 
-bool applyBuiltin(Builtin id, Store &store, Execution &exec,
-                  const Value *args, std::uint32_t count,
-                  std::uint32_t offset, Value *out, Diagnostic &diag) {
+bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
+                  std::uint32_t count, std::uint32_t offset, Value *out,
+                  Diagnostic &diag) {
     (void)count;  // арность гарантирована проходом
 
     // Каждый аргумент читается тем хранилищем, которое его выдало: count(
     // state.items) и count([1, 2]) приходят сюда одинаково, а лежат в разных
     // регионах (docs/backlog.md [B57]).
-    const Store &first = storeOf(store, exec, args[0]);
+    const Store &first = exec.storeOf(args[0]);
     switch (id) {
         case Builtin::Count:
             // Array, Object либо String (§8.1); у строки — байты, не символы.
@@ -249,7 +249,7 @@ bool applyBuiltin(Builtin id, Store &store, Execution &exec,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceScalarToString(storeOf(store, exec, args[1]), args[1],
+            if (!coerceScalarToString(exec.storeOf(args[1]), args[1],
                                       buffer, &key, offset, diag)) {
                 return false;
             }
@@ -279,10 +279,10 @@ bool applyBuiltin(Builtin id, Store &store, Execution &exec,
             // бы сброс своего региона. promote отдаёт значение как есть, когда
             // копировать нечего.
             {
-                Store &target = storeOf(store, exec, args[0]);
+                Store &target = exec.storeOf(args[0]);
                 target.arrayPush(
                     args[0],
-                    target.promote(storeOf(store, exec, args[1]), args[1]));
+                    target.promote(exec.storeOf(args[1]), args[1]));
             }
             return true;
 
@@ -292,7 +292,7 @@ bool applyBuiltin(Builtin id, Store &store, Execution &exec,
             }
             // На пустом ничего не делает и не отказывает (§8.6). Снятое
             // значение никуда не идёт: pop его не возвращает.
-            storeOf(store, exec, args[0]).arrayPop(args[0], nullptr);
+            exec.storeOf(args[0]).arrayPop(args[0], nullptr);
             return true;
 
         case Builtin::Str: {

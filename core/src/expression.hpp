@@ -61,7 +61,7 @@ class Expression {
     /// Context::eval (core/src/context.hpp) — он держит пару вместе и владеет
     /// границей. Здесь — потому что на этом методе живёт описание исходов и
     /// его зовут тесты.
-    bool eval(Store &store, Execution &exec, Value *out, Diagnostic &diag) const;
+    bool eval(Execution &exec, Value *out, Diagnostic &diag) const;
 
     /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:
     /// после разрушения объекта либо после следующего compile() срез
@@ -78,26 +78,28 @@ class Expression {
     /// он остаётся тем, чем был у вызывающего до вызова, — включая
     /// устаревшую ошибку от прошлого раза, если вызывающий её не сбросил
     /// (review round 3, M1).
-    EvalStatus evalNumber(Store &store, Execution &exec, double *out,
+    EvalStatus evalNumber(Execution &exec, double *out,
                           Diagnostic &diag) const;
-    EvalStatus evalBool  (Store &store, Execution &exec, bool *out,
-                          Diagnostic &diag) const;
+    EvalStatus evalBool  (Execution &exec, bool *out, Diagnostic &diag) const;
 
-    /// Строка отдаётся срезом в текстовый пул store, а не копией: владеющую
-    /// строку вызывающий всё равно строит у себя (обёртка Swift — сразу же и
-    /// всегда), так что копия по дороге жила бы ровно до его копии.
+    /// Строка отдаётся срезом в текстовый пул того хранилища, которое её
+    /// выдало, а не копией: владеющую строку вызывающий всё равно строит у
+    /// себя (обёртка Swift — сразу же и всегда), так что копия по дороге жила
+    /// бы ровно до его копии.
     ///
-    /// Срез действителен, пока в пул не дописали: любое следующее обращение к
-    /// store, укладывающее байты (set*, компиляция литералов, format в
-    /// следующем вычислении), может его переселить. Читать надо сразу.
-    EvalStatus evalString(Store &store, Execution &exec,
-                          std::string_view *out, Diagnostic &diag) const;
+    /// Срез действителен, пока в пул не дописали: любая следующая укладка байт
+    /// (set*, компиляция литералов, format в следующем вычислении) может его
+    /// переселить. У вычисленной строки срок ещё короче — она лежит во
+    /// временном регионе, и Context::beginOperation освобождает его целиком.
+    /// Читать надо сразу.
+    EvalStatus evalString(Execution &exec, std::string_view *out,
+                          Diagnostic &diag) const;
 
    private:
     /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит
     /// в *out и остаётся только достать его. Остальные исходы — как у
     /// публичных методов.
-    EvalStatus evalOfKind(Store &store, Execution &exec, Value::Kind wanted,
+    EvalStatus evalOfKind(Execution &exec, Value::Kind wanted,
                           const char *message, Value *out,
                           Diagnostic &diag) const;
 

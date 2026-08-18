@@ -14,8 +14,7 @@ namespace CS {
 namespace {
 
 // Предварительное объявление для readKey
-bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
-          Execution &exec, Value *out, Diagnostic &diag);
+bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec, Value *out, Diagnostic &diag);
 
 /// Записывает отказ с местом узла.
 ///
@@ -120,11 +119,11 @@ bool coerceToString(const Ast &ast, NodeId node, const Store &store, Value value
 /// ещё постоянный, а `format(format(...), x)` — уже временный) попадает в тот
 /// же пул, куда пишет сборка, и случай возвращается целиком.
 bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
-                Store &store, Execution &exec, Value *out, Diagnostic &diag) {
+                Execution &exec, Value *out, Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);
 
     Value tmpl = Value::null();
-    if (!eval(ast, source, ast.child(node, 0), store, exec, &tmpl, diag)) { return false; }
+    if (!eval(ast, source, ast.child(node, 0), exec, &tmpl, diag)) { return false; }
     if (tmpl.kind() != Value::Kind::String) {
         return fail(ast, node, ErrorCode::Type,
                     "format expects a string template", diag);
@@ -134,7 +133,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
     // Шаблон, наоборот, читается там, где лежит: литерал уложен в постоянный
     // пул на компиляции, вычисленная строка — во временном.
     Store &result = exec.scratch;
-    const Store &from = storeOf(store, exec, tmpl);
+    const Store &from = exec.storeOf(tmpl);
 
     const std::uint32_t mark = result.beginString();
     std::uint32_t next = 1;  // следующий аргумент
@@ -162,7 +161,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                         diag);
         }
         Value argument = Value::null();
-        if (!eval(ast, source, ast.child(node, next), store, exec, &argument, diag)) {
+        if (!eval(ast, source, ast.child(node, next), exec, &argument, diag)) {
             result.abortString(mark);
             return false;
         }
@@ -170,7 +169,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
 
         char buffer[kNumberBufferSize];
         std::string_view text;
-        if (!coerceToString(ast, node, storeOf(store, exec, argument), argument,
+        if (!coerceToString(ast, node, exec.storeOf(argument), argument,
                             buffer, &text, diag)) {
             result.abortString(mark);
             return false;
@@ -235,8 +234,7 @@ bool readIndex(const Ast &ast, NodeId node, const Store &store, Value array,
 /// левоассоциативной цепочки ('||', '&&', '+'/'-', '*'/'/'/'%'). Без этого
 /// цепочка любой длины разбиралась бы успешно и роняла бы вычислитель здесь
 /// (docs/grammar.md Приложение C.1).
-bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
-          Execution &exec, Value *out, Diagnostic &diag) {
+bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec, Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
             *out = Value::number(ast.numberValue(node));
@@ -261,7 +259,9 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             std::uint32_t offset = 0;
             std::uint32_t length = 0;
             ast.stringLiteral(node, &offset, &length);
-            *out = store.stringAt(offset, length);
+            // Литерал уложен в постоянный пул на компиляции: он часть
+            // программы, а не создаваемое значение.
+            *out = exec.persistent().stringAt(offset, length);
             return true;
         }
 
@@ -274,41 +274,41 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             // доходит вовсе — компиляция отвергает его ошибкой Name. Отметка
             // прохода check утверждается ниже по функции, поэтому номер тут
             // заведомо проставлен.
-            *out = store.globalValueAt(ast.globalValuesSlot(node));
+            *out = exec.persistent().globalValueAt(ast.globalValuesSlot(node));
             return true;
         }
 
         case NodeKind::Member: {
             Value base = Value::null();
-            if (!eval(ast, source, ast.child(node, 0), store, exec, &base, diag)) { return false; }
+            if (!eval(ast, source, ast.child(node, 0), exec, &base, diag)) { return false; }
             // Имя поля берётся из узла буквально, без приведения.
-            return readKey(ast, node, storeOf(store, exec, base), base,
+            return readKey(ast, node, exec.storeOf(base), base,
                            ast.text(node, source), out, diag);
         }
 
         case NodeKind::Index: {
             Value base = Value::null();
-            if (!eval(ast, source, ast.child(node, 0), store, exec, &base, diag)) { return false; }
+            if (!eval(ast, source, ast.child(node, 0), exec, &base, diag)) { return false; }
             // Индекс вычисляется даже при базе null: порядок зафиксирован
             // (docs/semantics.md §3.3), а короткого замыкания у индексации нет.
             Value subscript = Value::null();
-            if (!eval(ast, source, ast.child(node, 1), store, exec, &subscript, diag)) {
+            if (!eval(ast, source, ast.child(node, 1), exec, &subscript, diag)) {
                 return false;
             }
 
             switch (base.kind()) {
                 case Value::Kind::Array:
-                    return readIndex(ast, node, storeOf(store, exec, base), base,
+                    return readIndex(ast, node, exec.storeOf(base), base,
                                      subscript, out, diag);
                 case Value::Kind::Object: {
                     char buffer[kNumberBufferSize];
                     std::string_view key;
                     if (!coerceToString(ast, node,
-                                        storeOf(store, exec, subscript),
+                                        exec.storeOf(subscript),
                                         subscript, buffer, &key, diag)) {
                         return false;
                     }
-                    return readKey(ast, node, storeOf(store, exec, base), base,
+                    return readKey(ast, node, exec.storeOf(base), base,
                                    key, out, diag);
                 }
                 case Value::Kind::Null:
@@ -331,7 +331,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             const Value array = exec.scratch.makeArray(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
-                if (!eval(ast, source, ast.child(node, i), store, exec, &element, diag)) {
+                if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
                     return false;
                 }
                 exec.scratch.arrayPush(array, element);
@@ -347,7 +347,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             const Value object = exec.scratch.makeObject(count / 2);
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
-                if (!eval(ast, source, ast.child(node, i + 1), store, exec, &value, diag)) {
+                if (!eval(ast, source, ast.child(node, i + 1), exec, &value, diag)) {
                     return false;
                 }
                 // Ключ берётся уложенным, а не разбирается заново: сам objectSet
@@ -359,8 +359,10 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
                 std::uint32_t keyOffset = 0;
                 std::uint32_t keyLength = 0;
                 ast.stringLiteral(ast.child(node, i), &keyOffset, &keyLength);
+                const Store &program = exec.persistent();
                 exec.scratch.objectSet(
-                    object, store.string(store.stringAt(keyOffset, keyLength)),
+                    object,
+                    program.string(program.stringAt(keyOffset, keyLength)),
                     value);
             }
             *out = object;
@@ -369,7 +371,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
 
         case NodeKind::Unary: {
             Value operand = Value::null();
-            if (!eval(ast, source, ast.child(node, 0), store, exec, &operand, diag)) { return false; }
+            if (!eval(ast, source, ast.child(node, 0), exec, &operand, diag)) { return false; }
             return applyUnary(ast.op(node), operand, ast.offset(node), out, diag);
         }
 
@@ -381,7 +383,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             // нельзя.
             if (op == TokenKind::AndAnd || op == TokenKind::OrOr) {
                 Value lhs = Value::null();
-                if (!eval(ast, source, ast.child(node, 0), store, exec, &lhs, diag)) { return false; }
+                if (!eval(ast, source, ast.child(node, 0), exec, &lhs, diag)) { return false; }
                 if (lhs.kind() != Value::Kind::Boolean) {
                     return fail(ast, node, ErrorCode::Type,
                                 "logical operators require booleans", diag);
@@ -398,7 +400,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
                 }
 
                 Value rhs = Value::null();
-                if (!eval(ast, source, ast.child(node, 1), store, exec, &rhs, diag)) { return false; }
+                if (!eval(ast, source, ast.child(node, 1), exec, &rhs, diag)) { return false; }
                 if (rhs.kind() != Value::Kind::Boolean) {
                     return fail(ast, node, ErrorCode::Type,
                                 "logical operators require booleans", diag);
@@ -409,36 +411,36 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
 
             if (op == TokenKind::QuestionQuestion) {
                 Value lhs = Value::null();
-                if (!eval(ast, source, ast.child(node, 0), store, exec, &lhs, diag)) { return false; }
+                if (!eval(ast, source, ast.child(node, 0), exec, &lhs, diag)) { return false; }
                 // Перехватывает только null: ошибка слева уже вернулась выше и
                 // не гасится.
                 if (lhs.kind() != Value::Kind::Null) {
                     *out = lhs;
                     return true;
                 }
-                return eval(ast, source, ast.child(node, 1), store, exec, out, diag);
+                return eval(ast, source, ast.child(node, 1), exec, out, diag);
             }
 
             // Слева направо: порядок зафиксирован (docs/semantics.md §3.3).
             Value lhs = Value::null();
-            if (!eval(ast, source, ast.child(node, 0), store, exec, &lhs, diag)) { return false; }
+            if (!eval(ast, source, ast.child(node, 0), exec, &lhs, diag)) { return false; }
             Value rhs = Value::null();
-            if (!eval(ast, source, ast.child(node, 1), store, exec, &rhs, diag)) { return false; }
-            return applyBinary(op, lhs, rhs, storeOf(store, exec, lhs),
-                               storeOf(store, exec, rhs), ast.offset(node), out,
+            if (!eval(ast, source, ast.child(node, 1), exec, &rhs, diag)) { return false; }
+            return applyBinary(op, lhs, rhs, exec.storeOf(lhs),
+                               exec.storeOf(rhs), ast.offset(node), out,
                                diag);
         }
 
         case NodeKind::Conditional: {
             Value condition = Value::null();
-            if (!eval(ast, source, ast.child(node, 0), store, exec, &condition, diag)) { return false; }
+            if (!eval(ast, source, ast.child(node, 0), exec, &condition, diag)) { return false; }
             if (condition.kind() != Value::Kind::Boolean) {
                 return fail(ast, node, ErrorCode::Type,
                             "ternary condition must be a boolean", diag);
             }
             // Вычисляется только выбранная ветвь (docs/semantics.md §5.7).
             const NodeId branch = ast.child(node, condition.booleanValue() ? 1 : 2);
-            return eval(ast, source, branch, store, exec, out, diag);
+            return eval(ast, source, branch, exec, out, diag);
         }
 
         case NodeKind::Call: {
@@ -455,7 +457,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             // релизной сборке он исчезает, а переполнение буфера остаётся:
             // check пропускает format с любым числом аргументов, и
             // format('${}...', 1, 2, 3, 4, 5) иначе переполнил бы args[2].
-            if (id == Builtin::Format) { return evalFormat(ast, source, node, store, exec, out, diag); }
+            if (id == Builtin::Format) { return evalFormat(ast, source, node, exec, out, diag); }
 
             // Арность гарантирована проходом, а размер буфера — таблицей
             // билтинов (core/src/builtin.hpp::kMaxFixedArgs), а не догадкой:
@@ -472,11 +474,11 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             Value args[kMaxFixedArgs] = {Value::null(), Value::null()};
             const std::uint32_t count = ast.childCount(node);
             for (std::uint32_t i = 0; i < count; ++i) {
-                if (!eval(ast, source, ast.child(node, i), store, exec, &args[i], diag)) {
+                if (!eval(ast, source, ast.child(node, i), exec, &args[i], diag)) {
                     return false;
                 }
             }
-            return applyBuiltin(id, store, exec, args, count, ast.offset(node),
+            return applyBuiltin(id, exec, args, count, ast.offset(node),
                                 out, diag);
         }
 
@@ -510,13 +512,12 @@ TokenKind compoundOperation(TokenKind op) {
 /// Порядок вычисления — подвыражения цели, затем правая часть
 /// (docs/semantics.md §7.2).
 bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
-                 NodeId target, Store &store, Execution &exec,
-                 Diagnostic &diag) {
+                 NodeId target, Execution &exec, Diagnostic &diag) {
     Value base = Value::null();
-    if (!eval(ast, source, ast.child(target, 0), store, exec, &base, diag)) { return false; }
+    if (!eval(ast, source, ast.child(target, 0), exec, &base, diag)) { return false; }
 
     Value value = Value::null();
-    if (!eval(ast, source, ast.child(node, 1), store, exec, &value, diag)) { return false; }
+    if (!eval(ast, source, ast.child(node, 1), exec, &value, diag)) { return false; }
 
     // Запись в null — ошибка: мягкость §6.3 распространяется только на чтение,
     // а молчаливо пропущенная запись потеряла бы данные без следа.
@@ -531,7 +532,7 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
 
     // Писать надо туда, где лежит цель: state.k = ... в постоянное,
     // [{'k': 1}][0].k = ... во временное (docs/backlog.md [B57]).
-    Store &dest = storeOf(store, exec, base);
+    Store &dest = exec.storeOf(base);
 
     const TokenKind op = ast.op(node);
     if (op != TokenKind::Assign) {
@@ -541,8 +542,8 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
         const Value current = dest.objectGet(base, key);
         Value combined = Value::null();
         if (!applyBinary(compoundOperation(op), current, value,
-                         storeOf(store, exec, current),
-                         storeOf(store, exec, value), ast.offset(node),
+                         exec.storeOf(current),
+                         exec.storeOf(value), ast.offset(node),
                          &combined, diag)) {
             return false;
         }
@@ -552,22 +553,21 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
     // Барьер записи: временное значение в постоянном агрегате пережило бы
     // сброс своего региона, поэтому копируется. Обратное направление promote
     // пропускает как есть.
-    dest.objectSet(base, key, dest.promote(storeOf(store, exec, value), value));
+    dest.objectSet(base, key, dest.promote(exec.storeOf(value), value));
     return true;
 }
 
 /// Присваивание по индексу: base[i] = v.
 bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
-                   NodeId target, Store &store, Execution &exec,
-                   Diagnostic &diag) {
+                   NodeId target, Execution &exec, Diagnostic &diag) {
     // Порядок: база, индекс, затем правая часть (docs/semantics.md §7.2).
     Value base = Value::null();
-    if (!eval(ast, source, ast.child(target, 0), store, exec, &base, diag)) { return false; }
+    if (!eval(ast, source, ast.child(target, 0), exec, &base, diag)) { return false; }
     Value subscript = Value::null();
-    if (!eval(ast, source, ast.child(target, 1), store, exec, &subscript, diag)) { return false; }
+    if (!eval(ast, source, ast.child(target, 1), exec, &subscript, diag)) { return false; }
 
     Value value = Value::null();
-    if (!eval(ast, source, ast.child(node, 1), store, exec, &value, diag)) { return false; }
+    if (!eval(ast, source, ast.child(node, 1), exec, &value, diag)) { return false; }
 
     switch (base.kind()) {
         case Value::Kind::Array: {
@@ -577,7 +577,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 return false;
             }
 
-            Store &dest = storeOf(store, exec, base);
+            Store &dest = exec.storeOf(base);
 
             const TokenKind op = ast.op(node);
             if (op != TokenKind::Assign) {
@@ -591,8 +591,8 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 }
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 storeOf(store, exec, current),
-                                 storeOf(store, exec, value), ast.offset(node),
+                                 exec.storeOf(current),
+                                 exec.storeOf(value), ast.offset(node),
                                  &combined, diag)) {
                     return false;
                 }
@@ -608,12 +608,12 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             // Границу проверили выше, поэтому запись не отказывает.
             static_cast<void>(dest.arraySet(
                 base, static_cast<std::uint32_t>(index),
-                dest.promote(storeOf(store, exec, value), value)));
+                dest.promote(exec.storeOf(value), value)));
             return true;
         }
 
         case Value::Kind::Object: {
-            Store &dest = storeOf(store, exec, base);
+            Store &dest = exec.storeOf(base);
             const TokenKind op = ast.op(node);
 
             // Продвижение стоит **до** приведения ключа, а не рядом с записью.
@@ -622,12 +622,12 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             // предупреждает комментарий у coerceToString. Порядок здесь и есть
             // защита.
             if (op == TokenKind::Assign) {
-                value = dest.promote(storeOf(store, exec, value), value);
+                value = dest.promote(exec.storeOf(value), value);
             }
 
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceToString(ast, target, storeOf(store, exec, subscript),
+            if (!coerceToString(ast, target, exec.storeOf(subscript),
                                 subscript, buffer, &key, diag)) {
                 return false;
             }
@@ -636,8 +636,8 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 const Value current = dest.objectGet(base, key);
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 storeOf(store, exec, current),
-                                 storeOf(store, exec, value), ast.offset(node),
+                                 exec.storeOf(current),
+                                 exec.storeOf(value), ast.offset(node),
                                  &combined, diag)) {
                     return false;
                 }
@@ -664,15 +664,15 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
 }
 
 /// Присваивание: разбирает форму цели и передаёт дальше.
-bool assign(const Ast &ast, std::string_view source, NodeId node, Store &store,
+bool assign(const Ast &ast, std::string_view source, NodeId node,
             Execution &exec, Diagnostic &diag) {
     const NodeId target = ast.child(node, 0);
     switch (ast.kind(target)) {
         case NodeKind::Member:
-            return assignToKey(ast, source, node, target, store, exec, diag);
+            return assignToKey(ast, source, node, target, exec, diag);
 
         case NodeKind::Index:
-            return assignToIndex(ast, source, node, target, store, exec, diag);
+            return assignToIndex(ast, source, node, target, exec, diag);
 
         default:
             // Грамматика строит целью Identifier, Member и Index
@@ -687,16 +687,16 @@ bool assign(const Ast &ast, std::string_view source, NodeId node, Store &store,
 
 /// Выполняет один стейтмент.
 bool execute(const Ast &ast, std::string_view source, NodeId node,
-             Store &store, Execution &exec, Diagnostic &diag) {
+             Execution &exec, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Assign:
-            return assign(ast, source, node, store, exec, diag);
+            return assign(ast, source, node, exec, diag);
 
         case NodeKind::CallStatement: {
             // Вызов в позиции стейтмента возвращает Void, поэтому результат
             // читать нечего и незачем (docs/semantics.md §2.2).
             Value discarded = Value::null();
-            return eval(ast, source, ast.child(node, 0), store, exec, &discarded, diag);
+            return eval(ast, source, ast.child(node, 0), exec, &discarded, diag);
         }
 
         default:
@@ -710,15 +710,15 @@ bool execute(const Ast &ast, std::string_view source, NodeId node,
 
 }  // namespace
 
-bool evalExpression(const Ast &ast, std::string_view source, Store &store,
-                    Execution &exec, Value *out, Diagnostic &diag) {
+bool evalExpression(const Ast &ast, std::string_view source, Execution &exec,
+                    Value *out, Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
-    return eval(ast, source, ast.root(), store, exec, out, diag);
+    return eval(ast, source, ast.root(), exec, out, diag);
 }
 
-bool runScript(const Ast &ast, std::string_view source, Store &store,
-               Execution &exec, Diagnostic &diag) {
+bool runScript(const Ast &ast, std::string_view source, Execution &exec,
+               Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
     const NodeId script = ast.root();
@@ -729,7 +729,7 @@ bool runScript(const Ast &ast, std::string_view source, Store &store,
     for (std::uint32_t i = 0; i < count; ++i) {
         // Ошибка прерывает выполнение, а сделанное остаётся сделанным:
         // откатывать нечего.
-        if (!execute(ast, source, ast.child(script, i), store, exec, diag)) { return false; }
+        if (!execute(ast, source, ast.child(script, i), exec, diag)) { return false; }
     }
     return true;
 }

@@ -25,7 +25,6 @@ Value put(Store &store, std::string_view name, std::string_view text) {
 
 TEST(PrintValue, Scalars) {
     CS::Context ctx;
-    Store &store = ctx.store();
     EXPECT_EQ(chupa::printValue(ctx, Value::null()), "null");
     EXPECT_EQ(chupa::printValue(ctx, Value::boolean(true)), "true");
     EXPECT_EQ(chupa::printValue(ctx, Value::boolean(false)), "false");

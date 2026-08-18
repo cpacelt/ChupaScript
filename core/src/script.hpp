@@ -51,7 +51,7 @@ class Script {
     ///
     /// Примитив, как и Expression::eval: граница операции здесь не проходит,
     /// встраиваться надо через Context::run (core/src/context.hpp).
-    bool run(Store &store, Execution &exec, Diagnostic &diag) const;
+    bool run(Execution &exec, Diagnostic &diag) const;
 
     /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:
     /// после разрушения объекта либо после следующего compile() срез

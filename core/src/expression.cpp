@@ -20,16 +20,16 @@ std::uint32_t Expression::compile(std::string_view source, Store &store,
     return 0;
 }
 
-bool Expression::eval(Store &store, Execution &exec, Value *out,
+bool Expression::eval(Execution &exec, Value *out,
                       Diagnostic &diag) const {
-    return evalExpression(ast_, source_, store, exec, out, diag);
+    return evalExpression(ast_, source_, exec, out, diag);
 }
 
-EvalStatus Expression::evalOfKind(Store &store, Execution &exec,
-                                  Value::Kind wanted, const char *message,
-                                  Value *out, Diagnostic &diag) const {
+EvalStatus Expression::evalOfKind(Execution &exec, Value::Kind wanted,
+                                  const char *message, Value *out,
+                                  Diagnostic &diag) const {
     Value value = Value::null();
-    if (!eval(store, exec, &value, diag)) { return EvalStatus::Error; }
+    if (!eval(exec, &value, diag)) { return EvalStatus::Error; }
     if (value.kind() == Value::Kind::Null) { return EvalStatus::Null; }
     if (value.kind() != wanted) {
         // Смещение настоящее: корень выражения на месте, и взять его есть где.
@@ -42,34 +42,33 @@ EvalStatus Expression::evalOfKind(Store &store, Execution &exec,
     return EvalStatus::Ok;
 }
 
-EvalStatus Expression::evalNumber(Store &store, Execution &exec, double *out,
+EvalStatus Expression::evalNumber(Execution &exec, double *out,
                                   Diagnostic &diag) const {
     Value value = Value::null();
-    const EvalStatus status = evalOfKind(store, exec, Value::Kind::Number,
+    const EvalStatus status = evalOfKind(exec, Value::Kind::Number,
                                          "eval_number: value is not a number",
                                          &value, diag);
     if (status == EvalStatus::Ok) { *out = value.numberValue(); }
     return status;
 }
 
-EvalStatus Expression::evalBool(Store &store, Execution &exec, bool *out,
+EvalStatus Expression::evalBool(Execution &exec, bool *out,
                                 Diagnostic &diag) const {
     Value value = Value::null();
-    const EvalStatus status = evalOfKind(store, exec, Value::Kind::Boolean,
+    const EvalStatus status = evalOfKind(exec, Value::Kind::Boolean,
                                          "eval_bool: value is not a boolean",
                                          &value, diag);
     if (status == EvalStatus::Ok) { *out = value.booleanValue(); }
     return status;
 }
 
-EvalStatus Expression::evalString(Store &store, Execution &exec,
-                                  std::string_view *out,
+EvalStatus Expression::evalString(Execution &exec, std::string_view *out,
                                   Diagnostic &diag) const {
     Value value = Value::null();
-    const EvalStatus status = evalOfKind(store, exec, Value::Kind::String,
+    const EvalStatus status = evalOfKind(exec, Value::Kind::String,
                                          "eval_string: value is not a string",
                                          &value, diag);
-    if (status == EvalStatus::Ok) { *out = storeOf(store, exec, value).string(value); }
+    if (status == EvalStatus::Ok) { *out = exec.storeOf(value).string(value); }
     return status;
 }
 

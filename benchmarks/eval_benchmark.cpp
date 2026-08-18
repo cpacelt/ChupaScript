@@ -60,10 +60,10 @@ void runEval(benchmark::State &state, std::string_view source) {
 
     // Состояние выполнения живёт дольше вычисления — как и в контексте C
     // API (core/src/execution.hpp).
-    CS::Execution exec;
+    CS::Execution exec(store);
     for (auto _ : state) {
         Value out = Value::null();
-        bool ok = CS::evalExpression(ast, source, store, exec, &out, diag);
+        bool ok = CS::evalExpression(ast, source, exec, &out, diag);
         if (!ok) {
             state.SkipWithError("evalExpression failed");
             return;
@@ -232,10 +232,10 @@ void runEvalWithGlobals(benchmark::State &state, int names) {
         return;
     }
 
-    CS::Execution exec;
+    CS::Execution exec(store);
     for (auto _ : state) {
         Value out = Value::null();
-        if (!CS::evalExpression(ast, source, store, exec, &out, diag)) {
+        if (!CS::evalExpression(ast, source, exec, &out, diag)) {
             state.SkipWithError("evalExpression failed");
             return;
         }
@@ -279,14 +279,16 @@ void runScriptBench(benchmark::State &state, std::string_view source) {
         return;
     }
 
-    CS::Execution exec;
     for (auto _ : state) {
+        // Хранилище пересоздаётся на каждой итерации, значит и состояние
+        // выполнения: оно связано с конкретным хранилищем ссылкой.
         Store store;
         if (!fill(store)) {
             state.SkipWithError("setVariable failed");
             return;
         }
-        bool ok = CS::runScript(ast, source, store, exec, diag);
+        CS::Execution exec(store);
+        bool ok = CS::runScript(ast, source, exec, diag);
         if (!ok) {
             state.SkipWithError("runScript failed");
             return;
@@ -342,9 +344,9 @@ void runScriptHot(benchmark::State &state, std::string_view source) {
         return;
     }
 
-    CS::Execution exec;
+    CS::Execution exec(store);
     for (auto _ : state) {
-        bool ok = CS::runScript(ast, source, store, exec, diag);
+        bool ok = CS::runScript(ast, source, exec, diag);
         if (!ok) {
             state.SkipWithError("runScript failed");
             return;
@@ -717,10 +719,10 @@ void BM_Eval_String_Old(benchmark::State &state, std::string_view value) {
         return;
     }
 
-    CS::Execution exec;
+    CS::Execution exec(store);
     for (auto _ : state) {
         Value out = Value::null();
-        if (!expr.eval(store, exec, &out, diag)) {
+        if (!expr.eval(exec, &out, diag)) {
             state.SkipWithError("eval failed");
             return;
         }

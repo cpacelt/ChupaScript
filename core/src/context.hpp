@@ -68,7 +68,7 @@ class Context {
     /// core/src/execution.hpp. Такое значение годно до следующей операции над
     /// контекстом.
     [[nodiscard]] const Store &storeOf(Value v) const noexcept {
-        return CS::storeOf(store_, exec_, v);
+        return exec_.storeOf(v);
     }
 
     /// Сколько байт занято временным регионом сейчас.
@@ -96,7 +96,7 @@ class Context {
     void beginOperation() noexcept { exec_.scratch.clear(); }
 
     Store store_;
-    Execution exec_;
+    Execution exec_{store_};
 };
 
 }  // namespace CS

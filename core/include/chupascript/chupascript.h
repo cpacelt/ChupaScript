@@ -178,6 +178,12 @@ chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
  * move the pool and leave the pointer dangling. Destroying the context frees
  * the pool outright.
  *
+ * A computed string — anything format() or str() built — lives in the
+ * temporary region, which the next evaluation or chupa_run frees WHOLE before
+ * it starts. That is not a pool move that might leave the bytes readable by
+ * luck: the region is gone. The window has always been "until the next call";
+ * this is what now closes it.
+ *
  * This used to hand ownership over instead, through a heap-allocated
  * ChupaString the caller destroyed. It bought exactly one guarantee — free
  * destruction order — and no caller ever wanted it: every one of them copies

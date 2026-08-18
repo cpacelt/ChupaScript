@@ -132,6 +132,27 @@ void Store::abortString(std::uint32_t mark) noexcept {
     build_.resize(mark);
 }
 
+void Store::clear() noexcept {
+    assert(region_ != Value::Region::Persistent &&
+           "постоянный регион не сбрасывается: на его значения ссылается хост");
+
+    // Ёмкость при этом остаётся: std::vector::clear её не отдаёт, а
+    // shrink_to_fit здесь не зовётся нигде — в этом весь смысл сброса.
+    pool_.clear();
+    arrays_.clear();
+    objects_.clear();
+    entries_.clear();
+    text_.clear();
+
+    // Черновик сборки в норме уже пуст: format снимает за собой и на успехе
+    // (endString), и на отказе (abortString). Очистка здесь — не уборка за
+    // ним, а страховка на случай выхода посреди сборки.
+    build_.clear();
+
+    // Таблица имён не трогается: у временного региона она пуста всегда —
+    // глобальные заводит только хост, а он пишет в постоянный.
+}
+
 // Парная функция — growObject: правку в одной надо повторять в другой.
 void Store::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
     if (needed <= rep.capacity) { return; }

@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+
 #include "data.hpp"
 
 namespace {
@@ -83,6 +85,49 @@ TEST(Context, ReportsEvaluationFailure) {
     // При отказе выходной параметр не трогается — соглашение Expression::eval
     // проходит через Context насквозь.
     EXPECT_DOUBLE_EQ(out.numberValue(), 42.0);
+}
+
+TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+
+    // Литерал создаёт агрегат заново на каждом вычислении (semantics.md §2.3),
+    // поэтому без сброса на границе операции временный регион рос бы линейно
+    // от числа вычислений — ровно то, что [B57] и убирает.
+    const CS::Expression expr = compileIn(ctx, "[1, 2, 3]");
+
+    CS::Value out = CS::Value::null();
+    ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
+    const std::size_t afterFirst = ctx.temporaryBytesUsed();
+    ASSERT_GT(afterFirst, 0u) << "вычисление ничего не положило во временный "
+                                 "регион — тест перестал что-либо проверять";
+
+    for (int i = 0; i < 16; ++i) {
+        ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
+        EXPECT_EQ(ctx.temporaryBytesUsed(), afterFirst);
+    }
+}
+
+TEST(Context, ScriptAlsoOpensAnOperation) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(ctx.store(), "state", "{'n': 0}", diag));
+
+    CS::Script script;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Script::compile("state.n = count([1, 2, 3]);", ctx.store(),
+                                  &script, diags, 1),
+              0u)
+        << diags[0].message;
+
+    ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
+    const std::size_t afterFirst = ctx.temporaryBytesUsed();
+    ASSERT_GT(afterFirst, 0u) << "скрипт ничего не положил во временный регион "
+                                 "— тест перестал что-либо проверять";
+    for (int i = 0; i < 16; ++i) {
+        ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
+        EXPECT_EQ(ctx.temporaryBytesUsed(), afterFirst);
+    }
 }
 
 }  // namespace

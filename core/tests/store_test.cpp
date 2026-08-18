@@ -165,6 +165,24 @@ TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
     EXPECT_TRUE(persistent.promote(scratch, a).sameAggregate(a));
 }
 
+TEST(StoreClear, EmptiesTheRegionButKeepsItsCapacity) {
+    Store scratch(Value::Region::Scratch);
+    const Value a = scratch.makeArray();
+    for (int i = 0; i < 100; ++i) {
+        scratch.arrayPush(a, Value::number(static_cast<double>(i)));
+    }
+    scratch.makeString("строка");
+    const std::size_t reserved = scratch.bytesReserved();
+    ASSERT_GT(scratch.bytesUsed(), 0u);
+
+    scratch.clear();
+
+    EXPECT_EQ(scratch.bytesUsed(), 0u);
+    // Ёмкость остаётся — на этом держится «ноль обращений к аллокатору в
+    // установившемся режиме» (docs/backlog.md [B57]).
+    EXPECT_EQ(scratch.bytesReserved(), reserved);
+}
+
 TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
     // Барьер направленный: долгоживущее внутри короткоживущего безопасно —
     // ссылка умрёт раньше того, на что указывает. Это `[state.header]`, и

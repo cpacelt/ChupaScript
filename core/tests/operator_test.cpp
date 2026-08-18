@@ -23,7 +23,7 @@ Value number(double value) { return Value::number(value); }
 Value binary(TokenKind op, Value lhs, Value rhs, const Store &store) {
     Diagnostic diag;
     Value out = Value::null();
-    EXPECT_TRUE(CS::applyBinary(op, lhs, rhs, store, kOffset, &out, diag))
+    EXPECT_TRUE(CS::applyBinary(op, lhs, rhs, store, store, kOffset, &out, diag))
         << diag.message;
     return out;
 }
@@ -32,7 +32,7 @@ Value binary(TokenKind op, Value lhs, Value rhs, const Store &store) {
 Diagnostic binaryError(TokenKind op, Value lhs, Value rhs, const Store &store) {
     Diagnostic diag;
     Value out = Value::null();
-    EXPECT_FALSE(CS::applyBinary(op, lhs, rhs, store, kOffset, &out, diag));
+    EXPECT_FALSE(CS::applyBinary(op, lhs, rhs, store, store, kOffset, &out, diag));
     // operator.hpp обещает, что при отказе *out не трогается. Обещание
     // проверяется здесь, потому что на него опирается вычислитель: ?? и
     // тернарный передают out вызывающего внутрь.

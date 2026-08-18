@@ -35,7 +35,7 @@ bool fail(const Ast &ast, NodeId node, ErrorCode code, const char *message,
 /// Объект — значение либо null; null — null; прочее — ошибка. Один и тот же
 /// разбор обслуживает и obj.k, и obj[k]: отличаются они только тем, откуда
 /// берётся ключ.
-bool readKey(const Ast &ast, NodeId node, Store &store, Value base,
+bool readKey(const Ast &ast, NodeId node, const Store &store, Value base,
              std::string_view key, Value *out, Diagnostic &diag) {
     switch (base.kind()) {
         case Value::Kind::Object:
@@ -83,7 +83,7 @@ bool readKey(const Ast &ast, NodeId node, Store &store, Value base,
 /// произвольно устаревший указатель.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
-bool coerceToString(const Ast &ast, NodeId node, Store &store, Value value,
+bool coerceToString(const Ast &ast, NodeId node, const Store &store, Value value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
     return coerceScalarToString(store, value, numberBuffer, out,
@@ -104,15 +104,21 @@ bool coerceToString(const Ast &ast, NodeId node, Store &store, Value value,
 /// раз и держит обоих потребителей синхронными не по договорённости, а по
 /// устройству.
 ///
-/// store.string(tmpl) берётся заново на каждый вызов nextFormatPiece, а не
-/// один раз до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе
-/// само писать в пул текста — строковый литерал зовёт makeString, вложенный
-/// format завершает свою сборку в тот же пул, — и это может переселить text_
-/// в новую память. Смещение, на которое указывает tmpl, при переезде
-/// остаётся верным (Store::string пересчитывает срез из смещения и длины),
-/// а вот кэшированный указатель — уже нет. Свежий вызов store.string(tmpl)
-/// перед каждым обращением к шаблону — единственный способ не держать такой
-/// указатель через границу, за которой могла случиться запись.
+/// Срез шаблона берётся заново на каждый вызов nextFormatPiece, а не один раз
+/// до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе само писать
+/// в пул текста — строковый литерал зовёт makeString, вложенный format
+/// завершает свою сборку в тот же пул, — и это может переселить text_ в новую
+/// память. Смещение, на которое указывает tmpl, при переезде остаётся верным
+/// (Store::string пересчитывает срез из смещения и длины), а вот кэшированный
+/// указатель — уже нет. Свежий вызов string(tmpl) перед каждым обращением к
+/// шаблону — единственный способ не держать такой указатель через границу, за
+/// которой могла случиться запись.
+///
+/// Разделение регионов эту опасность не сняло, а сузило: шаблон-литерал лежит
+/// в постоянном пуле, а сборка идёт во временном, и тогда переселять его
+/// нечему. Но вычисленный шаблон (`format(tpl.two, 1, 2)` после [B57] — всё
+/// ещё постоянный, а `format(format(...), x)` — уже временный) попадает в тот
+/// же пул, куда пишет сборка, и случай возвращается целиком.
 bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                 Store &store, Execution &exec, Value *out, Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);
@@ -124,53 +130,60 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                     "format expects a string template", diag);
     }
 
-    const std::uint32_t mark = store.beginString();
+    // Результат — новое значение, поэтому собирается во временном регионе.
+    // Шаблон, наоборот, читается там, где лежит: литерал уложен в постоянный
+    // пул на компиляции, вычисленная строка — во временном.
+    Store &result = exec.scratch;
+    const Store &from = storeOf(store, exec, tmpl);
+
+    const std::uint32_t mark = result.beginString();
     std::uint32_t next = 1;  // следующий аргумент
     FormatCursor cursor;
 
     for (;;) {
         FormatPiece kind = FormatPiece::Literal;
         std::string_view chunk;
-        if (!nextFormatPiece(store.string(tmpl), cursor, &kind, &chunk)) { break; }
+        if (!nextFormatPiece(from.string(tmpl), cursor, &kind, &chunk)) { break; }
 
         if (kind == FormatPiece::Literal) {
-            store.appendToString(chunk);
+            result.appendToString(chunk);
             continue;
         }
         if (kind == FormatPiece::Escaped) {
-            store.appendToString("${}");
+            result.appendToString("${}");
             continue;
         }
 
         // FormatPiece::Placeholder — потребляет следующий аргумент.
         if (next >= argCount) {
-            store.abortString(mark);
+            result.abortString(mark);
             return fail(ast, node, ErrorCode::Type,
                         "format placeholder count does not match arguments",
                         diag);
         }
         Value argument = Value::null();
         if (!eval(ast, source, ast.child(node, next), store, exec, &argument, diag)) {
-            store.abortString(mark);
+            result.abortString(mark);
             return false;
         }
         ++next;
 
         char buffer[kNumberBufferSize];
         std::string_view text;
-        if (!coerceToString(ast, node, store, argument, buffer, &text, diag)) {
-            store.abortString(mark);
+        if (!coerceToString(ast, node, storeOf(store, exec, argument), argument,
+                            buffer, &text, diag)) {
+            result.abortString(mark);
             return false;
         }
-        store.appendToString(text);
+        result.appendToString(text);
     }
 
     if (next != argCount) {
-        store.abortString(mark);
+        result.abortString(mark);
         return fail(ast, node, ErrorCode::Type,
                     "format placeholder count does not match arguments", diag);
     }
-    *out = store.endString(mark);
+    *out = result.endString(mark);
     return true;
 }
 
@@ -196,7 +209,7 @@ bool checkArrayIndex(const Ast &ast, NodeId node, Value subscript, double *out,
 }
 
 /// Чтение элемента массива (docs/semantics.md §6.1).
-bool readIndex(const Ast &ast, NodeId node, Store &store, Value array,
+bool readIndex(const Ast &ast, NodeId node, const Store &store, Value array,
                Value subscript, Value *out, Diagnostic &diag) {
     double index = 0.0;
     if (!checkArrayIndex(ast, node, subscript, &index, diag)) { return false; }
@@ -269,7 +282,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             Value base = Value::null();
             if (!eval(ast, source, ast.child(node, 0), store, exec, &base, diag)) { return false; }
             // Имя поля берётся из узла буквально, без приведения.
-            return readKey(ast, node, store, base, ast.text(node, source), out, diag);
+            return readKey(ast, node, storeOf(store, exec, base), base,
+                           ast.text(node, source), out, diag);
         }
 
         case NodeKind::Index: {
@@ -284,15 +298,18 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
 
             switch (base.kind()) {
                 case Value::Kind::Array:
-                    return readIndex(ast, node, store, base, subscript, out, diag);
+                    return readIndex(ast, node, storeOf(store, exec, base), base,
+                                     subscript, out, diag);
                 case Value::Kind::Object: {
                     char buffer[kNumberBufferSize];
                     std::string_view key;
-                    if (!coerceToString(ast, node, store, subscript, buffer, &key,
-                                        diag)) {
+                    if (!coerceToString(ast, node,
+                                        storeOf(store, exec, subscript),
+                                        subscript, buffer, &key, diag)) {
                         return false;
                     }
-                    return readKey(ast, node, store, base, key, out, diag);
+                    return readKey(ast, node, storeOf(store, exec, base), base,
+                                   key, out, diag);
                 }
                 case Value::Kind::Null:
                     *out = Value::null();
@@ -305,14 +322,19 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
 
         case NodeKind::Array: {
             const std::uint32_t count = ast.childCount(node);
+            // Литерал создаёт новое значение, а у вычисления нет способа
+            // создать долгоживущее: массив рождается во временном регионе
+            // (docs/backlog.md [B57]). Элемент может прийти из постоянного —
+            // `[state.header]` — и это разрешено: барьер направленный, ссылка
+            // умрёт раньше того, на что указывает.
             // Размер известен заранее — точное выделение, без переездов.
-            const Value array = store.makeArray(count);
+            const Value array = exec.scratch.makeArray(count);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
                 if (!eval(ast, source, ast.child(node, i), store, exec, &element, diag)) {
                     return false;
                 }
-                store.arrayPush(array, element);
+                exec.scratch.arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -322,7 +344,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             // Дети чередуются: ключ, значение. Ключ — строковый литерал по
             // грамматике, приведение §4 к нему не применяется.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = store.makeObject(count / 2);
+            const Value object = exec.scratch.makeObject(count / 2);
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
                 if (!eval(ast, source, ast.child(node, i + 1), store, exec, &value, diag)) {
@@ -330,14 +352,16 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
                 }
                 // Ключ берётся уложенным, а не разбирается заново: сам objectSet
                 // всё равно копирует байты себе, но раскодировать экранирование
-                // на каждом вычислении незачем. Срез указывает внутрь пула
-                // текста, и appendText такой источник распознаёт (store.cpp).
+                // на каждом вычислении незачем. Срез указывает в пул текста
+                // постоянного хранилища, а копия ложится во временный — пулы
+                // разные, поэтому распознавание алиаса в appendText (store.cpp)
+                // тут не при чём и мешать переезду нечему.
                 std::uint32_t keyOffset = 0;
                 std::uint32_t keyLength = 0;
                 ast.stringLiteral(ast.child(node, i), &keyOffset, &keyLength);
-                store.objectSet(object,
-                                store.string(store.stringAt(keyOffset, keyLength)),
-                                value);
+                exec.scratch.objectSet(
+                    object, store.string(store.stringAt(keyOffset, keyLength)),
+                    value);
             }
             *out = object;
             return true;
@@ -400,7 +424,9 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
             if (!eval(ast, source, ast.child(node, 0), store, exec, &lhs, diag)) { return false; }
             Value rhs = Value::null();
             if (!eval(ast, source, ast.child(node, 1), store, exec, &rhs, diag)) { return false; }
-            return applyBinary(op, lhs, rhs, store, ast.offset(node), out, diag);
+            return applyBinary(op, lhs, rhs, storeOf(store, exec, lhs),
+                               storeOf(store, exec, rhs), ast.offset(node), out,
+                               diag);
         }
 
         case NodeKind::Conditional: {
@@ -450,7 +476,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Store &store,
                     return false;
                 }
             }
-            return applyBuiltin(id, store, args, count, ast.offset(node), out, diag);
+            return applyBuiltin(id, store, exec, args, count, ast.offset(node),
+                                out, diag);
         }
 
         default:
@@ -498,24 +525,34 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
                     diag);
     }
 
-    // Имя поля берётся из узла буквально, как при чтении (§6.2).
+    // Имя поля берётся из узла буквально, как при чтении (§6.2). Это срез
+    // исходника, а не пула, поэтому запись в хранилище его не задевает.
     const std::string_view key = ast.text(target, source);
+
+    // Писать надо туда, где лежит цель: state.k = ... в постоянное,
+    // [{'k': 1}][0].k = ... во временное (docs/backlog.md [B57]).
+    Store &dest = storeOf(store, exec, base);
 
     const TokenKind op = ast.op(node);
     if (op != TokenKind::Assign) {
         // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
         // поэтому подвыражения цели вычислены ровно один раз
         // (docs/grammar.md §6.4).
-        const Value current = store.objectGet(base, key);
+        const Value current = dest.objectGet(base, key);
         Value combined = Value::null();
-        if (!applyBinary(compoundOperation(op), current, value, store,
-                         ast.offset(node), &combined, diag)) {
+        if (!applyBinary(compoundOperation(op), current, value,
+                         storeOf(store, exec, current),
+                         storeOf(store, exec, value), ast.offset(node),
+                         &combined, diag)) {
             return false;
         }
         value = combined;
     }
 
-    store.objectSet(base, key, value);
+    // Барьер записи: временное значение в постоянном агрегате пережило бы
+    // сброс своего региона, поэтому копируется. Обратное направление promote
+    // пропускает как есть.
+    dest.objectSet(base, key, dest.promote(storeOf(store, exec, value), value));
     return true;
 }
 
@@ -540,19 +577,23 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 return false;
             }
 
+            Store &dest = storeOf(store, exec, base);
+
             const TokenKind op = ast.op(node);
             if (op != TokenKind::Assign) {
                 // Чтение за границей штатно даёт null, поэтому items[5] += 1
                 // упирается не в границу записи, а в сложение с null: Type, а
                 // не Range (§7.3).
                 Value current = Value::null();
-                if (!readIndex(ast, target, store, base, subscript, &current,
+                if (!readIndex(ast, target, dest, base, subscript, &current,
                                diag)) {
                     return false;
                 }
                 Value combined = Value::null();
-                if (!applyBinary(compoundOperation(op), current, value, store,
-                                 ast.offset(node), &combined, diag)) {
+                if (!applyBinary(compoundOperation(op), current, value,
+                                 storeOf(store, exec, current),
+                                 storeOf(store, exec, value), ast.offset(node),
+                                 &combined, diag)) {
                     return false;
                 }
                 value = combined;
@@ -560,36 +601,57 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
 
             // Запись за границу — ошибка: расширяет только push (§6.1).
             // Сравнение в double, потому что индекс может превышать uint32.
-            if (index >= static_cast<double>(store.arrayCount(base))) {
+            if (index >= static_cast<double>(dest.arrayCount(base))) {
                 return fail(ast, target, ErrorCode::Range,
                             "array index is out of bounds", diag);
             }
             // Границу проверили выше, поэтому запись не отказывает.
-            static_cast<void>(
-                store.arraySet(base, static_cast<std::uint32_t>(index), value));
+            static_cast<void>(dest.arraySet(
+                base, static_cast<std::uint32_t>(index),
+                dest.promote(storeOf(store, exec, value), value)));
             return true;
         }
 
         case Value::Kind::Object: {
+            Store &dest = storeOf(store, exec, base);
+            const TokenKind op = ast.op(node);
+
+            // Продвижение стоит **до** приведения ключа, а не рядом с записью.
+            // Ключ — срез пула текста, возможно того же самого, куда promote
+            // допишет копию; взятый раньше, он повис бы ровно так, как
+            // предупреждает комментарий у coerceToString. Порядок здесь и есть
+            // защита.
+            if (op == TokenKind::Assign) {
+                value = dest.promote(storeOf(store, exec, value), value);
+            }
+
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceToString(ast, target, store, subscript, buffer, &key,
-                                diag)) {
+            if (!coerceToString(ast, target, storeOf(store, exec, subscript),
+                                subscript, buffer, &key, diag)) {
                 return false;
             }
 
-            const TokenKind op = ast.op(node);
             if (op != TokenKind::Assign) {
-                const Value current = store.objectGet(base, key);
+                const Value current = dest.objectGet(base, key);
                 Value combined = Value::null();
-                if (!applyBinary(compoundOperation(op), current, value, store,
-                                 ast.offset(node), &combined, diag)) {
+                if (!applyBinary(compoundOperation(op), current, value,
+                                 storeOf(store, exec, current),
+                                 storeOf(store, exec, value), ast.offset(node),
+                                 &combined, diag)) {
                     return false;
                 }
+                // Продвигать нечего: applyBinary отдаёт только число и флаг,
+                // а они ничего не адресуют. Утверждение, а не молчаливое
+                // допущение — если у += появится результат-агрегат, вместе с
+                // продвижением придётся заново решать и про ключ выше.
+                assert(!combined.addressesStore() &&
+                       "составное присваивание дало ссылающееся значение: "
+                       "его надо продвигать, а ключ — брать после этого");
                 value = combined;
             }
 
-            store.objectSet(base, key, value);
+            dest.objectSet(base, key, value);
             return true;
         }
 

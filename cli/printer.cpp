@@ -54,8 +54,12 @@ constexpr std::uint32_t kMaxPrintDepth = 64;
 /// поэтому растёт между строками сессии и с высотой дерева разбора одной
 /// строки не связана (docs/backlog.md B5). Печатник поэтому ограничивает
 /// глубину сам — `kMaxPrintDepth` выше.
-void append(std::string &out, const CS::Store &store, CS::Value value,
+/// ctx, а не Store: агрегат вправе смешивать регионы — `[state.header]` это
+/// временный массив с постоянным элементом внутри, — и хранилище выбирается
+/// заново на каждом узле обхода (docs/backlog.md [B57]).
+void append(std::string &out, const CS::Context &ctx, CS::Value value,
             std::vector<CS::Value> &path, std::uint32_t depth) {
+    const CS::Store &store = ctx.storeOf(value);
     switch (value.kind()) {
         case CS::Value::Kind::Null: out += "null"; return;
         case CS::Value::Kind::Boolean:
@@ -93,7 +97,7 @@ void append(std::string &out, const CS::Store &store, CS::Value value,
         const std::uint32_t count = store.arrayCount(value);
         for (std::uint32_t i = 0; i < count; ++i) {
             if (i != 0) { out += ", "; }
-            append(out, store, store.arrayAt(value, i), path, depth + 1);
+            append(out, ctx, store.arrayAt(value, i), path, depth + 1);
         }
         out += ']';
     } else {
@@ -103,7 +107,7 @@ void append(std::string &out, const CS::Store &store, CS::Value value,
             if (i != 0) { out += ", "; }
             appendQuoted(out, store.objectKeyAt(value, i));
             out += ": ";
-            append(out, store, store.objectValueAt(value, i), path, depth + 1);
+            append(out, ctx, store.objectValueAt(value, i), path, depth + 1);
         }
         out += '}';
     }
@@ -113,10 +117,10 @@ void append(std::string &out, const CS::Store &store, CS::Value value,
 
 }  // namespace
 
-std::string printValue(const CS::Store &store, CS::Value value) {
+std::string printValue(const CS::Context &ctx, CS::Value value) {
     std::string out;
     std::vector<CS::Value> path;
-    append(out, store, value, path, 0);
+    append(out, ctx, value, path, 0);
     return out;
 }
 

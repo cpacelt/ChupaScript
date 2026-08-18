@@ -61,6 +61,15 @@ class Context {
     [[nodiscard]] Store &store() noexcept { return store_; }
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
+    /// Хранилище, которому принадлежит значение. Результат вычисления вправе
+    /// лежать во временном регионе (`[1, 2]`, `format(...)`), и прочитать его
+    /// может только тот, кто его выдал — см. storeOf в
+    /// core/src/execution.hpp. Такое значение годно до следующей операции над
+    /// контекстом.
+    [[nodiscard]] const Store &storeOf(Value v) const noexcept {
+        return CS::storeOf(store_, exec_, v);
+    }
+
    private:
     Store store_;
     Execution exec_;

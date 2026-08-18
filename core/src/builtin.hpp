@@ -4,6 +4,7 @@
 
 #include "builtin_id.hpp"
 #include "diagnostic.hpp"
+#include "execution.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -80,9 +81,14 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
 /// Для Void-функций *out не трогается — Void не становится значением (§2.2).
 ///
 /// offset — смещение узла вызова, для диагностики.
-bool applyBuiltin(Builtin id, Store &store, const Value *args,
-                  std::uint32_t count, std::uint32_t offset, Value *out,
-                  Diagnostic &diag);
+///
+/// Хранилищ два, потому что три роли здесь разные: аргумент читается тем
+/// хранилищем, которое его выдало (storeOf, core/src/execution.hpp), результат
+/// создаётся во временном регионе, а push пишет туда, где лежит его цель — и
+/// потому единственный зовёт promote (docs/backlog.md [B57]).
+bool applyBuiltin(Builtin id, Store &store, Execution &exec,
+                  const Value *args, std::uint32_t count, std::uint32_t offset,
+                  Value *out, Diagnostic &diag);
 
 /// Приводит скаляр к строке по docs/semantics.md §4. Агрегат — ошибка.
 ///

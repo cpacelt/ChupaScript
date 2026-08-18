@@ -78,7 +78,7 @@ void runExpression(CS::Context &ctx, std::string_view source,
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }
-    std::cout << chupa::printValue(ctx.store(), out) << "\n";
+    std::cout << chupa::printValue(ctx, out) << "\n";
 }
 
 /// Компилирует и исполняет скрипт.
@@ -161,7 +161,8 @@ void runSet(CS::Store &store, std::string_view argument) {
 }
 
 /// Печатает состав хранилища: имя и значение.
-void runVars(const CS::Store &store) {
+void runVars(const CS::Context &ctx) {
+    const CS::Store &store = ctx.store();
     const std::uint32_t count = store.globalCount();
     if (count == 0) {
         std::cout << "the context is empty\n";
@@ -170,7 +171,7 @@ void runVars(const CS::Store &store) {
     for (std::uint32_t i = 0; i < count; ++i) {
         const std::string_view name = store.globalNameAt(i);
         std::cout << name << " = "
-                  << chupa::printValue(store, store.global(name)) << "\n";
+                  << chupa::printValue(ctx, store.global(name)) << "\n";
     }
 }
 
@@ -194,7 +195,7 @@ After handleLine(CS::Context &ctx, std::string_view line) {
             return After::Continue;
         }
         if (name == "vars") {
-            runVars(ctx.store());
+            runVars(ctx);
             return After::Continue;
         }
         if (name == "set") {

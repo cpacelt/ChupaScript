@@ -195,23 +195,28 @@ bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
     }
 }
 
-bool applyBuiltin(Builtin id, Store &store, const Value *args,
-                  std::uint32_t count, std::uint32_t offset, Value *out,
-                  Diagnostic &diag) {
+bool applyBuiltin(Builtin id, Store &store, Execution &exec,
+                  const Value *args, std::uint32_t count,
+                  std::uint32_t offset, Value *out, Diagnostic &diag) {
     (void)count;  // арность гарантирована проходом
+
+    // Каждый аргумент читается тем хранилищем, которое его выдало: count(
+    // state.items) и count([1, 2]) приходят сюда одинаково, а лежат в разных
+    // регионах (docs/backlog.md [B57]).
+    const Store &first = storeOf(store, exec, args[0]);
     switch (id) {
         case Builtin::Count:
             // Array, Object либо String (§8.1); у строки — байты, не символы.
             switch (args[0].kind()) {
                 case Value::Kind::Array:
-                    *out = Value::number(store.arrayCount(args[0]));
+                    *out = Value::number(first.arrayCount(args[0]));
                     return true;
                 case Value::Kind::Object:
-                    *out = Value::number(store.objectCount(args[0]));
+                    *out = Value::number(first.objectCount(args[0]));
                     return true;
                 case Value::Kind::String:
                     *out = Value::number(
-                        static_cast<double>(store.string(args[0]).size()));
+                        static_cast<double>(first.string(args[0]).size()));
                     return true;
                 default:
                     return failType(offset,
@@ -223,13 +228,16 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
             if (args[0].kind() != Value::Kind::Object) {
                 return failType(offset, "keys expects an object", diag);
             }
-            const std::uint32_t size = store.objectCount(args[0]);
+            const std::uint32_t size = first.objectCount(args[0]);
+            // Результат — новое значение, значит временный регион; ключи
+            // читаются оттуда, где лежит объект.
             // Точное выделение: длина известна заранее.
-            Value result = store.makeArray(size);
+            Value result = exec.scratch.makeArray(size);
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.
-                store.arrayPush(result, store.makeString(store.objectKeyAt(args[0], i)));
+                exec.scratch.arrayPush(
+                    result, exec.scratch.makeString(first.objectKeyAt(args[0], i)));
             }
             *out = result;
             return true;
@@ -241,10 +249,11 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceScalarToString(store, args[1], buffer, &key, offset, diag)) {
+            if (!coerceScalarToString(storeOf(store, exec, args[1]), args[1],
+                                      buffer, &key, offset, diag)) {
                 return false;
             }
-            *out = Value::boolean(store.objectHas(args[0], key));
+            *out = Value::boolean(first.objectHas(args[0], key));
             return true;
         }
 
@@ -252,9 +261,9 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
             if (args[0].kind() != Value::Kind::Array) {
                 return failType(offset, "last expects an array", diag);
             }
-            const std::uint32_t size = store.arrayCount(args[0]);
+            const std::uint32_t size = first.arrayCount(args[0]);
             // На пустом — null (§8.4): через индексацию это невыразимо.
-            *out = size == 0 ? Value::null() : store.arrayAt(args[0], size - 1);
+            *out = size == 0 ? Value::null() : first.arrayAt(args[0], size - 1);
             return true;
         }
 
@@ -263,7 +272,18 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
                 return failType(offset, "push expects an array", diag);
             }
             // Void: *out не трогается (§2.2).
-            store.arrayPush(args[0], args[1]);
+            //
+            // Единственная запись среди билтинов, и потому единственное место
+            // здесь, где нужен барьер: push(state.items, [1]) кладёт временный
+            // массив в постоянный, и без продвижения записанный индекс пережил
+            // бы сброс своего региона. promote отдаёт значение как есть, когда
+            // копировать нечего.
+            {
+                Store &target = storeOf(store, exec, args[0]);
+                target.arrayPush(
+                    args[0],
+                    target.promote(storeOf(store, exec, args[1]), args[1]));
+            }
             return true;
 
         case Builtin::Pop:
@@ -272,7 +292,7 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
             }
             // На пустом ничего не делает и не отказывает (§8.6). Снятое
             // значение никуда не идёт: pop его не возвращает.
-            store.arrayPop(args[0], nullptr);
+            storeOf(store, exec, args[0]).arrayPop(args[0], nullptr);
             return true;
 
         case Builtin::Str: {
@@ -284,10 +304,11 @@ bool applyBuiltin(Builtin id, Store &store, const Value *args,
             std::string_view text;
             // Агрегат отвергается тем же правилом §4, что и всюду: сообщение
             // общее, частных формулировок под каждый билтин не заводим.
-            if (!coerceScalarToString(store, args[0], buffer, &text, offset, diag)) {
+            if (!coerceScalarToString(first, args[0], buffer, &text, offset,
+                                      diag)) {
                 return false;
             }
-            *out = store.makeString(text);
+            *out = exec.scratch.makeString(text);
             return true;
         }
 

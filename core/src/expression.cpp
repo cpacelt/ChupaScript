@@ -69,7 +69,7 @@ EvalStatus Expression::evalString(Store &store, Execution &exec,
     const EvalStatus status = evalOfKind(store, exec, Value::Kind::String,
                                          "eval_string: value is not a string",
                                          &value, diag);
-    if (status == EvalStatus::Ok) { *out = store.string(value); }
+    if (status == EvalStatus::Ok) { *out = storeOf(store, exec, value).string(value); }
     return status;
 }
 

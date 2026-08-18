@@ -23,4 +23,26 @@ struct Execution {
     Store scratch{Value::Region::Scratch};
 };
 
+/// Хранилище, которому принадлежит значение: читать агрегат и строку может
+/// только оно, потому что значение это индекс в его пулы.
+///
+/// Выбор по региону — единственный доступный: личности хранилища в Value нет,
+/// только категория ([B57]). Отсюда граница применимости: два временных
+/// хранилища эта функция не различит, и если их когда-нибудь окажется больше
+/// одного на выполнение, выбирать придётся иначе.
+///
+/// У скаляра региона нет, поле у него равно постоянному по умолчанию, и
+/// функция вернёт постоянное хранилище. Это безвредно: у скаляра нечего
+/// читать, в пулы он не смотрит.
+[[nodiscard]] inline const Store &storeOf(const Store &persistent,
+                                          const Execution &exec,
+                                          Value v) noexcept {
+    return v.region() == Value::Region::Scratch ? exec.scratch : persistent;
+}
+
+[[nodiscard]] inline Store &storeOf(Store &persistent, Execution &exec,
+                                    Value v) noexcept {
+    return v.region() == Value::Region::Scratch ? exec.scratch : persistent;
+}
+
 }  // namespace CS

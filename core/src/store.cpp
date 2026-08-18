@@ -176,7 +176,10 @@ Value Store::promote(const Store &from, Value v) {
 
 Value Store::promoteInto(const Store &from, Value v,
                          std::vector<detail::Promoted> &promoted) {
-    // Копировать нечего: либо скаляр, либо уже свой регион.
+    // Копировать нечего: значение и так годно к записи сюда — скаляр, свой
+    // регион либо более долгоживущий. Последнее не оптимизация, а
+    // обязанность: скопируй мы state.header, он перестал бы быть тем же
+    // объектом, что и state.rows[0].
     if (writable(v)) { return v; }
 
     // Строки в таблицу не попадают: идентичности у них нет, равенство строк

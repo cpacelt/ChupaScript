@@ -165,6 +165,33 @@ TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
     EXPECT_TRUE(persistent.promote(scratch, a).sameAggregate(a));
 }
 
+TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
+    // Барьер направленный: долгоживущее внутри короткоживущего безопасно —
+    // ссылка умрёт раньше того, на что указывает. Это `[state.header]`, и
+    // симметричная проверка регионов запрещала бы его на ровном месте.
+    Store persistent(Value::Region::Persistent);
+    Store scratch(Value::Region::Scratch);
+
+    const Value header = persistent.makeString("шапка");
+    const Value temporary = scratch.makeArray(1);
+    scratch.arrayPush(temporary, header);
+
+    // Читается тем хранилищем, которое его выдало: значение осталось собой, а
+    // не переехало копией во временный пул.
+    EXPECT_EQ(persistent.string(scratch.arrayAt(temporary, 0)), "шапка");
+}
+
+TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
+    // Та же направленность со стороны продвижения: во временное хранилище
+    // постоянный агрегат обязан пройти как есть. Копия сделала бы его другим
+    // объектом, и state.header перестал бы быть тем же, что state.rows[0].
+    Store persistent(Value::Region::Persistent);
+    Store scratch(Value::Region::Scratch);
+
+    const Value header = persistent.makeArray();
+    EXPECT_TRUE(scratch.promote(persistent, header).sameAggregate(header));
+}
+
 TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
     // У скаляра региона нет, и поле у него равно постоянному по умолчанию.
     // Продвижение во временное хранилище не должно принимать это за чужой

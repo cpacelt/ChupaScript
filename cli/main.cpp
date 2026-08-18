@@ -10,6 +10,7 @@
 
 #include "chupascript/chupascript.h"
 #include "report.hpp"
+#include "context.hpp"
 #include "store.hpp"
 
 #include "data.hpp"
@@ -60,13 +61,12 @@ bool reportCompile(std::uint32_t errors, std::string_view source,
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runExpression(CS::Store &store, CS::Execution &exec,
-                   std::string_view source,
+void runExpression(CS::Context &ctx, std::string_view source,
                    std::uint32_t indent) {
     CS::Diagnostic found[kMaxReported];
     CS::Expression expr;
     const std::uint32_t errors =
-        CS::Expression::compile(source, store, &expr, found, kMaxReported);
+        CS::Expression::compile(source, ctx.store(), &expr, found, kMaxReported);
     if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
 
     // Сырой путь, а не evalString: оболочка печатает null наравне со всем
@@ -74,29 +74,29 @@ void runExpression(CS::Store &store, CS::Execution &exec,
     // мешал бы.
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
-    if (!expr.eval(store, exec, &out, diag)) {
+    if (!ctx.eval(expr, &out, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
         return;
     }
-    std::cout << chupa::printValue(store, out) << "\n";
+    std::cout << chupa::printValue(ctx.store(), out) << "\n";
 }
 
 /// Компилирует и исполняет скрипт.
 ///
 /// source — то, что осталось после префикса режима; indent — ширина всего, что
 /// напечатано до него.
-void runScriptSource(CS::Store &store, CS::Execution &exec,
-                     std::string_view source, std::uint32_t indent) {
+void runScriptSource(CS::Context &ctx, std::string_view source,
+                     std::uint32_t indent) {
     CS::Diagnostic found[kMaxReported];
     CS::Script script;
     const std::uint32_t errors =
-        CS::Script::compile(source, store, &script, found, kMaxReported);
+        CS::Script::compile(source, ctx.store(), &script, found, kMaxReported);
     if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
 
     // Скрипт при успехе молчит: значения у него нет, а результат виден через
     // :vars.
     CS::Diagnostic diag;
-    if (!script.run(store, exec, diag)) {
+    if (!ctx.run(script, diag)) {
         chupa::reportDiagnostic(std::cout, source, indent, diag);
     }
 }
@@ -175,7 +175,7 @@ void runVars(const CS::Store &store) {
 }
 
 /// Выполняет одну строку.
-After handleLine(CS::Store &store, CS::Execution &exec, std::string_view line) {
+After handleLine(CS::Context &ctx, std::string_view line) {
     const std::string_view text = trim(line);
     if (text.empty()) { return After::Continue; }
 
@@ -194,11 +194,11 @@ After handleLine(CS::Store &store, CS::Execution &exec, std::string_view line) {
             return After::Continue;
         }
         if (name == "vars") {
-            runVars(store);
+            runVars(ctx.store());
             return After::Continue;
         }
         if (name == "set") {
-            runSet(store, argument);
+            runSet(ctx.store(), argument);
             return After::Continue;
         }
         if (name == "reset") {
@@ -229,9 +229,9 @@ After handleLine(CS::Store &store, CS::Execution &exec, std::string_view line) {
                                                      sourceStart));
 
         if (isScript) {
-            runScriptSource(store, exec, source, indent);
+            runScriptSource(ctx, source, indent);
         } else {
-            runExpression(store, exec, source, indent);
+            runExpression(ctx, source, indent);
         }
         return After::Continue;
     }
@@ -243,23 +243,17 @@ After handleLine(CS::Store &store, CS::Execution &exec, std::string_view line) {
 }
 
 /// Инвариант времени жизни: ни один `Value`, ни один срез (`string_view`),
-/// полученный из `store`, не переживает вызов `handleLine`, который его
+/// полученный из `ctx`, не переживает вызов `handleLine`, который его
 /// произвёл. Ядро этой дисциплины ничем не подпирает — `Value` это индекс в
-/// пулы хранилища, а `:reset` пересоздаёт `store` целиком (`store.emplace()`
-/// ниже), так что значение, пережившее сброс, стало бы индексом в чужой,
+/// пулы хранилища, а `:reset` пересоздаёт контекст целиком (`ctx.emplace()`
+/// ниже), так что значение, пережившее сброс, стало бы индексом в чужое,
 /// вновь построенное хранилище и молча указывало бы не на то, чем было. Это
 /// свойство, которое обязана сохранять всякая правка этого цикла, а не
 /// исторический факт о нём: команда вроде гипотетической `:last`, кладущей
 /// последнее значение про запас между строками, его нарушит.
 int runRepl() {
-    std::optional<CS::Store> store;
-    store.emplace();
-
-    // Состояние выполнения пересоздаётся вместе с хранилищем: временный
-    // регион — такое же хранилище, и переживший сброс Value указывал бы в
-    // чужие пулы.
-    std::optional<CS::Execution> exec;
-    exec.emplace();
+    std::optional<CS::Context> ctx;
+    ctx.emplace();
 
     std::cout << "chupa " << chupa_version() << ", :help for commands\n";
 
@@ -272,11 +266,10 @@ int runRepl() {
             std::cout << "\n";
             break;
         }
-        const After after = handleLine(*store, *exec, line);
+        const After after = handleLine(*ctx, line);
         if (after == After::Quit) { break; }
         if (after == After::Reset) {
-            store.emplace();
-            exec.emplace();
+            ctx.emplace();
             std::cout << "the context is empty\n";
         }
     }

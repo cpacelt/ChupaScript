@@ -3,6 +3,7 @@ add_executable(chupascript_tests
     builtin_test.cpp
     c_api_test.cpp
     check_test.cpp
+    context_test.cpp
     store_test.cpp
     data_test.cpp
     eval_test.cpp

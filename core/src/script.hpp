@@ -48,6 +48,9 @@ class Script {
     /// Выполняет скрипт. У скрипта нет значения (docs/semantics.md §3.1);
     /// при отказе возвращает false и заполняет diag; смещение считается от
     /// начала source().
+    ///
+    /// Примитив, как и Expression::eval: граница операции здесь не проходит,
+    /// встраиваться надо через Context::run (core/src/context.hpp).
     bool run(Store &store, Execution &exec, Diagnostic &diag) const;
 
     /// Срез живёт, пока жива *эта* единица и не менялась перекомпиляцией:

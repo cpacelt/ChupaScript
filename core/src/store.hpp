@@ -30,7 +30,10 @@ struct GlobalName;
 /// docs/superpowers/specs/2026-08-11-chupascript-values-design.md §5–§7.
 class Store {
    public:
-    Store();
+    /// region — чем помечаются значения, созданные этим хранилищем. За жизнь
+    /// хранилища не меняется: иначе уже выданные значения начали бы врать.
+    explicit Store(Value::Region region = Value::Region::Persistent);
+
     /// Определён в store.cpp: в заголовке типы пулов ещё неполны.
     ~Store();
 
@@ -230,6 +233,7 @@ class Store {
     std::size_t bytesReserved() const noexcept;
 
    private:
+    const Value::Region region_;
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
     /// exact — выделить ровно needed, а не ближайшую степень двойки. Так
@@ -249,6 +253,7 @@ class Store {
     /// место вставки. Отдельно от findKey, потому что ищет в другом массиве:
     /// у глобальных имён свои записи, а не Entry общего объекта.
     std::uint32_t findGlobal(std::string_view name, bool *found) const noexcept;
+
 
     // ─── массивы: заголовок отдельно от элементов ───
     //

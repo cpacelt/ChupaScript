@@ -39,7 +39,8 @@ struct GlobalName {
 
 }  // namespace detail
 
-Store::Store() = default;
+Store::Store(Value::Region region) : region_(region) {}
+
 Store::~Store() = default;
 
 std::uint32_t Store::appendText(std::string_view bytes) {
@@ -78,7 +79,7 @@ std::string_view Store::textAt(std::uint32_t offset,
 
 Value Store::makeString(std::string_view bytes) {
     const std::uint32_t offset = appendText(bytes);
-    return Value::string(offset, static_cast<std::uint32_t>(bytes.size()));
+    return Value::string(offset, static_cast<std::uint32_t>(bytes.size()), region_);
 }
 
 std::string_view Store::string(Value v) const noexcept {
@@ -100,7 +101,7 @@ Value Store::stringAt(std::uint32_t offset,
     assert(static_cast<std::size_t>(offset) + length <= text_.size() &&
            "строка за пределами пула текста: координаты выданы не этим "
            "хранилищем");
-    return Value::string(offset, length);
+    return Value::string(offset, length, region_);
 }
 
 std::uint32_t Store::beginString() noexcept {
@@ -159,7 +160,7 @@ Value Store::makeArray(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(arrays_.size());
     arrays_.push_back(detail::ArrayRep{0, 0, 0});
     if (capacity > 0) { growArray(arrays_[index], capacity, /*exact=*/true); }
-    return Value::array(index);
+    return Value::array(index, region_);
 }
 
 std::uint32_t Store::arrayCount(Value a) const noexcept {
@@ -257,7 +258,7 @@ Value Store::makeObject(std::uint32_t capacity) {
     const std::uint32_t index = static_cast<std::uint32_t>(objects_.size());
     objects_.push_back(detail::ObjectRep{0, 0, 0});
     if (capacity > 0) { growObject(objects_[index], capacity, /*exact=*/true); }
-    return Value::object(index);
+    return Value::object(index, region_);
 }
 
 std::uint32_t Store::objectCount(Value o) const noexcept {

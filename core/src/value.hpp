@@ -36,6 +36,10 @@ class Value {
     /// Вид значения. Закрытый список из docs/semantics.md §2.1.
     enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
 
+    /// Где живёт то, на что значение ссылается: постоянные данные хоста или
+    /// временные значения текущей операции. Разбор — docs/backlog.md [B57].
+    enum class Region : std::uint8_t { Persistent, Scratch };
+
     [[nodiscard]] static Value null() noexcept {
         Value v;
         v.kind_ = Kind::Null;
@@ -57,6 +61,9 @@ class Value {
     }
 
     [[nodiscard]] Kind kind() const noexcept { return kind_; }
+
+    /// Осмыслен только у String, Object и Array — см. поле region_.
+    [[nodiscard]] Region region() const noexcept { return region_; }
 
     /// Предусловие: kind() == Kind::Boolean.
     [[nodiscard]] bool booleanValue() const noexcept {
@@ -85,25 +92,32 @@ class Value {
 
     /// Индексы полны как тип, поэтому без закрытых фабрик любой код собрал бы
     /// значение-агрегат с произвольным номером заголовка. Закрываем доступом.
-    [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length) noexcept {
+    ///
+    /// Регион обязателен и без значения по умолчанию: значения, ссылающегося
+    /// в никуда, не бывает, и забыть его проставить не должно компилироваться.
+    [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length,
+                                      Region region) noexcept {
         Value v;
         v.kind_ = Kind::String;
         v.length_ = length;
         v.index_ = offset;
+        v.region_ = region;
         return v;
     }
 
-    [[nodiscard]] static Value array(std::uint32_t index) noexcept {
+    [[nodiscard]] static Value array(std::uint32_t index, Region region) noexcept {
         Value v;
         v.kind_ = Kind::Array;
         v.index_ = index;
+        v.region_ = region;
         return v;
     }
 
-    [[nodiscard]] static Value object(std::uint32_t index) noexcept {
+    [[nodiscard]] static Value object(std::uint32_t index, Region region) noexcept {
         Value v;
         v.kind_ = Kind::Object;
         v.index_ = index;
+        v.region_ = region;
         return v;
     }
 
@@ -119,7 +133,11 @@ class Value {
 
     Value() noexcept : kind_(Kind::Null), length_(0), number_(0.0) {}
 
-    Kind kind_;             // смещение 0
+    Kind kind_;  // смещение 0
+    // Смещение 1: байт был набивкой перед length_, поэтому регион достался
+    // даром. У скаляров региона нет — они ничего не адресуют; поле у них не
+    // читается, проверки региона касаются только String, Object и Array.
+    Region region_ = Region::Persistent;
     std::uint32_t length_;  // смещение 4 — длина строки в байтах
     // TODO(B2): восемь байт вместо шестнадцати достижимы только через
     // NaN-boxing: double в объединении задаёт и размер, и выравнивание.

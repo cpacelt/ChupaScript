@@ -21,7 +21,10 @@
 // Defined here, not in the header: C doesn't see C++ members.
 
 struct ChupaContext {
-    CS::Store engine;
+    /// Постоянный регион: данные хоста и всё, что внутри них. Звался engine,
+    /// пока хранилище было одно и означало движок целиком; теперь их два, и
+    /// различает их владелец — это против exec.scratch ниже.
+    CS::Store store;
 
     /// Состояние выполнения: временный регион и всё, что понадобится дальше
     /// одному вычислению (core/src/execution.hpp). Живёт в контексте, а не в
@@ -105,7 +108,7 @@ bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
                        const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     CS::Diagnostic diag;
-    bool ok = CS::setVariable(c->engine,
+    bool ok = CS::setVariable(c->store,
                               std::string_view(name, name_len),
                               std::string_view(text, text_len),
                               diag);
@@ -140,7 +143,7 @@ bool chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    c->engine.setGlobal(key, CS::Value::boolean(value));
+    c->store.setGlobal(key, CS::Value::boolean(value));
     c->clearError();
     c->notifyRedraw();
     return true;
@@ -152,7 +155,7 @@ bool chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_l
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    c->engine.setGlobal(key, CS::Value::number(value));
+    c->store.setGlobal(key, CS::Value::number(value));
     c->clearError();
     c->notifyRedraw();
     return true;
@@ -164,8 +167,8 @@ bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    CS::Value str = c->engine.makeString(std::string_view(text, text_len));
-    c->engine.setGlobal(key, str);
+    CS::Value str = c->store.makeString(std::string_view(text, text_len));
+    c->store.setGlobal(key, str);
     c->clearError();
     c->notifyRedraw();
     return true;
@@ -228,7 +231,7 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
 
     CS::Diagnostic diag;
     const std::uint32_t errors = CS::Expression::compile(
-        std::string_view(source, len), c->engine, &e->impl, &diag, 1);
+        std::string_view(source, len), c->store, &e->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
         return nullptr;   // unique_ptr уносит с собой всё, что успело завестись
@@ -244,7 +247,7 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
 
     CS::Diagnostic diag;
     const std::uint32_t errors = CS::Script::compile(
-        std::string_view(source, len), c->engine, &s->impl, &diag, 1);
+        std::string_view(source, len), c->store, &s->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
         return nullptr;   // unique_ptr уносит с собой всё, что успело завестись
@@ -291,7 +294,7 @@ ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
-    return toStatus(expr->impl.evalNumber(c->engine, c->exec, out, c->lastError));
+    return toStatus(expr->impl.evalNumber(c->store, c->exec, out, c->lastError));
 }
 
 ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
@@ -299,7 +302,7 @@ ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
-    return toStatus(expr->impl.evalBool(c->engine, c->exec, out, c->lastError));
+    return toStatus(expr->impl.evalBool(c->store, c->exec, out, c->lastError));
 }
 
 ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
@@ -309,7 +312,7 @@ ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
     c->clearError();
 
     std::string_view text;
-    const CS::EvalStatus status = expr->impl.evalString(c->engine, c->exec, &text,
+    const CS::EvalStatus status = expr->impl.evalString(c->store, c->exec, &text,
                                                         c->lastError);
     if (status != CS::EvalStatus::Ok) { return toStatus(status); }
 
@@ -328,7 +331,7 @@ bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
     CS::Diagnostic diag;
-    if (!s->impl.run(c->engine, c->exec, diag)) {
+    if (!s->impl.run(c->store, c->exec, diag)) {
         c->setError(diag);
         return false;
     }

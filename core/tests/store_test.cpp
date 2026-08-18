@@ -125,6 +125,58 @@ TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
     EXPECT_FALSE(persistent.makeArray().sameAggregate(scratch.makeArray()));
 }
 
+TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
+    // Один временный массив, положенный в обе ячейки внешнего. Продвижение
+    // обязано сделать одну копию, а не две: иначе разойдутся и равенство по
+    // идентичности (semantics.md §5.4), и видимость записи (§2.3).
+    Store scratch(Value::Region::Scratch);
+    Store persistent(Value::Region::Persistent);
+
+    const Value inner = scratch.makeArray(1);
+    scratch.arrayPush(inner, Value::number(1.0));
+    const Value outer = scratch.makeArray(2);
+    scratch.arrayPush(outer, inner);
+    scratch.arrayPush(outer, inner);
+
+    const Value moved = persistent.promote(scratch, outer);
+    EXPECT_TRUE(persistent.arrayAt(moved, 0).sameAggregate(persistent.arrayAt(moved, 1)));
+}
+
+TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
+    Store scratch(Value::Region::Scratch);
+    Store persistent(Value::Region::Persistent);
+
+    const Value inner = scratch.makeArray(1);
+    scratch.arrayPush(inner, Value::number(1.0));
+    const Value outer = scratch.makeArray(2);
+    scratch.arrayPush(outer, inner);
+    scratch.arrayPush(outer, inner);
+
+    const Value moved = persistent.promote(scratch, outer);
+    persistent.arraySet(persistent.arrayAt(moved, 1), 0, Value::number(3.0));
+    EXPECT_EQ(persistent.arrayAt(persistent.arrayAt(moved, 0), 0).numberValue(), 3.0);
+}
+
+TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
+    Store persistent(Value::Region::Persistent);
+    Store scratch(Value::Region::Scratch);
+    const Value a = persistent.makeArray();
+    // Копии не случилось: тот же агрегат, а не равный ему по содержимому.
+    EXPECT_TRUE(persistent.promote(scratch, a).sameAggregate(a));
+}
+
+TEST(StorePromote, CopiesNestedStringsAndKeys) {
+    Store scratch(Value::Region::Scratch);
+    Store persistent(Value::Region::Persistent);
+
+    const Value o = scratch.makeObject(1);
+    scratch.objectSet(o, "имя", scratch.makeString("Вася"));
+    const Value moved = persistent.promote(scratch, o);
+
+    EXPECT_EQ(persistent.objectKeyAt(moved, 0), "имя");
+    EXPECT_EQ(persistent.string(persistent.objectValueAt(moved, 0)), "Вася");
+}
+
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
     Store store;
     const Value a = store.makeArray();

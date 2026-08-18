@@ -37,6 +37,12 @@ struct GlobalName {
     GlobalSlot slot;
 };
 
+/// Запись таблицы пересылки: продвинутый агрегат и сделанная копия.
+struct Promoted {
+    Value from;
+    Value to;
+};
+
 }  // namespace detail
 
 Store::Store(Value::Region region) : region_(region) {}
@@ -161,6 +167,54 @@ Value Store::makeArray(std::uint32_t capacity) {
     arrays_.push_back(detail::ArrayRep{0, 0, 0});
     if (capacity > 0) { growArray(arrays_[index], capacity, /*exact=*/true); }
     return Value::array(index, region_);
+}
+
+Value Store::promote(const Store &from, Value v) {
+    std::vector<detail::Promoted> promoted;
+    return promoteInto(from, v, promoted);
+}
+
+Value Store::promoteInto(const Store &from, Value v,
+                         std::vector<detail::Promoted> &promoted) {
+    // Свой регион — и сюда же попадают все скаляры: они ничего не адресуют,
+    // копировать в них нечего.
+    if (sameRegion(v)) { return v; }
+
+    // Строки в таблицу не попадают: идентичности у них нет, равенство строк
+    // сравнивает содержимое (operator.cpp), поэтому вторая копия тех же байтов
+    // наблюдаемо неотличима от первой. Цена — лишние байты в пуле, B55.
+    if (v.kind() == Value::Kind::String) { return makeString(from.string(v)); }
+
+    for (const detail::Promoted &done : promoted) {
+        if (done.from.sameAggregate(v)) { return done.to; }
+    }
+
+    if (v.kind() == Value::Kind::Array) {
+        const std::uint32_t count = from.arrayCount(v);
+        const Value copy = makeArray(count);
+        // Запись до заполнения, а не после: иначе вторая ссылка на этот же
+        // агрегат породила бы вторую копию, а ссылка на самого себя — ещё и
+        // бесконечную рекурсию.
+        promoted.push_back(detail::Promoted{v, copy});
+        for (std::uint32_t i = 0; i < count; ++i) {
+            arrayPush(copy, promoteInto(from, from.arrayAt(v, i), promoted));
+        }
+        return copy;
+    }
+
+    assert(v.kind() == Value::Kind::Object);
+    const std::uint32_t count = from.objectCount(v);
+    const Value copy = makeObject(count);
+    promoted.push_back(detail::Promoted{v, copy});
+    for (std::uint32_t i = 0; i < count; ++i) {
+        // objectKeyAt отдаёт срез пула источника, а objectSet дописывает в пул
+        // приёмника: пулы разные, поэтому переезд среза не портит. В одном
+        // хранилище это был бы висячий срез, но туда мы не доходим — значение
+        // своего региона вернулось первой строкой.
+        objectSet(copy, from.objectKeyAt(v, i),
+                  promoteInto(from, from.objectValueAt(v, i), promoted));
+    }
+    return copy;
 }
 
 std::uint32_t Store::arrayCount(Value a) const noexcept {

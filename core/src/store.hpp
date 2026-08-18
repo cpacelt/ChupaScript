@@ -16,6 +16,7 @@ struct ArrayRep;
 struct ObjectRep;
 struct Entry;
 struct GlobalName;
+struct Promoted;
 }  // namespace detail
 
 /// Хранилище значений ChupaScript.
@@ -51,6 +52,16 @@ class Store {
 
     /// Создаёт пустой объект. capacity — сколько пар выделить заранее.
     Value makeObject(std::uint32_t capacity = 0);
+
+    /// Принять значение в это хранилище: из своего региона — как есть, из
+    /// чужого — копией вглубь. Нужно на записи в долгоживущее: индексы чужого
+    /// региона перестают что-либо значить, как только тот сброшен.
+    ///
+    /// Разделение сохраняется: агрегат, встреченный в обходе дважды,
+    /// копируется один раз. Поэтому запись через одну ссылку остаётся видна
+    /// через другую (docs/semantics.md §2.3), а равенство по идентичности
+    /// (§5.4) после продвижения отвечает то же, что и до него.
+    Value promote(const Store &from, Value v);
 
     // ─── сборка строки по частям ───
     //
@@ -245,6 +256,13 @@ class Store {
     [[nodiscard]] bool sameRegion(Value v) const noexcept {
         return v.region() == region_;
     }
+    /// promoted — что из from уже продвинуто и во что. Роль forwarding
+    /// pointer из копирующего сборщика, но сбоку: источник константен, писать
+    /// в его заголовки нельзя. Поиск линейный — продвигаемые значения малы, и
+    /// хеш обошёлся бы дороже, чем пройти десяток записей.
+    Value promoteInto(const Store &from, Value v,
+                      std::vector<detail::Promoted> &promoted);
+
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
     /// exact — выделить ровно needed, а не ближайшую степень двойки. Так

@@ -1,6 +1,7 @@
 #pragma once
 #include "aggregate.hpp"
 #include "deferred.hpp"
+#include "diagnostic.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -87,6 +88,24 @@ class Execution {
     /// Таблица имён полей контекста — та единственная, что есть. Нужна тому,
     /// кто создаёт объект (CS::makeObject); владеет ею постоянное хранилище.
     [[nodiscard]] KeyTable *keys() const noexcept { return persistent_.keys(); }
+
+    /// Rejects a compiled unit that belongs to another Store.
+    ///
+    /// The check is unconditional, not an assert: a release build is exactly
+    /// where the foreign slot number would be read silently, and a
+    /// neighbouring variable's value arriving on screen is the failure this
+    /// closes.
+    ///
+    /// Lives here rather than beside each entry point because the Execution is
+    /// what knows which Store it runs over; a free helper would have to be
+    /// duplicated into every translation unit that evaluates.
+    [[nodiscard]] bool acceptsUnit(std::uint32_t unitStoreId,
+                                   Diagnostic &diag) const noexcept {
+        if (unitStoreId == persistent_.id()) { return true; }
+        diag = Diagnostic{ErrorCode::Usage, 0,
+                          "unit was compiled against another context"};
+        return false;
+    }
 
    private:
     /// Объявлен после арены и до ссылки на хранилище: разрушается раньше

@@ -43,6 +43,15 @@
 
 namespace {
 
+/// Same string chupa_context_error(ctx, &err).message used to hand back
+/// directly, off the SkipWithError path only — this is not part of what
+/// any block measures.
+std::string errorMessage(ChupaContext *ctx) {
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    return std::string(err.message, err.message_len);
+}
+
 // ─── общая обстановка: данные одного экрана ───
 
 constexpr std::string_view kUser =
@@ -62,8 +71,8 @@ std::string cardList(int count) {
 }
 
 bool put(ChupaContext *ctx, std::string_view name, std::string_view text) {
-    return chupa_context_set(ctx, name.data(), name.size(), text.data(),
-                             text.size());
+    return chupa_context_set_data(ctx, name.data(), name.size(), text.data(),
+                                  text.size());
 }
 
 /// Обстановка, на которой меряются блоки 2–4.
@@ -93,7 +102,7 @@ void runSet(benchmark::State &state, std::string_view text) {
     state.SetLabel(std::string(text.substr(0, 60)));
     for (auto _ : state) {
         if (!put(ctx, "data", text)) {
-            state.SkipWithError("chupa_context_set failed");
+            state.SkipWithError("chupa_context_set_data failed");
             break;
         }
     }
@@ -260,7 +269,7 @@ void runCompile(benchmark::State &state, std::string_view source) {
         ChupaExpression *e =
             chupa_compile_expression(ctx, source.data(), source.size());
         if (e == nullptr) {
-            state.SkipWithError(chupa_context_error(ctx, nullptr));
+            state.SkipWithError(errorMessage(ctx));
             break;
         }
         chupa_expression_destroy(e);
@@ -301,23 +310,23 @@ void consume(ChupaContext *ctx, ChupaValue v);
 void consumeString(ChupaContext *ctx, ChupaValue v) {
     const char *bytes = nullptr;
     size_t len = 0;
-    chupa_value_string_borrowed(CHUPA_W v, &bytes, &len);
+    chupa_value_string(CHUPA_W &v, &bytes, &len);
     g_hostBuffer.assign(bytes, len);   // копия к хосту — та самая доставка
     benchmark::DoNotOptimize(g_hostBuffer.data());
     (void)ctx;
 }
 
 void consume(ChupaContext *ctx, ChupaValue v) {
-    switch (chupa_value_kind(CHUPA_W v)) {
+    switch (chupa_value_kind(CHUPA_W &v)) {
         case CHUPA_KIND_NULL:
             return;
         case CHUPA_KIND_BOOL: {
-            bool b = chupa_value_bool(CHUPA_W v);
+            bool b = chupa_value_bool(CHUPA_W &v);
             benchmark::DoNotOptimize(b);
             return;
         }
         case CHUPA_KIND_NUMBER: {
-            double d = chupa_value_number(CHUPA_W v);
+            double d = chupa_value_number(CHUPA_W &v);
             benchmark::DoNotOptimize(d);
             return;
         }
@@ -325,20 +334,24 @@ void consume(ChupaContext *ctx, ChupaValue v) {
             consumeString(ctx, v);
             return;
         case CHUPA_KIND_ARRAY: {
-            const size_t n = chupa_array_count(CHUPA_W v);
+            const size_t n = chupa_array_count(CHUPA_W &v);
             for (size_t i = 0; i < n; ++i) {
-                consume(ctx, chupa_array_at(CHUPA_W v, i));
+                ChupaValue item{};
+                chupa_array_at(CHUPA_W &v, i, &item);
+                consume(ctx, item);
             }
             return;
         }
         case CHUPA_KIND_OBJECT: {
-            const size_t n = chupa_object_count(CHUPA_W v);
+            const size_t n = chupa_object_count(CHUPA_W &v);
             for (size_t i = 0; i < n; ++i) {
                 const char *key = nullptr;
                 size_t len = 0;
-                chupa_object_key_at(CHUPA_W v, i, &key, &len);
+                chupa_object_key_at(CHUPA_W &v, i, &key, &len);
                 benchmark::DoNotOptimize(key);
-                consume(ctx, chupa_object_value_at(CHUPA_W v, i));
+                ChupaValue item{};
+                chupa_object_value_at(CHUPA_W &v, i, &item);
+                consume(ctx, item);
             }
             return;
         }
@@ -354,7 +367,7 @@ void runEvalAndDeliver(benchmark::State &state, std::string_view source) {
     ChupaExpression *e =
         chupa_compile_expression(ctx, source.data(), source.size());
     if (e == nullptr) {
-        state.SkipWithError(chupa_context_error(ctx, nullptr));
+        state.SkipWithError(errorMessage(ctx));
         chupa_context_destroy(ctx);
         return;
     }
@@ -362,12 +375,11 @@ void runEvalAndDeliver(benchmark::State &state, std::string_view source) {
     state.SetLabel(std::string(source));
     for (auto _ : state) {
         ChupaValue out{};
-        const ChupaStatus status = chupa_eval_value(ctx, e, &out);
-        if (status == CHUPA_ERROR) {
-            state.SkipWithError(chupa_context_error(ctx, nullptr));
+        if (!chupa_eval(ctx, e, &out)) {
+            state.SkipWithError(errorMessage(ctx));
             break;
         }
-        if (status == CHUPA_OK) { consume(ctx, out); }
+        consume(ctx, out);
     }
 
     chupa_expression_destroy(e);
@@ -424,7 +436,7 @@ void runScriptCompile(benchmark::State &state, std::string_view source) {
     for (auto _ : state) {
         ChupaScript *s = chupa_compile_script(ctx, source.data(), source.size());
         if (s == nullptr) {
-            state.SkipWithError(chupa_context_error(ctx, nullptr));
+            state.SkipWithError(errorMessage(ctx));
             break;
         }
         chupa_script_destroy(s);
@@ -440,14 +452,14 @@ void runScriptRun(benchmark::State &state, std::string_view source) {
     }
     ChupaScript *s = chupa_compile_script(ctx, source.data(), source.size());
     if (s == nullptr) {
-        state.SkipWithError(chupa_context_error(ctx, nullptr));
+        state.SkipWithError(errorMessage(ctx));
         chupa_context_destroy(ctx);
         return;
     }
     state.SetLabel(std::string(source));
     for (auto _ : state) {
         if (!chupa_run(ctx, s)) {
-            state.SkipWithError(chupa_context_error(ctx, nullptr));
+            state.SkipWithError(errorMessage(ctx));
             break;
         }
     }
@@ -532,8 +544,7 @@ void BM_Host_Frame(benchmark::State &state) {
     for (auto _ : state) {
         for (ChupaExpression *e : screen) {
             ChupaValue out{};
-            const ChupaStatus status = chupa_eval_value(ctx, e, &out);
-            if (status == CHUPA_OK) { consume(ctx, out); }
+            if (chupa_eval(ctx, e, &out)) { consume(ctx, out); }
         }
     }
 
@@ -560,8 +571,7 @@ void BM_Host_FrameWithData(benchmark::State &state) {
         }
         for (ChupaExpression *e : screen) {
             ChupaValue out{};
-            const ChupaStatus status = chupa_eval_value(ctx, e, &out);
-            if (status == CHUPA_OK) { consume(ctx, out); }
+            if (chupa_eval(ctx, e, &out)) { consume(ctx, out); }
         }
     }
 

@@ -54,28 +54,10 @@ class Context {
     /// (core/src/expression.hpp), включая то, что при отказе *out не трогается.
     bool eval(const Expression &expr, Value *out, Diagnostic &diag);
 
-    /// Вычисляет в значение любого вида, годное к удержанию хостом.
-    ///
-    /// Отличие от eval одно, и оно существенное: вычисленная строка
-    /// материализуется в коробку. eval отдаёт результат как есть — им пользуется
-    /// оболочка, которая читает его немедленно и до следующей операции. Здесь
-    /// же результат предназначен к тому, чтобы его удержали, а удержать можно
-    /// только коробка.
-    ///
-    /// Ссылки не берёт: единственную ссылку результата держит список
-    /// отложенного освобождения, и ближайшая операция её отпустит. Хост,
-    /// которому значение нужно дольше, обязан взять свою — chupa_value_retain.
-    bool evalValue(const Expression &expr, Value *out, Diagnostic &diag);
-
     /// Типизированные исходы — как у одноимённых методов Expression.
     EvalStatus evalNumber(const Expression &expr, double *out,
                           Diagnostic &diag);
     EvalStatus evalBool(const Expression &expr, bool *out, Diagnostic &diag);
-
-    /// Срез действителен до следующей записи в текстовый пул — правило
-    /// Expression::evalString целиком.
-    EvalStatus evalString(const Expression &expr, std::string_view *out,
-                          Diagnostic &diag);
 
     /// Keeps a value alive until the next operation boundary and returns a
     /// reference to the STORED copy — the one whose address the caller may

@@ -700,10 +700,8 @@ void BM_Eval_String_New(benchmark::State &state, std::string_view value) {
     for (auto _ : state) {
         const char *bytes = nullptr;
         size_t len = 0;
-        const ChupaStatus status =
-            chupa_eval_string_borrowed(ctx, expr, &bytes, &len);
-        if (status != CHUPA_OK) {
-            state.SkipWithError("chupa_eval_string_borrowed failed");
+        if (!chupa_eval_string(ctx, expr, &bytes, &len)) {
+            state.SkipWithError("chupa_eval_string failed");
             break;
         }
         benchmark::DoNotOptimize(bytes);

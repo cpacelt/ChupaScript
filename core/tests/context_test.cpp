@@ -89,10 +89,10 @@ TEST(Context, TypedEvalsReachTheSameExpression) {
     EXPECT_EQ(ctx.evalBool(b, &flag, diag), CS::EvalStatus::Ok);
     EXPECT_TRUE(flag);
 
-    std::string_view text;
+    CS::Value text = CS::Value::null();
     const CS::Expression s = compileIn(ctx, "'привет'");
-    EXPECT_EQ(ctx.evalString(s, &text, diag), CS::EvalStatus::Ok);
-    EXPECT_EQ(text, "привет");
+    EXPECT_TRUE(ctx.eval(s, &text, diag));
+    EXPECT_EQ(CS::stringBytes(text), "привет");
 }
 
 TEST(Context, ReportsEvaluationFailure) {
@@ -263,9 +263,9 @@ TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
     ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
 
     const CS::Expression expr = compileIn(ctx, "rows[0]");
-    std::string_view got;
-    ASSERT_EQ(ctx.evalString(expr, &got, diag), CS::EvalStatus::Ok) << diag.message;
-    EXPECT_EQ(got, "12");
+    CS::Value got = CS::Value::null();
+    ASSERT_TRUE(ctx.eval(expr, &got, diag)) << diag.message;
+    EXPECT_EQ(CS::stringBytes(got), "12");
 }
 
 /// The builder hands back a box, and a box is readable without asking any

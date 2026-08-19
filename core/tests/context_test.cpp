@@ -1,5 +1,7 @@
 #include "context.hpp"
 
+#include "node.hpp"
+
 #include <gtest/gtest.h>
 
 #include <cstddef>
@@ -133,6 +135,113 @@ TEST(Context, ScriptAlsoOpensAnOperation) {
         ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
         EXPECT_EQ(ctx.temporaryBytesUsed(), afterFirst);
     }
+}
+
+TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
+    // Присваивать переменную целиком язык не даёт (check.cpp: «cannot assign
+    // to a variable name»), так что переписывает её только хост — и это
+    // основной случай: бэкенд шлёт новые данные на каждое обновление экрана.
+    //
+    // Раньше прежний массив оставался в пуле навсегда, и двести обновлений
+    // держали двести массивов. Меряется счётчиком живых узлов: память узла
+    // хранилищу не принадлежит, и его метрика байт её не видит.
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("rows", "[1, 2, 3]", diag)) << diag.message;
+
+    const std::size_t afterFirst = CS::detail::liveNodeCount();
+    for (int i = 0; i < 200; ++i) {
+        ASSERT_TRUE(ctx.setVariableText("rows", "[1, 2, 3]", diag)) << diag.message;
+    }
+    // Живым остаётся ровно последний массив; допуск — на тот, чью ссылку ещё
+    // держит список отложенного освобождения до ближайшей границы.
+    EXPECT_LE(CS::detail::liveNodeCount(), afterFirst + 1);
+}
+
+TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
+    // Единственный способ вырастить массив в языке. Раньше каждый push
+    // переносил его в хвост пула, бросая прежний диапазон мусором.
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[]", diag)) << diag.message;
+
+    CS::Script script;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Script::compile("push(rows, 1);", ctx.store(), &script, diags, 1), 0u)
+        << diags[0].message;
+
+    const std::size_t before = CS::detail::liveNodeCount();
+    for (int i = 0; i < 200; ++i) { ASSERT_TRUE(ctx.run(script, diag)) << diag.message; }
+
+    const CS::Expression expr = compileIn(ctx, "count(rows)");
+    double got = 0.0;
+    ASSERT_EQ(ctx.evalNumber(expr, &got, diag), CS::EvalStatus::Ok) << diag.message;
+    EXPECT_EQ(got, 200.0);
+    // Двести чисел не завели ни одного узла: скаляр живёт в самом Value.
+    EXPECT_EQ(CS::detail::liveNodeCount(), before);
+}
+
+TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
+    // То, ради чего всё это: значение, отданное наружу, не зависит от того,
+    // жив контекст или нет. Хост берёт ссылку и отпускает её сам.
+    CS::Value escaped = CS::Value::null();
+    {
+        CS::Context ctx;
+        CS::Diagnostic diag;
+        ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[1, 2, 3]", diag))
+            << diag.message;
+
+        const CS::Expression expr = compileIn(ctx, "rows");
+        ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
+        ASSERT_EQ(escaped.kind(), CS::Value::Kind::Array);
+        CS::detail::retain(escaped.node());   // так делает обёртка хоста
+    }
+    // Контекста нет, хранилища нет, таблицы имён у него нет. Массив есть.
+    const CS::detail::ArrayNode *node =
+        static_cast<const CS::detail::ArrayNode *>(escaped.node());
+    ASSERT_EQ(node->items.size(), 3u);
+    EXPECT_EQ(node->items[2].numberValue(), 3.0);
+    CS::detail::release(escaped.node());
+}
+
+TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
+    CS::Value escaped = CS::Value::null();
+    {
+        CS::Context ctx;
+        CS::Diagnostic diag;
+        ASSERT_TRUE(CS::setVariable(ctx.store(), "user", "{'name': 'Вася'}", diag))
+            << diag.message;
+        const CS::Expression expr = compileIn(ctx, "user");
+        ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
+        CS::detail::retain(escaped.node());
+    }
+    const CS::detail::ObjectNode *node =
+        static_cast<const CS::detail::ObjectNode *>(escaped.node());
+    ASSERT_EQ(node->entries.size(), 1u);
+    // Таблица имён пережила своё хранилище, потому что её держит узел.
+    EXPECT_EQ(node->keys->bytes(node->entries[0].key), "name");
+    CS::detail::release(escaped.node());
+}
+
+TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
+    // Строка собирается в арене операции, а границу переживает узлом — ровно
+    // то правило, ради которого укладка в агрегат материализует строку.
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[]", diag)) << diag.message;
+
+    CS::Script script;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Script::compile("push(rows, format('${}${}', 1, 2));", ctx.store(),
+                                  &script, diags, 1),
+              0u)
+        << diags[0].message;
+    ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
+
+    const CS::Expression expr = compileIn(ctx, "rows[0]");
+    std::string_view got;
+    ASSERT_EQ(ctx.evalString(expr, &got, diag), CS::EvalStatus::Ok) << diag.message;
+    EXPECT_EQ(got, "12");
 }
 
 }  // namespace

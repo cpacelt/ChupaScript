@@ -52,6 +52,28 @@ class Context {
     EvalStatus evalString(const Expression &expr, std::string_view *out,
                           Diagnostic &diag);
 
+    /// Запись глобальной переменной от хоста.
+    ///
+    /// Операция, а не голая запись, и это обязательно: созданный здесь узел
+    /// попадает в список отложенного освобождения, и без границы список рос бы
+    /// до конца жизни контекста. Хост, который только пишет и ни разу не
+    /// вычисляет, — обычное дело на старте экрана.
+    void setGlobal(std::string_view name, Value v) {
+        beginOperation();
+        store_.setGlobal(name, store_.promote(exec_.storeOf(v), v));
+    }
+
+    /// Строка от хоста: укладывается узлом, потому что переживёт операцию.
+    void setGlobalString(std::string_view name, std::string_view text) {
+        beginOperation();
+        store_.setGlobal(name, store_.materialize(text));
+    }
+
+    /// Разбор текста от хоста в глобальную переменную. Тоже операция, и по той
+    /// же причине: разбор создаёт узлы.
+    bool setVariableText(std::string_view name, std::string_view text,
+                         Diagnostic &diag);
+
     /// Выполняет скрипт. Значения у скрипта нет (docs/semantics.md §3.1).
     bool run(const Script &script, Diagnostic &diag);
 
@@ -62,11 +84,16 @@ class Context {
     [[nodiscard]] Store &store() noexcept { return store_; }
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
-    /// Хранилище, которому принадлежит значение. Результат вычисления вправе
-    /// лежать во временном регионе (`[1, 2]`, `format(...)`), и прочитать его
-    /// может только тот, кто его выдал — см. storeOf в
-    /// core/src/execution.hpp. Такое значение годно до следующей операции над
-    /// контекстом.
+    /// Хранилище, способное прочитать значение.
+    ///
+    /// Роль сузилась до одного случая: агрегат и узел строки самодостаточны, а
+    /// вот результат вычисления вправе быть промежуточной строкой
+    /// (`format(...)`), и смысл её смещению придаёт только арена операции.
+    /// Такое значение годно до следующей операции над контекстом.
+    ///
+    /// Наружу метод остаётся ради того, кто читает сырой результат eval, — это
+    /// оболочка (cli/printer.cpp). Обёртка на Swift сюда не ходит: ей строка
+    /// приходит срезом через evalString, и она копирует её немедленно.
     [[nodiscard]] const Store &storeOf(Value v) const noexcept {
         return exec_.storeOf(v);
     }

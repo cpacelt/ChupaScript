@@ -103,10 +103,8 @@ bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
                        const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     CS::Diagnostic diag;
-    bool ok = CS::setVariable(c->impl.store(),
-                              std::string_view(name, name_len),
-                              std::string_view(text, text_len),
-                              diag);
+    bool ok = c->impl.setVariableText(std::string_view(name, name_len),
+                                      std::string_view(text, text_len), diag);
     if (!ok) {
         c->setError(diag);
         return false;
@@ -138,7 +136,7 @@ bool chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    c->impl.store().setGlobal(key, CS::Value::boolean(value));
+    c->impl.setGlobal(key, CS::Value::boolean(value));
     c->clearError();
     c->notifyRedraw();
     return true;
@@ -150,7 +148,7 @@ bool chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_l
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    c->impl.store().setGlobal(key, CS::Value::number(value));
+    c->impl.setGlobal(key, CS::Value::number(value));
     c->clearError();
     c->notifyRedraw();
     return true;
@@ -162,8 +160,7 @@ bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
-    CS::Value str = c->impl.store().makeString(std::string_view(text, text_len));
-    c->impl.store().setGlobal(key, str);
+    c->impl.setGlobalString(key, std::string_view(text, text_len));
     c->clearError();
     c->notifyRedraw();
     return true;

@@ -74,11 +74,15 @@ extension Double: CSValue {
 
     public static func chupaEval<U>(from expression: Expression<U>) throws -> Double? {
         var out: Double = 0
-        switch chupa_eval_number(expression.context.handle, expression.handle, &out) {
-        case CHUPA_OK:   return out
-        case CHUPA_NULL: return nil
-        default:         throw expression.context.makeError()
+        // false means "no number came out"; the error tells why — a null
+        // result leaves the error at CHUPA_ERR_NONE, a wrong kind sets
+        // CHUPA_ERR_TYPE, and anything else is a real failure.
+        guard chupa_eval_number(expression.context.handle, expression.handle, &out) else {
+            let error = expression.context.makeError()
+            guard error.code != .none else { return nil }
+            throw error
         }
+        return out
     }
 }
 
@@ -86,11 +90,13 @@ extension Bool: CSValue {
 
     public static func chupaEval<U>(from expression: Expression<U>) throws -> Bool? {
         var out = false
-        switch chupa_eval_bool(expression.context.handle, expression.handle, &out) {
-        case CHUPA_OK:   return out
-        case CHUPA_NULL: return nil
-        default:         throw expression.context.makeError()
+        // Same false-plus-error-code protocol as Double.chupaEval above.
+        guard chupa_eval_bool(expression.context.handle, expression.handle, &out) else {
+            let error = expression.context.makeError()
+            guard error.code != .none else { return nil }
+            throw error
         }
+        return out
     }
 }
 
@@ -101,7 +107,7 @@ extension String: CSValue {
     /// на весь путь.
     ///
     /// Срез действителен до следующего обращения к контексту (`chupascript.h`,
-    /// `chupa_eval_string_borrowed`). Здесь это выполняется само собой: между
+    /// `chupa_eval_string`). Здесь это выполняется само собой: между
     /// вызовом и построением строки движок не трогается ничем.
     ///
     /// Проверка кодировки при построении строки не выполняется — см.
@@ -117,16 +123,15 @@ extension String: CSValue {
     public static func chupaEval<U>(from expression: Expression<U>) throws -> String? {
         var bytes: UnsafePointer<CChar>?
         var length = 0
-        switch chupa_eval_string_borrowed(expression.context.handle,
-                                          expression.handle, &bytes, &length) {
-        case CHUPA_OK:
-            // Пустой результат приходит с нулевой длиной и, возможно, с пустым
-            // указателем — это строка, а не null; chupaFromValidUTF8 это знает.
-            return String.chupaFromValidUTF8(bytes, count: length)
-        case CHUPA_NULL:
-            return nil
-        default:
-            throw expression.context.makeError()
+        // Same false-plus-error-code protocol as Double.chupaEval above.
+        guard chupa_eval_string(expression.context.handle,
+                                expression.handle, &bytes, &length) else {
+            let error = expression.context.makeError()
+            guard error.code != .none else { return nil }
+            throw error
         }
+        // Пустой результат приходит с нулевой длиной и, возможно, с пустым
+        // указателем — это строка, а не null; chupaFromValidUTF8 это знает.
+        return String.chupaFromValidUTF8(bytes, count: length)
     }
 }

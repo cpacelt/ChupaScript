@@ -50,8 +50,8 @@ public final class Context {
     public func set(_ name: String, text: String) throws {
         let ok = name.withCString { namePtr in
             text.withCString { textPtr in
-                chupa_context_set(handle, namePtr, name.utf8.count,
-                                  textPtr, text.utf8.count)
+                chupa_context_set_data(handle, namePtr, name.utf8.count,
+                                       textPtr, text.utf8.count)
             }
         }
         guard ok else { throw makeError() }
@@ -143,18 +143,36 @@ public final class Context {
 
     /// Last error on this context, or nil if last operation succeeded.
     public var error: Error? {
-        guard chupa_context_error_code(handle) != CHUPA_ERR_NONE else { return nil }
-        return makeError()
+        let raw = readError()
+        guard raw.code != CHUPA_ERR_NONE else { return nil }
+        return makeError(from: raw)
     }
 
+    /// Reads the context's last error in one crossing of the C boundary.
+    /// Callers who already know the last call failed (compile/run/set
+    /// throwers) go through this instead of the `error` property, so they
+    /// do not read the struct twice.
     internal func makeError() -> Error {
-        let code = ErrorCode(chupa_context_error_code(handle))
-        let offset = chupa_context_error_offset(handle)
-        var len: Int = 0
-        let msgPtr = chupa_context_error(handle, &len)
+        makeError(from: readError())
+    }
+
+    /// `ChupaError.message` imports as a non-optional pointer (nothing in
+    /// the header marks it nullable), so a Swift local of this type has no
+    /// zero-argument initializer to pre-fill it with — the struct is read
+    /// through an out-param instead, exactly as the C API declares it.
+    private func readError() -> ChupaError {
+        let ptr = UnsafeMutablePointer<ChupaError>.allocate(capacity: 1)
+        defer { ptr.deallocate() }
+        chupa_context_error(handle, ptr)
+        return ptr.pointee
+    }
+
+    private func makeError(from raw: ChupaError) -> Error {
+        let code = ErrorCode(raw.code)
+        let offset = raw.offset
         // Сообщения — литералы из C++, ASCII целиком, так что проверять их
         // кодировку нечего (String.chupaFromValidUTF8).
-        let message = String.chupaFromValidUTF8(msgPtr, count: len)
+        let message = String.chupaFromValidUTF8(raw.message, count: raw.message_len)
         return Error(code: code, message: message, offset: offset)
     }
 

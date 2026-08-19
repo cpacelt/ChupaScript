@@ -2,11 +2,22 @@
 
 #include "box.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
 
 namespace CS {
+
+namespace {
+
+/// Source of Store ids. Atomic because two threads may each create a Context
+/// (chupascript.h, threading contract), and the ids they get must differ.
+/// Starts at 1 so that a zero-initialised id in a compiled unit never matches
+/// a real Store.
+std::atomic<std::uint32_t> g_nextStoreId{1};
+
+}  // namespace
 
 namespace detail {
 
@@ -24,7 +35,8 @@ struct GlobalName {
 }  // namespace detail
 
 Store::Store(Role role)
-    : keys_(role == Role::Globals ? KeyTable::create() : nullptr) {}
+    : keys_(role == Role::Globals ? KeyTable::create() : nullptr),
+      id_(g_nextStoreId.fetch_add(1, std::memory_order_relaxed)) {}
 
 Store::~Store() {
     // На месте, а не в список: границы операции больше не будет, да и списка

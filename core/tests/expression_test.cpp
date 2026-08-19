@@ -289,4 +289,27 @@ TEST(Expression, ObjectLiteralKeysComeFromStoredLiterals) {
     EXPECT_DOUBLE_EQ(out, 1.0);
 }
 
+/// A unit carries the identity of the Store it was compiled against, and
+/// refuses to run on any other one. Without the check the slot number resolved
+/// at compile time would index the other Store's values_ and return whichever
+/// variable happens to sit there — silently, in release builds.
+TEST(Expression, RefusesToEvaluateOnAnotherStore) {
+    CS::Store home;
+    CS::Store foreign;
+    CS::Deferred dead;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(CS::setVariable(home, dead, "x", "1", diag));
+    ASSERT_TRUE(CS::setVariable(foreign, dead, "y", "2", diag));
+
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Expression::compile("x", home, &expr, diags, 1), 0u);
+
+    CS::Execution elsewhere(foreign);
+    CS::Value out = CS::Value::null();
+    CS::Diagnostic failure;
+    EXPECT_FALSE(expr.eval(elsewhere, &out, failure));
+    EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
+}
+
 }  // namespace

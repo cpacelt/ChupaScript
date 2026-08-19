@@ -165,10 +165,11 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
  * compiled against — it holds no reference to it.
  *
  * A unit MUST be evaluated on the very context it was compiled against.
- * Passing it to another context is undefined behaviour: compilation resolves
- * every global name to a slot in that context's store, and another store's
- * slots address other variables. Debug builds trap on it; release builds do
- * not check. */
+ * Every evaluation checks this — in release builds too — and a mismatch fails
+ * with CHUPA_ERR_USAGE, touching no output. The check exists because
+ * compilation resolves every global name to a slot in that context's store,
+ * and another store's slots address other variables: without it the call would
+ * return a neighbouring variable's value and look successful. */
 CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
 CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 

@@ -145,4 +145,28 @@ TEST(Script, FailedCompileDoesNotTouchOut) {
     EXPECT_DOUBLE_EQ(n.numberValue(), 2.0);
 }
 
+/// A unit carries the identity of the Store it was compiled against, and
+/// refuses to run on any other one. Without the check the slot number resolved
+/// at compile time would index the other Store's values_ and return whichever
+/// variable happens to sit there — silently, in release builds.
+TEST(Script, RefusesToEvaluateOnAnotherStore) {
+    CS::Store home;
+    CS::Store foreign;
+    CS::Deferred dead;
+    CS::Diagnostic diag;
+    // Direct assignment to a variable name is rejected by the language
+    // (check.cpp: "cannot assign to a variable name"), so the target is an
+    // object field, same as OwnsItsSource above.
+    ASSERT_TRUE(CS::setVariable(home, dead, "x", "{'n': 1}", diag));
+
+    CS::Script script;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(CS::Script::compile("x.n = 1;", home, &script, diags, 1), 0u);
+
+    CS::Execution elsewhere(foreign);
+    CS::Diagnostic failure;
+    EXPECT_FALSE(script.run(elsewhere, failure));
+    EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
+}
+
 }  // namespace

@@ -105,6 +105,11 @@ class Expression {
 
     std::string source_;
     Ast ast_;
+
+    /// Id of the Store this unit was compiled against; 0 until compile()
+    /// succeeds. Every eval entry point compares it against the Store the
+    /// Execution runs over and refuses a mismatch — see Store::id().
+    std::uint32_t storeId_ = 0;
 };
 
 }  // namespace CS

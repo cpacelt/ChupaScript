@@ -170,6 +170,21 @@ class Store {
     /// Таблица имён полей этого хранилища.
     [[nodiscard]] KeyTable *keys() const noexcept { return keys_; }
 
+    /// Identity of this Store, unique among all Stores created in this
+    /// process.
+    ///
+    /// A compiled unit records the id of the Store it was compiled against and
+    /// refuses to run on any other one (Expression::eval). Without it a unit
+    /// evaluated on a foreign Context would index that Context's values_ with a
+    /// slot number THIS Store handed out, and return whichever variable happens
+    /// to sit there.
+    ///
+    /// A number rather than the Store's address: an address is reused the
+    /// moment one Store is destroyed and the next is allocated in its place,
+    /// and a unit outliving its Context is exactly the case this check exists
+    /// for.
+    [[nodiscard]] std::uint32_t id() const noexcept { return id_; }
+
     // ─── чтение ───
 
     /// Предусловие: v.kind() == Value::Kind::String.
@@ -290,6 +305,8 @@ class Store {
     /// Удерживается ссылкой: её переживает всякий объект, уехавший к хосту,
     /// поэтому умереть вместе с хранилищем она не вправе.
     KeyTable *keys_;
+
+    const std::uint32_t id_;
 
     // ─── оснастка: литералы единиц ───
     //

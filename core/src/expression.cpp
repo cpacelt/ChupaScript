@@ -5,6 +5,22 @@
 
 namespace CS {
 
+namespace {
+
+/// Rejects a unit that belongs to another Store. The check is unconditional,
+/// not an assert: a release build is exactly where the wrong slot would be
+/// read silently, and a silent wrong value on screen is the failure this
+/// closes.
+bool belongsHere(std::uint32_t unitStoreId, const Execution &exec,
+                 Diagnostic &diag) {
+    if (unitStoreId == exec.persistent().id()) { return true; }
+    diag = Diagnostic{ErrorCode::Usage, 0,
+                      "unit was compiled against another context"};
+    return false;
+}
+
+}  // namespace
+
 std::uint32_t Expression::compile(std::string_view source, Store &store,
                                   Expression *out, Diagnostic *diags,
                                   std::uint32_t capacity) {
@@ -16,12 +32,14 @@ std::uint32_t Expression::compile(std::string_view source, Store &store,
         built.source_.data(), static_cast<std::uint32_t>(built.source_.size()),
         built.ast_, store, diags, capacity);
     if (errors != 0) { return errors; }
+    built.storeId_ = store.id();
     *out = std::move(built);
     return 0;
 }
 
 bool Expression::eval(Execution &exec, Value *out,
                       Diagnostic &diag) const {
+    if (!belongsHere(storeId_, exec, diag)) { return false; }
     return evalExpression(ast_, source_, exec, out, diag);
 }
 
@@ -44,6 +62,7 @@ EvalStatus Expression::evalOfKind(Execution &exec, Value::Kind wanted,
 
 EvalStatus Expression::evalNumber(Execution &exec, double *out,
                                   Diagnostic &diag) const {
+    if (!belongsHere(storeId_, exec, diag)) { return EvalStatus::Error; }
     Value value = Value::null();
     const EvalStatus status = evalOfKind(exec, Value::Kind::Number,
                                          "eval_number: value is not a number",
@@ -54,6 +73,7 @@ EvalStatus Expression::evalNumber(Execution &exec, double *out,
 
 EvalStatus Expression::evalBool(Execution &exec, bool *out,
                                 Diagnostic &diag) const {
+    if (!belongsHere(storeId_, exec, diag)) { return EvalStatus::Error; }
     Value value = Value::null();
     const EvalStatus status = evalOfKind(exec, Value::Kind::Boolean,
                                          "eval_bool: value is not a boolean",
@@ -64,6 +84,7 @@ EvalStatus Expression::evalBool(Execution &exec, bool *out,
 
 EvalStatus Expression::evalString(Execution &exec, std::string_view *out,
                                   Diagnostic &diag) const {
+    if (!belongsHere(storeId_, exec, diag)) { return EvalStatus::Error; }
     Value value = Value::null();
     const EvalStatus status = evalOfKind(exec, Value::Kind::String,
                                          "eval_string: value is not a string",

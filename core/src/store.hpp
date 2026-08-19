@@ -101,9 +101,9 @@ class Store {
 
     // ─── чтение ───
 
-    // Чтение строки сюда не входит и входить не может: строка — box.hpp
-    // StringBox — самодостаточна и читается через свободную функцию
-    // CS::stringBytes, не спрашивая никакое хранилище.
+    // Reading a string is not here and cannot be: a string is box.hpp's
+    // StringBox, self-contained, and reads through the free function
+    // CS::stringBytes without asking any Store.
 
     // Чтение агрегата сюда не входит и входить не может: агрегат
     // самодостаточен, и ни один член хранилища при чтении не участвует

@@ -122,29 +122,31 @@ class Context {
         return Script::compile(source, store_, out, diags, capacity);
     }
 
-    /// Хранилище наружу: состав имён и обход агрегатов нужны и оболочке
-    /// (`:vars`, printValue), и C API. Только для чтения — defect Б2:
-    /// прежде эта дверь отдавала и мутабельную ссылку, и через неё можно было
-    /// записать глобальную переменную в обход setGlobal, минуя границу
-    /// операции этого Context. Мутация идёт через setGlobal,
-    /// setGlobalString, setVariableText; компиляция — через compileExpression
-    /// и compileScript.
+    /// The Store, exposed: the shell (`:vars`, printValue) and the C API both
+    /// need the name list and aggregate traversal it offers. Read-only only —
+    /// defect Б2: this door used to hand out a mutable reference too, and
+    /// through it a global could be written bypassing setGlobal, skipping
+    /// this Context's operation boundary entirely. Mutation goes through
+    /// setGlobal, setGlobalString, setVariableText; compilation goes through
+    /// compileExpression and compileScript.
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
    private:
-    /// Граница операции: список отложенного освобождения сливается.
+    /// Operation boundary: drains the deferred-release list.
     ///
-    /// В начале операции, а не в конце: результат вычисления вправе быть
-    /// коробкой, чью единственную ссылку держит список отложенного
-    /// освобождения, — а вызывающий читает результат сразу после возврата.
-    /// Слив на выходе отнимал бы его ровно в тот момент, когда он нужен.
-    /// Правило для хоста от этого не изменилось: значение годно до следующей
-    /// операции, а чтобы оно жило дольше — надо взять на него ссылку.
+    /// Drained at the start of the operation, not at the end: an eval's
+    /// result may be a box whose only reference is held by the deferred
+    /// list, and the caller reads that result right after the call returns.
+    /// Draining on the way out would take the result away at the exact
+    /// moment it is needed. The rule for the host is unchanged either way: a
+    /// value stays valid only until the next operation; living longer than
+    /// that requires taking a reference to it.
     ///
-    /// Раз на операцию, а не на блок или итерацию цикла: `acc = acc + str(x)`
-    /// внутри `for` держит временное значение, обязанное пережить итерацию.
-    /// Мусор внутри одной операции приходится терпеть — та же сделка, на
-    /// которую шла водяная метка [B1] (docs/backlog.md [B57]).
+    /// Once per operation, not per block or loop iteration: `acc = acc +
+    /// str(x)` inside a `for` holds a temporary that must survive the
+    /// iteration. Garbage accumulating within a single operation is a cost
+    /// this design tolerates — the same trade the watermark [B1] made
+    /// (docs/backlog.md [B57]).
     void beginOperation() noexcept {
         exec_.deferred().drain();
     }

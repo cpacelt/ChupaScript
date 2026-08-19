@@ -130,7 +130,8 @@ TEST(Context, ComputedStringSurvivesBeingStoredInAGlobal) {
     ASSERT_EQ(computed.kind(), CS::Value::Kind::String);
 
     ctx.setGlobal("saved", computed);
-    EXPECT_EQ(CS::stringBytes(ctx.store().global("saved")), "привет, Вася");
+    const CS::Value saved = ctx.store().global("saved");
+    EXPECT_EQ(CS::stringBytes(saved), "привет, Вася");
 }
 
 /// And it stays readable across any number of later operations: a boxed string
@@ -151,7 +152,8 @@ TEST(Context, StoredComputedStringSurvivesLaterOperations) {
         ASSERT_TRUE(ctx.eval(noise, &ignored, diag)) << diag.message;
     }
 
-    EXPECT_EQ(CS::stringBytes(ctx.store().global("saved")), "привет, Вася");
+    const CS::Value saved = ctx.store().global("saved");
+    EXPECT_EQ(CS::stringBytes(saved), "привет, Вася");
 }
 
 #ifndef NDEBUG

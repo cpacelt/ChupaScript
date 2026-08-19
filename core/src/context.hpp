@@ -73,13 +73,14 @@ class Context {
     /// вычисляет, — обычное дело на старте экрана.
     void setGlobal(std::string_view name, Value v) {
         beginOperation();
-        store_.setGlobal(name, exec_.promote(v));
+        store_.setGlobal(name, exec_.promote(v), exec_.deferred());
     }
 
     /// Строка от хоста: укладывается коробкой, потому что переживёт операцию.
     void setGlobalString(std::string_view name, std::string_view text) {
         beginOperation();
-        store_.setGlobal(name, store_.materialize(text));
+        store_.setGlobal(name, CS::materialize(text, exec_.deferred()),
+                         exec_.deferred());
     }
 
     /// Разбор текста от хоста в глобальную переменную. Тоже операция, и по той

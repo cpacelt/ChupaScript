@@ -15,10 +15,11 @@ using CS::Value;
 
 /// Наполнение массива через push: цена удвоений и переездов.
 void BM_Store_ArrayPush(benchmark::State &state) {
+    CS::Deferred dead;
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = CS::makeArray(0, store.deferred());
+        const Value a = CS::makeArray(0, dead);
         for (int i = 0; i < count; ++i) {
             CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
@@ -33,10 +34,11 @@ BENCHMARK(BM_Store_ArrayPush)->Arg(1000);
 
 /// То же с заранее известным размером: столько стоило бы наполнение без роста.
 void BM_Store_ArrayPushReserved(benchmark::State &state) {
+    CS::Deferred dead;
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = CS::makeArray(static_cast<std::uint32_t>(count), store.deferred());
+        const Value a = CS::makeArray(static_cast<std::uint32_t>(count), dead);
         for (int i = 0; i < count; ++i) {
             CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
@@ -50,7 +52,8 @@ BENCHMARK(BM_Store_ArrayPushReserved)->Arg(1000);
 /// Обход массива: цена разыменования через индекс.
 void BM_Store_ArrayTraverse(benchmark::State &state) {
     Store store;
-    const Value a = CS::makeArray(1000, store.deferred());
+    CS::Deferred dead;
+    const Value a = CS::makeArray(1000, dead);
     for (int i = 0; i < 1000; ++i) {
         CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
@@ -67,10 +70,12 @@ void BM_Store_ArrayTraverse(benchmark::State &state) {
 BENCHMARK(BM_Store_ArrayTraverse);
 
 /// Объект заданного размера с ключами вида "keyNN".
-Value makeFilledObject(Store &store, int keys) {
-    const Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys), store.deferred());
+/// dead принадлежит вызывающему: единственная ссылка на новый объект — ссылка
+/// создателя, и слить список здесь значило бы убить его на возврате.
+Value makeFilledObject(Store &store, CS::Deferred &dead, int keys) {
+    const Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys), dead);
     for (int i = 0; i < keys; ++i) {
-        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.deferred());
+        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), dead);
     }
     return o;
 }
@@ -79,7 +84,8 @@ Value makeFilledObject(Store &store, int keys) {
 void BM_Store_ObjectGet(benchmark::State &state) {
     const int keys = static_cast<int>(state.range(0));
     Store store;
-    const Value o = makeFilledObject(store, keys);
+    CS::Deferred dead;
+    const Value o = makeFilledObject(store, dead, keys);
     const std::string last = "key" + std::to_string(keys - 1);
 
     for (auto _ : state) {
@@ -93,10 +99,11 @@ BENCHMARK(BM_Store_ObjectGet)->Arg(3)->Arg(8)->Arg(20);
 /// сдвиг хвоста при каждой вставке есть; в измеряемое время входит и
 /// создание/уничтожение самого Store.
 void BM_Store_ObjectInsert(benchmark::State &state) {
+    CS::Deferred dead;
     const int keys = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value o = makeFilledObject(store, keys);
+        const Value o = makeFilledObject(store, dead, keys);
         std::uint32_t filled = CS::objectCount(o);
         benchmark::DoNotOptimize(filled);
     }

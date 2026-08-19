@@ -23,15 +23,13 @@ struct GlobalName {
 
 }  // namespace detail
 
-Store::Store() : keys_(KeyTable::create()), deferred_(&owned_) {}
-
-Store::Store(Deferred &shared) : keys_(nullptr), deferred_(&shared) {}
+Store::Store(Role role)
+    : keys_(role == Role::Globals ? KeyTable::create() : nullptr) {}
 
 Store::~Store() {
-    // Порядок важен: сначала ссылки, потом оснастка. Коробка объекта отпускает
-    // таблицу имён сама, и делать это надо, пока она ещё жива.
-    drainPending();
-    // На месте, а не в список: границы операции больше не будет.
+    // На месте, а не в список: границы операции больше не будет, да и списка
+    // здесь больше нет — он принадлежит выполнению, и то умирает раньше
+    // (Context объявляет его после хранилища).
     for (Value v : globalValues_) { detail::releaseValue(v); }
     for (detail::StringBox *literal : literals_) { detail::release(literal); }
     // У арены операции таблицы нет вовсе — отпускать нечего.
@@ -75,12 +73,6 @@ std::string_view Store::textAt(std::uint32_t offset,
 Value Store::makeString(std::string_view bytes) {
     const std::uint32_t offset = appendText(bytes);
     return Value::scratchString(offset, static_cast<std::uint32_t>(bytes.size()));
-}
-
-Value Store::materialize(std::string_view bytes) {
-    detail::StringBox *box = detail::makeStringBox(bytes);
-    deferred_->take(box);  // ссылка создателя — до ближайшей границы
-    return Value::string(box, box->len);
 }
 
 detail::StringBox *Store::internLiteral(std::string_view bytes) {
@@ -185,7 +177,7 @@ bool Store::hasGlobal(std::string_view name) const noexcept {
     return found;
 }
 
-void Store::setGlobal(std::string_view name, Value v) {
+void Store::setGlobal(std::string_view name, Value v, Deferred &dead) {
     assert(detail::materialized(v) && "строка временного региона не материализована");
 
     bool found = false;
@@ -196,7 +188,7 @@ void Store::setGlobal(std::string_view name, Value v) {
         // отпускает, и без этого повторное присваивание растило бы память
         // вечно.
         Value &slot = globalValues_[globalNames_[at].slot];
-        deferred_->take(slot);
+        dead.take(slot);
         slot = v;
         return;
     }

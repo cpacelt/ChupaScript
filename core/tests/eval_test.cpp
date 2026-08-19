@@ -75,8 +75,9 @@ std::string_view evalText(CS::Execution &exec, std::string_view text) {
 
 /// Кладёт глобальную переменную; требует успеха.
 void put(Store &store, std::string_view name, std::string_view text) {
+    CS::Deferred dead;
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, name, text, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(store, dead, name, text, diag)) << diag.message;
 }
 
 TEST(EvalLiterals, NumberIsEvaluated) {
@@ -1080,7 +1081,7 @@ TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
     // это тот же массив (docs/semantics.md §2.3).
     put(store, "state", "{'items': [1, 2]}");
     const Value items = CS::objectGet(store.global("state"), "items");
-    store.setGlobal("shortcut", items);
+    store.setGlobal("shortcut", items, exec.deferred());
 
     run(exec, "state.items[0] = 99;");
     EXPECT_EQ(evaluate(exec, "shortcut[0]").numberValue(), 99.0);
@@ -1312,7 +1313,7 @@ TEST(EvalCall, PushAndPopAreVisibleThroughAnAlias) {
     CS::Execution exec(store);
     put(store, "state", "{'items': [1]}");
     const Value items = CS::objectGet(store.global("state"), "items");
-    store.setGlobal("shortcut", items);
+    store.setGlobal("shortcut", items, exec.deferred());
     // docs/semantics.md §2.3: мутация через один путь видна через второй.
     run(exec, "push(state.items, 2);");
     EXPECT_EQ(evaluate(exec, "count(shortcut)").numberValue(), 2.0);

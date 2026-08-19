@@ -12,10 +12,11 @@
 namespace {
 
 TEST(Script, CompilesAndRuns) {
+    CS::Deferred dead;
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "user", "{'name': 'Вася'}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "user", "{'name': 'Вася'}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -31,6 +32,7 @@ TEST(Script, CompilesAndRuns) {
 }
 
 TEST(Script, OwnsItsSource) {
+    CS::Deferred dead;
     // Прямое присваивание имени переменной запрещено языком
     // (core/src/check.cpp: "cannot assign to a variable name",
     // docs/semantics.md §7.2) — целью обязана быть Member/Index. Поэтому
@@ -40,7 +42,7 @@ TEST(Script, OwnsItsSource) {
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "obj", "{'n': 1}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -73,13 +75,14 @@ TEST(Script, ReportsUnknownName) {
 }
 
 TEST(Script, SurvivesBeingMoved) {
+    CS::Deferred dead;
     // Тот же манёвр, что Expression.SurvivesBeingMoved (review round 2, M3):
     // *out = std::move(built) в script.cpp — отдельная строка кода, зелень
     // соседнего теста про Expression о ней ничего не говорит.
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "obj", "{'n': 1}", diag));
 
     std::vector<CS::Script> units;
     units.reserve(1);
@@ -97,10 +100,11 @@ TEST(Script, SurvivesBeingMoved) {
 }
 
 TEST(Script, RecompileReplacesEverything) {
+    CS::Deferred dead;
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "obj", "{'n': 1}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -117,12 +121,13 @@ TEST(Script, RecompileReplacesEverything) {
 }
 
 TEST(Script, FailedCompileDoesNotTouchOut) {
+    CS::Deferred dead;
     // Контракт «неудачная компиляция не портит *out» (script.hpp) не
     // покрыт ничем другим (review round 2, I1).
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "obj", "{'n': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "obj", "{'n': 1}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[2];

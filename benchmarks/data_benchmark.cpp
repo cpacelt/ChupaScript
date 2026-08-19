@@ -18,6 +18,7 @@ using CS::Value;
 
 /// Плоский объект из десяти полей — типичная переменная экрана.
 void BM_Data_FlatObject(benchmark::State &state) {
+    CS::Deferred dead;
     const std::string text =
         "{'id': 1, 'name': 'Вася', 'age': 30, 'active': true, 'score': 4.5,"
         " 'city': 'Москва', 'tag': null, 'rank': -2, 'level': 7, 'code': 'A1'}";
@@ -25,7 +26,7 @@ void BM_Data_FlatObject(benchmark::State &state) {
     for (auto _ : state) {
         Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(store, "user", text, diag);
+        bool ok = CS::setVariable(store, dead, "user", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -36,6 +37,7 @@ BENCHMARK(BM_Data_FlatObject);
 
 /// Массив из ста чисел — типичный список.
 void BM_Data_NumberArray(benchmark::State &state) {
+    CS::Deferred dead;
     std::string text = "[";
     for (int i = 0; i < 100; ++i) {
         if (i > 0) { text += ", "; }
@@ -46,7 +48,7 @@ void BM_Data_NumberArray(benchmark::State &state) {
     for (auto _ : state) {
         Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(store, "items", text, diag);
+        bool ok = CS::setVariable(store, dead, "items", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -57,11 +59,12 @@ BENCHMARK(BM_Data_NumberArray);
 
 /// Строка без экранирования против строки с ним: цена временного буфера.
 void BM_Data_PlainString(benchmark::State &state) {
+    CS::Deferred dead;
     const std::string text = "'" + std::string(200, 'x') + "'";
     for (auto _ : state) {
         Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(store, "s", text, diag);
+        bool ok = CS::setVariable(store, dead, "s", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -69,6 +72,7 @@ void BM_Data_PlainString(benchmark::State &state) {
 BENCHMARK(BM_Data_PlainString);
 
 void BM_Data_EscapedString(benchmark::State &state) {
+    CS::Deferred dead;
     std::string body;
     for (int i = 0; i < 100; ++i) { body += "x\\n"; }
     const std::string text = "'" + body + "'";
@@ -76,7 +80,7 @@ void BM_Data_EscapedString(benchmark::State &state) {
     for (auto _ : state) {
         Store store;
         Diagnostic diag;
-        bool ok = CS::setVariable(store, "s", text, diag);
+        bool ok = CS::setVariable(store, dead, "s", text, diag);
         if (!ok) { state.SkipWithError("setVariable failed"); return; }
         benchmark::DoNotOptimize(ok);
     }
@@ -85,12 +89,13 @@ BENCHMARK(BM_Data_EscapedString);
 
 /// Поиск глобальной переменной при разном числе имён.
 void BM_Data_GlobalLookup(benchmark::State &state) {
+    CS::Deferred dead;
     const int names = static_cast<int>(state.range(0));
     Store store;
     Diagnostic diag;
     for (int i = 0; i < names; ++i) {
         const std::string name = "var" + std::to_string(i);
-        if (!CS::setVariable(store, name, "1", diag)) {
+        if (!CS::setVariable(store, dead, name, "1", diag)) {
             state.SkipWithError("setVariable failed");
             return;
         }

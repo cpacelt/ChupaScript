@@ -240,7 +240,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 // materialize, а не makeString: строка ложится в агрегат, а
                 // агрегат — узел и умеет пережить операцию. Смещение в арену
                 // он бы не пережил.
-                arrayPush(result, exec.scratch.materialize(CS::objectKeyAt(args[0], i)));
+                arrayPush(result, CS::materialize(CS::objectKeyAt(args[0], i), exec.deferred()));
             }
             *out = result;
             return true;

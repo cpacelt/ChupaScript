@@ -21,9 +21,10 @@ CS::Expression compileIn(CS::Context &ctx, std::string_view source) {
 }
 
 TEST(Context, EvaluatesInTheStoreItHandsOut) {
+    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "user", "{'name': 'Вася'}", diag));
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "user", "{'name': 'Вася'}", diag));
 
     const CS::Expression expr = compileIn(ctx, "user.name");
     CS::Value out = CS::Value::null();
@@ -36,9 +37,10 @@ TEST(Context, EvaluatesInTheStoreItHandsOut) {
 }
 
 TEST(Context, ScriptChangesAreVisibleThroughTheStore) {
+    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "state", "{'count': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'count': 1}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -73,9 +75,10 @@ TEST(Context, TypedEvalsReachTheSameExpression) {
 }
 
 TEST(Context, ReportsEvaluationFailure) {
+    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "state", "{'items': [1]}", diag));
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'items': [1]}", diag));
 
     // Отрицательный индекс: разбор и проверка проходят, падает вычисление —
     // то есть diag заполняет именно этот путь. Ни отсутствующий ключ, ни
@@ -116,9 +119,10 @@ TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
 }
 
 TEST(Context, ScriptAlsoOpensAnOperation) {
+    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "state", "{'n': 0}", diag));
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'n': 0}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -160,11 +164,12 @@ TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
 }
 
 TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
+    CS::Deferred dead;
     // Единственный способ вырастить массив в языке. Раньше каждый push
     // переносил его в хвост пула, бросая прежний диапазон мусором.
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[]", diag)) << diag.message;
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[]", diag)) << diag.message;
 
     CS::Script script;
     CS::Diagnostic diags[1];
@@ -183,13 +188,14 @@ TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
 }
 
 TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
+    CS::Deferred dead;
     // То, ради чего всё это: значение, отданное наружу, не зависит от того,
     // жив контекст или нет. Хост берёт ссылку и отпускает её сам.
     CS::Value escaped = CS::Value::null();
     {
         CS::Context ctx;
         CS::Diagnostic diag;
-        ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[1, 2, 3]", diag))
+        ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[1, 2, 3]", diag))
             << diag.message;
 
         const CS::Expression expr = compileIn(ctx, "rows");
@@ -206,11 +212,12 @@ TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
 }
 
 TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
+    CS::Deferred dead;
     CS::Value escaped = CS::Value::null();
     {
         CS::Context ctx;
         CS::Diagnostic diag;
-        ASSERT_TRUE(CS::setVariable(ctx.store(), "user", "{'name': 'Вася'}", diag))
+        ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "user", "{'name': 'Вася'}", diag))
             << diag.message;
         const CS::Expression expr = compileIn(ctx, "user");
         ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
@@ -225,11 +232,12 @@ TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
 }
 
 TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
+    CS::Deferred dead;
     // Строка собирается в арене операции, а границу переживает коробкой — ровно
     // то правило, ради которого укладка в агрегат материализует строку.
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), "rows", "[]", diag)) << diag.message;
+    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[]", diag)) << diag.message;
 
     CS::Script script;
     CS::Diagnostic diags[1];

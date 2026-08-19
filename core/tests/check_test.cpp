@@ -22,8 +22,9 @@ using CS::Diagnostic;
 
 /// Кладёт переменную с данными.
 void put(Store &store, std::string_view name, std::string_view text) {
+    CS::Deferred dead;
     Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, name, text, diag)) << diag.message;
+    ASSERT_TRUE(CS::setVariable(store, dead, name, text, diag)) << diag.message;
 }
 
 /// Компилирует выражение и возвращает найденные ошибки.
@@ -187,8 +188,9 @@ TEST(Check, MisspelledKeyIsNotAnErrorAtAnyStage) {
 
 TEST(Check, NamesAreCheckedAgainstCompositionNotValues) {
     Store store;
+    CS::Deferred dead;
     // Валидатору достаточно состава имён: значения не нужны.
-    store.setGlobal("user", CS::Value::null());
+    store.setGlobal("user", CS::Value::null(), dead);
     EXPECT_TRUE(checkExpr(store, "user.profile.city").empty());
     EXPECT_EQ(checkExpr(store, "usre.profile").size(), 1u);
 }

@@ -1,4 +1,6 @@
 #pragma once
+#include "aggregate.hpp"
+#include "deferred.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -28,14 +30,10 @@ namespace CS {
 /// хранилищем на всю жизнь.
 class Execution {
    public:
-    /// Арена берёт у постоянного хранилища только список отложенного
-    /// освобождения: сливаются они всё равно вместе, на одной границе.
-    ///
-    /// Таблицу имён она больше не удерживает. Нужна та ровно одному — тому,
-    /// кто создаёт объект, — и берёт он её теперь у владельца через
-    /// Execution::keys(), а не у арены дубликатом указателя.
+    /// Арена не берёт у постоянного хранилища ничего: общего у них не
+    /// осталось ни одного члена.
     explicit Execution(Store &persistent) noexcept
-        : scratch(persistent.deferred()), persistent_(persistent) {}
+        : scratch(Store::Role::Arena), persistent_(persistent) {}
 
     Execution(const Execution &) = delete;
     Execution &operator=(const Execution &) = delete;
@@ -69,17 +67,31 @@ class Execution {
     ///
     /// Звать надо перед укладкой в агрегат либо в глобальную переменную.
     /// Агрегат арены — такая же коробка и умеет уехать, продвигать его незачем.
-    [[nodiscard]] Value promote(Value v) { return scratch.promote(v); }
+    ///
+    /// Живёт здесь, а не у хранилища, потому что берёт по одному от каждой
+    /// половины выполнения: смещение читает та арена, что его выдала, а ссылку
+    /// на новую коробку принимает список этого же выполнения.
+    [[nodiscard]] Value promote(Value v) {
+        if (detail::materialized(v)) { return v; }
+        return CS::materialize(scratch.string(v), deferred_);
+    }
 
-    /// Список отложенного освобождения этого выполнения. Один на оба
-    /// хранилища — см. deferred.hpp.
-    [[nodiscard]] Deferred &deferred() noexcept { return scratch.deferred(); }
+    /// Список отложенного освобождения этого выполнения — один на оба
+    /// хранилища (см. deferred.hpp).
+    ///
+    /// Прямой член, а не указатель в хранилище. Пока список лежал там, арена
+    /// держала на него указатель, и всякое обращение стоило разыменования на
+    /// пути, по которому ходит каждое присваивание.
+    [[nodiscard]] Deferred &deferred() noexcept { return deferred_; }
 
     /// Таблица имён полей контекста — та единственная, что есть. Нужна тому,
     /// кто создаёт объект (CS::makeObject); владеет ею постоянное хранилище.
     [[nodiscard]] KeyTable *keys() const noexcept { return persistent_.keys(); }
 
    private:
+    /// Объявлен после арены и до ссылки на хранилище: разрушается раньше
+    /// обоих, а значит отпускает всё, что накопил, пока живы и та и другое.
+    Deferred deferred_;
     Store &persistent_;
 };
 

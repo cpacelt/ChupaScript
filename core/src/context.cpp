@@ -45,7 +45,7 @@ EvalStatus Context::evalString(const Expression &expr, std::string_view *out,
 bool Context::setVariableText(std::string_view name, std::string_view text,
                               Diagnostic &diag) {
     beginOperation();
-    return setVariable(store_, name, text, diag);
+    return setVariable(store_, exec_.deferred(), name, text, diag);
 }
 
 bool Context::run(const Script &script, Diagnostic &diag) {

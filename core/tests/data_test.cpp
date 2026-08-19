@@ -17,8 +17,9 @@ using CS::Value;
 
 /// Кладёт значение и требует успеха; возвращает то, что легло.
 Value put(Store &store, std::string_view name, std::string_view text) {
+    CS::Deferred dead;
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, name, text, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(store, dead, name, text, diag)) << diag.message;
     return store.global(name);
 }
 
@@ -53,40 +54,44 @@ TEST(DataScalars, VeryLongIntegerBecomesInfinity) {
 }
 
 TEST(DataNames, IdentifierIsAccepted) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, "user_2", "1", diag));
-    EXPECT_TRUE(CS::setVariable(store, "_private", "1", diag));
+    EXPECT_TRUE(CS::setVariable(store, dead, "user_2", "1", diag));
+    EXPECT_TRUE(CS::setVariable(store, dead, "_private", "1", diag));
 }
 
 TEST(DataNames, NonIdentifierIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
     // Корень, который программа не может написать, бесполезен.
-    EXPECT_FALSE(CS::setVariable(store, "content-type", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "content-type", "1", diag));
     EXPECT_EQ(diag.code, ErrorCode::Name);
-    EXPECT_FALSE(CS::setVariable(store, "2fa", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, " state", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "state ", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "имя", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "2fa", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, " state", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "state ", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "имя", "1", diag));
     EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataNames, ReservedWordIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
     // docs/grammar.md §4.5: ключевое слово идентификатором не является.
-    EXPECT_FALSE(CS::setVariable(store, "null", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "true", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "while", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "null", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "true", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "while", "1", diag));
     EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataFailure, SyntaxErrorLeavesNoGlobal) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(store, "broken", "3 3", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "broken", "3 3", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
     EXPECT_FALSE(store.hasGlobal("broken"));
     EXPECT_EQ(store.globalCount(), 0u);
@@ -127,22 +132,25 @@ TEST(DataMinus, NegativeZeroKeepsItsSign) {
 }
 
 TEST(DataMinus, MinusOverNonNumberIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(store, "bad", "-'abc'", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "bad", "-'abc'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataMinus, BangIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(store, "worse", "!true", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "worse", "!true", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_EQ(store.globalCount(), 0u);
 }
 
 TEST(DataMinus, DoubleMinusIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
     // "--3" — минус над узлом Unary, а не над Number: материализация
@@ -150,7 +158,7 @@ TEST(DataMinus, DoubleMinusIsRejected) {
     // второй минус упирается в общее правило "выражение — не данные", а не
     // в частный случай "минус не над числом". Поведение разумное, но нигде
     // не было зафиксировано тестом.
-    EXPECT_FALSE(CS::setVariable(store, "v", "--3", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "v", "--3", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_EQ(store.globalCount(), 0u);
 }
@@ -188,11 +196,12 @@ TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
 }
 
 TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
     // docs/grammar.md §8 и §4.7: юникодных escape в языке нет — внешний
     // уровень снимает хост, и до нас доезжают готовые байты.
-    EXPECT_FALSE(CS::setVariable(store, "s", "'\\u0041'", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "s", "'\\u0041'", diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
@@ -267,6 +276,7 @@ TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
 }
 
 TEST(DataAggregates, NestingLimit) {
+    CS::Deferred dead;
     Store store;
     // docs/superpowers/specs/2026-08-11-chupascript-data-design.md §4:
     // предел вложенности агрегатов — тот же, что у парсера, 169 уровней.
@@ -275,27 +285,29 @@ TEST(DataAggregates, NestingLimit) {
     nested169 += "1";
     nested169 += std::string(169, ']');
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, "ok", nested169, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(store, dead, "ok", nested169, diag)) << diag.message;
 
     std::string nested170(170, '[');
     nested170 += "1";
     nested170 += std::string(170, ']');
-    EXPECT_FALSE(CS::setVariable(store, "bad", nested170, diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "bad", nested170, diag));
     EXPECT_EQ(diag.code, ErrorCode::Syntax);
 }
 
 TEST(DataAggregates, ExpressionInsideAggregateIsRejected) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(store, "a", "[1, count(x), 3]", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "a", "[1, count(x), 3]", diag));
     EXPECT_EQ(diag.code, ErrorCode::Data);
     EXPECT_FALSE(store.hasGlobal("a"));
 }
 
 /// Требует отказа и возвращает диагностику.
 Diagnostic reject(Store &store, std::string_view text) {
+    CS::Deferred dead;
     Diagnostic diag;
-    EXPECT_FALSE(CS::setVariable(store, "v", text, diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "v", text, diag));
     return diag;
 }
 
@@ -382,10 +394,11 @@ TEST(DataRejects, ExponentIsNotANumber) {
 }
 
 TEST(DataRejects, FailedSetLeavesPreviousValueIntact) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "v", "1", diag));
-    EXPECT_FALSE(CS::setVariable(store, "v", "user.name", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "v", "1", diag));
+    EXPECT_FALSE(CS::setVariable(store, dead, "v", "user.name", diag));
     // Отказ не трогает того, что уже лежало.
     EXPECT_EQ(store.global("v").numberValue(), 1.0);
     EXPECT_EQ(store.globalCount(), 1u);

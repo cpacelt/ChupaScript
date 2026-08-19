@@ -16,11 +16,12 @@ namespace {
 // брифа: там storeWithUser() возвращала CS::Store по значению, что не
 // компилируется против core/src/store.hpp (see task-2-report.md).
 void storeWithUser(CS::Store &store) {
+    CS::Deferred dead;
     CS::Diagnostic diag;
     // ASSERT, а не EXPECT: если setVariable откажет, продолжать тест не
     // имеет смысла — дальше он упал бы непонятным «unknown name» из
     // compile, а не в этой точке (review round 2, M2).
-    ASSERT_TRUE(CS::setVariable(store, "user", "{'name': 'Вася'}", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "user", "{'name': 'Вася'}", diag));
 }
 
 TEST(Expression, CompilesAndEvaluates) {
@@ -200,10 +201,11 @@ TEST(Expression, EvalBoolAndString) {
 }
 
 TEST(Expression, EvalStringPropagatesEvalError) {
+    CS::Deferred dead;
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, "items", "[1]", diag));
+    ASSERT_TRUE(CS::setVariable(store, dead, "items", "[1]", diag));
 
     CS::Expression expr;
     CS::Diagnostic diags[1];

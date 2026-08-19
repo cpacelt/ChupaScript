@@ -105,6 +105,22 @@ namespace CS {
 // Таблица теперь приходит параметром от того, кто её и так держит, а ссылка
 // создателя — в список, которому она с самого начала и предназначалась.
 
+/// Кладёт байты в коробку со счётчиком.
+///
+/// Нужна там, где строке предстоит пережить операцию: лечь в агрегат, в ячейку
+/// глобальной переменной либо уехать к хосту. Смещение в арену туда не годится
+/// — арену граница сбрасывает.
+///
+/// Свободная по той же причине, что и всё вокруг: ни одного члена хранилища
+/// она не читала и раньше. Методом Store она оставалась ровно затем, чтобы
+/// достать список отложенного освобождения, — а тот теперь приходит
+/// параметром от выполнения, которому и принадлежит.
+[[nodiscard]] inline Value materialize(std::string_view bytes, Deferred &dead) {
+    detail::StringBox *box = detail::makeStringBox(bytes);
+    dead.take(box);  // ссылка создателя — до ближайшей границы
+    return Value::string(box, box->len);
+}
+
 /// Создаёт пустой массив. capacity — сколько элементов выделить заранее; на
 /// длину не влияет, элементы добавляет только arrayPush.
 ///
@@ -112,7 +128,7 @@ namespace CS {
 /// ближайшей границе операции, а не повиснет.
 [[nodiscard]] inline Value makeArray(std::uint32_t capacity, Deferred &dead) {
     detail::ArrayBox *box = detail::makeArrayBox(capacity);
-    dead.take(box);
+    dead.take(box);  // ссылка создателя — до ближайшей границы
     return Value::array(box);
 }
 
@@ -124,7 +140,7 @@ namespace CS {
 [[nodiscard]] inline Value makeObject(KeyTable *keys, std::uint32_t capacity,
                                       Deferred &dead) {
     detail::ObjectBox *box = detail::makeObjectBox(keys, capacity);
-    dead.take(box);
+    dead.take(box);  // ссылка создателя — до ближайшей границы
     return Value::object(box);
 }
 

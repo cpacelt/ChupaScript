@@ -139,6 +139,7 @@ std::string_view trim(std::string_view text) {
 /// (docs/superpowers/specs/2026-08-11-chupascript-data-design.md §3). В
 /// оболочке это ограничение встречается первым, поэтому отказ поясняется.
 void runSet(CS::Store &store, std::string_view argument) {
+    CS::Deferred dead;
     const std::size_t equals = argument.find('=');
     if (equals == std::string_view::npos) {
         std::cout << "error: usage is :set <name> = <literal>\n";
@@ -152,7 +153,7 @@ void runSet(CS::Store &store, std::string_view argument) {
     }
 
     CS::Diagnostic diag;
-    if (CS::setVariable(store, name, text, diag)) { return; }
+    if (CS::setVariable(store, dead, name, text, diag)) { return; }
 
     std::cout << "error: " << diag.message << "\n";
     if (diag.code == CS::ErrorCode::Data) {

@@ -19,8 +19,9 @@ using CS::Value;
 
 /// Кладёт переменную и возвращает её значение.
 Value put(Store &store, std::string_view name, std::string_view text) {
+    CS::Deferred dead;
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, name, text, diag)) << diag.message;
+    EXPECT_TRUE(CS::setVariable(store, dead, name, text, diag)) << diag.message;
     return store.global(name);
 }
 
@@ -78,10 +79,11 @@ TEST(PrintValue, NestedAggregates) {
 }
 
 TEST(PrintValue, SelfReferencingObjectTerminates) {
+    CS::Deferred dead;
     CS::Context ctx;
     Store &store = ctx.store();
     const Value o = put(store, "o", "{'n': 1}");
-    CS::objectSet(o, "self", o, store.deferred());
+    CS::objectSet(o, "self", o, dead);
     // docs/semantics.md §2.3 объявляет такую программу корректной; печатник
     // обязан завершиться, а не зациклиться.
     EXPECT_EQ(chupa::printValue(ctx, o), "{'n': 1, 'self': {...}}");
@@ -96,12 +98,13 @@ TEST(PrintValue, SelfReferencingArrayTerminates) {
 }
 
 TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
+    CS::Deferred dead;
     CS::Context ctx;
     Store &store = ctx.store();
     const Value shared = put(store, "shared", "[1, 2]");
     const Value holder = put(store, "holder", "{}");
-    CS::objectSet(holder, "a", shared, store.deferred());
-    CS::objectSet(holder, "b", shared, store.deferred());
+    CS::objectSet(holder, "a", shared, dead);
+    CS::objectSet(holder, "b", shared, dead);
     // Один агрегат под двумя ключами — не цикл. Отслеживается путь печати, а
     // не всё виденное, поэтому оба вхождения печатаются целиком.
     EXPECT_EQ(chupa::printValue(ctx, holder), "{'a': [1, 2], 'b': [1, 2]}");
@@ -130,12 +133,13 @@ TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
 }
 
 TEST(PrintValue, MutualCycleTerminates) {
+    CS::Deferred dead;
     CS::Context ctx;
     Store &store = ctx.store();
     const Value a = put(store, "a", "{}");
     const Value b = put(store, "b", "{}");
-    CS::objectSet(a, "b", b, store.deferred());
-    CS::objectSet(b, "a", a, store.deferred());
+    CS::objectSet(a, "b", b, dead);
+    CS::objectSet(b, "a", a, dead);
     // Цикл длиной два: путь ловит и его.
     EXPECT_EQ(chupa::printValue(ctx, a), "{'b': {'a': {...}}}");
 }

@@ -30,13 +30,14 @@ using CS::Value;
 
 /// Наполняет хранилище данными, на которых меряются пути.
 bool fill(Store &store) {
+    CS::Deferred dead;
     Diagnostic diag;
-    return CS::setVariable(store, "user",
+    return CS::setVariable(store, dead, "user",
                            "{'name': 'Вася', 'profile': {'city': {'code': "
                            "{'zip': 101000}}}}",
                            diag) &&
-           CS::setVariable(store, "items", "[10, 20, 30]", diag) &&
-           CS::setVariable(store, "map", "{'0': 'zero', '1': 'one'}", diag);
+           CS::setVariable(store, dead, "items", "[10, 20, 30]", diag) &&
+           CS::setVariable(store, dead, "map", "{'0': 'zero', '1': 'one'}", diag);
 }
 
 /// Общая часть: наполнить контекст, скомпилировать выражение, мерить вычисление.
@@ -210,15 +211,16 @@ BENCHMARK(BM_Eval_DeepChain);
 /// Общая часть для чувствительности к числу имён: то же выражение, но в
 /// хранилище лежит names глобальных переменных, а нужная — последняя.
 void runEvalWithGlobals(benchmark::State &state, int names) {
+    CS::Deferred dead;
     CS::Context ctx;
     Diagnostic diag;
     for (int i = 0; i < names; ++i) {
-        if (!CS::setVariable(ctx.store(), "var" + std::to_string(i), "1", diag)) {
+        if (!CS::setVariable(ctx.store(), dead, "var" + std::to_string(i), "1", diag)) {
             state.SkipWithError("setVariable failed");
             return;
         }
     }
-    if (!CS::setVariable(ctx.store(), "zzz_user", "{'name': 'Вася'}", diag)) {
+    if (!CS::setVariable(ctx.store(), dead, "zzz_user", "{'name': 'Вася'}", diag)) {
         state.SkipWithError("setVariable failed");
         return;
     }
@@ -700,12 +702,13 @@ void BM_Eval_String_New(benchmark::State &state, std::string_view value) {
 
 /// То же вычисление напрямую через ядро, мимо границы C.
 void BM_Eval_String_Old(benchmark::State &state, std::string_view value) {
+    CS::Deferred dead;
     Store store;
     Diagnostic diag;
     // setVariable понимает синтаксис языка, а не JSON: строка в одинарных
     // кавычках — обычный строковый литерал.
     const std::string literal = "'" + std::string(value) + "'";
-    if (!CS::setVariable(store, "s", literal, diag)) {
+    if (!CS::setVariable(store, dead, "s", literal, diag)) {
         state.SkipWithError("setVariable failed");
         return;
     }

@@ -106,10 +106,13 @@ namespace {
 
 /// Объект с этими ключами, собранный через хранилище, — чтобы порядок пар
 /// заводил сам objectSet, а не тест.
-CS::Value objectWith(CS::Store &store, std::initializer_list<std::string_view> keys) {
-    CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), store.deferred());
+/// dead принадлежит вызывающему намеренно: единственная ссылка на новый объект
+/// — ссылка создателя, и слить список здесь значило бы убить его на возврате.
+CS::Value objectWith(CS::Store &store, CS::Deferred &dead,
+                     std::initializer_list<std::string_view> keys) {
+    CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), dead);
     double n = 0.0;
-    for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), store.deferred()); }
+    for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), dead); }
     return o;
 }
 
@@ -135,10 +138,11 @@ TEST(KeyPrefix, OrdersLikeTheBytesItPacks) {
 }
 
 TEST(KeyPrefix, EqualPrefixesFallThroughToTheBytes) {
+    CS::Deferred dead;
     // Имена, совпадающие в первых четырёх байтах, префиксом не различаются
     // вовсе — и поиск обязан находить каждое.
     CS::Store store;
-    const CS::Value o = objectWith(store, {"labelA", "labelB", "label"});
+    const CS::Value o = objectWith(store, dead, {"labelA", "labelB", "label"});
     EXPECT_EQ(CS::detail::keyPrefix("labelA"), CS::detail::keyPrefix("labelB"));
     EXPECT_DOUBLE_EQ(CS::objectGet(o, "labelA").numberValue(), 0.0);
     EXPECT_DOUBLE_EQ(CS::objectGet(o, "labelB").numberValue(), 1.0);
@@ -147,10 +151,11 @@ TEST(KeyPrefix, EqualPrefixesFallThroughToTheBytes) {
 }
 
 TEST(KeyPrefix, ShortKeysStayDistinct) {
+    CS::Deferred dead;
     // Пустой ключ, однобайтовый и трёхбайтовый живут в одном объекте: у всех
     // префикс добит нулями, и спутать их нельзя.
     CS::Store store;
-    const CS::Value o = objectWith(store, {"", "a", "abc", "abcd"});
+    const CS::Value o = objectWith(store, dead, {"", "a", "abc", "abcd"});
     EXPECT_EQ(CS::objectCount(o), 4u);
     EXPECT_DOUBLE_EQ(CS::objectGet(o, "").numberValue(), 0.0);
     EXPECT_DOUBLE_EQ(CS::objectGet(o, "a").numberValue(), 1.0);

@@ -1,6 +1,7 @@
 #pragma once
 #include <string_view>
 
+#include "deferred.hpp"
 #include "diagnostic.hpp"
 #include "store.hpp"
 
@@ -32,7 +33,9 @@ bool isGlobalName(std::string_view name) noexcept;
 /// При отказе возвращает false, заполняет diag и не заводит глобальной переменной. Смещение в
 /// diag считается от начала text — кроме ErrorCode::Name, для которой
 /// смещение не определено (имя не является частью text).
-bool setVariable(Store &store, std::string_view name, std::string_view text,
-                 Diagnostic &diag);
+/// dead принимает ссылки создателя у построенных коробок и вытесненное
+/// значение ячейки: список принадлежит выполнению, а не хранилищу.
+bool setVariable(Store &store, Deferred &dead, std::string_view name,
+                 std::string_view text, Diagnostic &diag);
 
 }  // namespace CS

@@ -22,8 +22,11 @@ bool rejectNode(const Ast &ast, NodeId node, Diagnostic &diag) {
     return false;
 }
 
-bool materialize(const Ast &ast, std::string_view source, NodeId node,
-                 Store &store, Value *out, Diagnostic &diag) {
+/// Строит значение по узлу литерала. Названа не materialize — так теперь
+/// зовётся свободная функция, кладущая строку в коробку (aggregate.hpp), и
+/// одноимённая рекурсия рядом с ней читалась бы как её же вызов.
+bool buildValue(const Ast &ast, std::string_view source, NodeId node,
+                Store &store, Deferred &dead, Value *out, Diagnostic &diag) {
     switch (ast.kind(node)) {
         case NodeKind::Number:
             *out = Value::number(ast.numberValue(node));
@@ -42,7 +45,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
             // глобальную переменную и обязаны пережить операцию, а региона
             // хранилища этот разбор не спрашивает вовсе.
             std::string scratch;
-            *out = store.materialize(literalText(ast, node, source, scratch));
+            *out = CS::materialize(literalText(ast, node, source, scratch), dead);
             return true;
         }
 
@@ -66,10 +69,10 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
             const std::uint32_t count = ast.childCount(node);
             // Размер известен заранее, поэтому ёмкость выделяется точно и
             // построение не оставляет мусора.
-            const Value array = CS::makeArray(count, store.deferred());
+            const Value array = CS::makeArray(count, dead);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
-                if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
+                if (!buildValue(ast, source, ast.child(node, i), store, dead, &element, diag)) {
                     return false;
                 }
                 arrayPush(array, element);
@@ -81,17 +84,17 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
         case NodeKind::Object: {
             // Дети чередуются: ключ, значение, ключ, значение.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = CS::makeObject(store.keys(), count / 2, store.deferred());
+            const Value object = CS::makeObject(store.keys(), count / 2, dead);
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
-                if (!materialize(ast, source, ast.child(node, i + 1), store, &value, diag)) {
+                if (!buildValue(ast, source, ast.child(node, i + 1), store, dead, &value, diag)) {
                     return false;
                 }
                 // Повторный ключ заменяет значение: последний выигрывает.
                 objectSet(object,
                           literalText(ast, ast.child(node, i), source, scratch),
-                          value, store.deferred());
+                          value, dead);
             }
             *out = object;
             return true;
@@ -122,8 +125,8 @@ bool isGlobalName(std::string_view name) noexcept {
     return tail.kind == TokenKind::End;
 }
 
-bool setVariable(Store &store, std::string_view name, std::string_view text,
-                 Diagnostic &diag) {
+bool setVariable(Store &store, Deferred &dead, std::string_view name,
+                 std::string_view text, Diagnostic &diag) {
     if (!isGlobalName(name)) {
         diag = Diagnostic{ErrorCode::Name, 0, "global name must be an identifier"};
         return false;
@@ -144,10 +147,10 @@ bool setVariable(Store &store, std::string_view name, std::string_view text,
     }
 
     Value value = Value::null();
-    if (!materialize(ast, text, ast.root(), store, &value, diag)) { return false; }
+    if (!buildValue(ast, text, ast.root(), store, dead, &value, diag)) { return false; }
 
     // Корень заводится только после успеха: отказ не оставляет имени.
-    store.setGlobal(name, value);
+    store.setGlobal(name, value, dead);
     return true;
 }
 

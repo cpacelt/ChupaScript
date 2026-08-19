@@ -57,7 +57,7 @@ void Store::defer(Value v) {
     }
 }
 
-void Store::drainPending() noexcept {
+void Store::drainPendingSlow() noexcept {
     // Обход по индексу, а не range-for: освобождение узла в принципе может
     // дописать в pending_, и итератор вектора этого не переживёт.
     for (std::size_t i = 0; i < pending_.size(); ++i) {
@@ -152,7 +152,7 @@ void Store::abortString(std::uint32_t mark) noexcept {
     build_.resize(mark);
 }
 
-void Store::clear() noexcept {
+void Store::clearSlow() noexcept {
     assert(region_ != Value::Region::Counted &&
            "постоянный регион не сбрасывается: на его значения ссылается хост");
 
@@ -285,7 +285,8 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
     // отсутствующего имени таблицу не засоряет — за этим следит findEntry,
     // который сравнивает байты и в таблицу не пишет.
     node.entries.insert(node.entries.begin() + at,
-                        detail::Entry{node.keys->intern(key), v});
+                        detail::Entry{node.keys->intern(key),
+                                      detail::keyPrefix(key), v});
 }
 
 std::uint32_t Store::findGlobal(std::string_view name,

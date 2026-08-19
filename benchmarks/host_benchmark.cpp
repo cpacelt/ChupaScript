@@ -90,6 +90,7 @@ void runSet(benchmark::State &state, std::string_view text) {
         state.SkipWithError("chupa_context_create failed");
         return;
     }
+    state.SetLabel(std::string(text.substr(0, 60)));
     for (auto _ : state) {
         if (!put(ctx, "data", text)) {
             state.SkipWithError("chupa_context_set failed");
@@ -101,6 +102,7 @@ void runSet(benchmark::State &state, std::string_view text) {
 
 void BM_Host_Set_Bool(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
+    state.SetLabel("true");
     for (auto _ : state) {
         if (!chupa_context_set_bool(ctx, "data", 4, true)) {
             state.SkipWithError("set_bool failed");
@@ -113,6 +115,7 @@ BENCHMARK(BM_Host_Set_Bool);
 
 void BM_Host_Set_Number(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
+    state.SetLabel("320");
     for (auto _ : state) {
         if (!chupa_context_set_number(ctx, "data", 4, 320.0)) {
             state.SkipWithError("set_number failed");
@@ -127,6 +130,7 @@ BENCHMARK(BM_Host_Set_Number);
 /// аллокация, у длинной — копия байт. Одной строкой их не различить.
 void BM_Host_Set_String(benchmark::State &state, std::string_view text) {
     ChupaContext *ctx = chupa_context_create();
+    state.SetLabel("строка " + std::to_string(text.size()) + " байт");
     for (auto _ : state) {
         if (!chupa_context_set_string(ctx, "data", 4, text.data(),
                                       text.size())) {
@@ -251,6 +255,7 @@ void runCompile(benchmark::State &state, std::string_view source) {
         state.SkipWithError("furnish failed");
         return;
     }
+    state.SetLabel(std::string(source));
     for (auto _ : state) {
         ChupaExpression *e =
             chupa_compile_expression(ctx, source.data(), source.size());
@@ -278,46 +283,62 @@ void runCompile(benchmark::State &state, std::string_view source) {
 /// обёртка тоже не выделяет заново на каждый кадр.
 std::string g_hostBuffer;
 
-void consume(ChupaValue v);
+// Обход написан один раз на обе ветки сравнения, и это принципиально: сравнить
+// модели можно, только если исходник замера у них общий.
+//
+// Расходятся они в одном — старой модели для каждого шага нужен контекст:
+// значение там индекс в пулы конкретного хранилища, и без него не значит
+// ничего. Новой не нужен нигде. Это и есть измеряемая разница, поэтому она
+// вынесена в макрос, а не в две копии функции.
+#ifdef CHUPA_VALUE_NEEDS_CONTEXT
+#define CHUPA_W ctx,
+#else
+#define CHUPA_W
+#endif
 
-void consumeString(ChupaValue v) {
+void consume(ChupaContext *ctx, ChupaValue v);
+
+void consumeString(ChupaContext *ctx, ChupaValue v) {
     const char *bytes = nullptr;
     size_t len = 0;
-    chupa_value_string_borrowed(v, &bytes, &len);
+    chupa_value_string_borrowed(CHUPA_W v, &bytes, &len);
     g_hostBuffer.assign(bytes, len);   // копия к хосту — та самая доставка
     benchmark::DoNotOptimize(g_hostBuffer.data());
+    (void)ctx;
 }
 
-void consume(ChupaValue v) {
-    switch (chupa_value_kind(v)) {
+void consume(ChupaContext *ctx, ChupaValue v) {
+    switch (chupa_value_kind(CHUPA_W v)) {
         case CHUPA_KIND_NULL:
             return;
         case CHUPA_KIND_BOOL: {
-            bool b = chupa_value_bool(v);
+            bool b = chupa_value_bool(CHUPA_W v);
             benchmark::DoNotOptimize(b);
             return;
         }
         case CHUPA_KIND_NUMBER: {
-            double d = chupa_value_number(v);
+            double d = chupa_value_number(CHUPA_W v);
             benchmark::DoNotOptimize(d);
             return;
         }
         case CHUPA_KIND_STRING:
-            consumeString(v);
+            consumeString(ctx, v);
             return;
         case CHUPA_KIND_ARRAY: {
-            const size_t n = chupa_array_count(v);
-            for (size_t i = 0; i < n; ++i) { consume(chupa_array_at(v, i)); }
+            const size_t n = chupa_array_count(CHUPA_W v);
+            for (size_t i = 0; i < n; ++i) {
+                consume(ctx, chupa_array_at(CHUPA_W v, i));
+            }
             return;
         }
         case CHUPA_KIND_OBJECT: {
-            const size_t n = chupa_object_count(v);
+            const size_t n = chupa_object_count(CHUPA_W v);
             for (size_t i = 0; i < n; ++i) {
                 const char *key = nullptr;
                 size_t len = 0;
-                chupa_object_key_at(v, i, &key, &len);
+                chupa_object_key_at(CHUPA_W v, i, &key, &len);
                 benchmark::DoNotOptimize(key);
-                consume(chupa_object_value_at(v, i));
+                consume(ctx, chupa_object_value_at(CHUPA_W v, i));
             }
             return;
         }
@@ -338,6 +359,7 @@ void runEvalAndDeliver(benchmark::State &state, std::string_view source) {
         return;
     }
 
+    state.SetLabel(std::string(source));
     for (auto _ : state) {
         ChupaValue out{};
         const ChupaStatus status = chupa_eval_value(ctx, e, &out);
@@ -345,7 +367,7 @@ void runEvalAndDeliver(benchmark::State &state, std::string_view source) {
             state.SkipWithError(chupa_context_error(ctx, nullptr));
             break;
         }
-        if (status == CHUPA_OK) { consume(out); }
+        if (status == CHUPA_OK) { consume(ctx, out); }
     }
 
     chupa_expression_destroy(e);
@@ -398,6 +420,7 @@ void runScriptCompile(benchmark::State &state, std::string_view source) {
         state.SkipWithError("furnish failed");
         return;
     }
+    state.SetLabel(std::string(source));
     for (auto _ : state) {
         ChupaScript *s = chupa_compile_script(ctx, source.data(), source.size());
         if (s == nullptr) {
@@ -421,6 +444,7 @@ void runScriptRun(benchmark::State &state, std::string_view source) {
         chupa_context_destroy(ctx);
         return;
     }
+    state.SetLabel(std::string(source));
     for (auto _ : state) {
         if (!chupa_run(ctx, s)) {
             state.SkipWithError(chupa_context_error(ctx, nullptr));
@@ -490,6 +514,7 @@ void destroyScreen(std::vector<ChupaExpression *> &screen) {
 /// Кадр: восемьдесят вычислений с доставкой, без прихода данных.
 void BM_Host_Frame(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
+    state.SetLabel("20 вьюшек x 4 пропса = 80 вычислений");
     if (ctx == nullptr || !furnish(ctx)) {
         state.SkipWithError("furnish failed");
         return;
@@ -508,7 +533,7 @@ void BM_Host_Frame(benchmark::State &state) {
         for (ChupaExpression *e : screen) {
             ChupaValue out{};
             const ChupaStatus status = chupa_eval_value(ctx, e, &out);
-            if (status == CHUPA_OK) { consume(out); }
+            if (status == CHUPA_OK) { consume(ctx, out); }
         }
     }
 
@@ -519,6 +544,7 @@ BENCHMARK(BM_Host_Frame);
 
 /// Приход данных плюс кадр: так выглядит обновление ленты.
 void BM_Host_FrameWithData(benchmark::State &state) {
+    state.SetLabel("приход ленты из 20 карточек + 80 вычислений");
     static const std::string cards = cardList(20);
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr || !furnish(ctx)) {
@@ -535,7 +561,7 @@ void BM_Host_FrameWithData(benchmark::State &state) {
         for (ChupaExpression *e : screen) {
             ChupaValue out{};
             const ChupaStatus status = chupa_eval_value(ctx, e, &out);
-            if (status == CHUPA_OK) { consume(out); }
+            if (status == CHUPA_OK) { consume(ctx, out); }
         }
     }
 
@@ -548,6 +574,7 @@ BENCHMARK(BM_Host_FrameWithData);
 /// данных. Раз на экран, но целиком в задержке первого кадра.
 void BM_Host_ScreenCompile(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
+    state.SetLabel("80 компиляций пропсов");
     if (ctx == nullptr || !furnish(ctx)) {
         state.SkipWithError("furnish failed");
         return;

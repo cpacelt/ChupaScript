@@ -52,16 +52,17 @@ inline constexpr NodeId kNoNode = 0;
 
 /// Дерево разбора: хранение, строитель, аксессоры.
 ///
-/// Имена — смещения в исходнике, который передаётся аксессорам параметром, и
-/// им дерево не владеет. А вот строковые литералы дерево владеет: их байты не
-/// в исходнике (там могут быть экранированы), а в коробках, на которые узлы
-/// String указывают, и эти коробки — собственность дерева.
+/// Names are offsets into the source text passed to accessors as a
+/// parameter, and the tree does not own that text. String literals are
+/// different: their bytes are not in the source (escapes may have been
+/// decoded out of them), but in boxes that String nodes point at, and those
+/// boxes are owned by the tree.
 ///
 ///   Ast
-///    ├── nodes_      vector<Node>          сами узлы
-///    ├── children_   vector<NodeId>        списки детей
-///    └── literals_   vector<StringBox *>   по одной ссылке на литерал,
-///                                          отпускаются при разрушении дерева
+///    ├── nodes_      vector<Node>          the tree itself
+///    ├── children_   vector<NodeId>        child lists
+///    └── literals_   vector<StringBox *>   one reference each, released
+///                                          when this Ast is destroyed
 class Ast {
    public:
     Ast();

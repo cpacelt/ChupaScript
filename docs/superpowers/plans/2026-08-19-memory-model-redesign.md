@@ -171,12 +171,10 @@ TEST(Box, LiveCountSurvivesTwoContextsOnTwoThreads) {
     const std::size_t before = CS::detail::liveBoxCount();
 
     auto churn = [] {
-        CS::Deferred dead;
         for (int i = 0; i < kPerThread; ++i) {
             StringBox *s = CS::detail::makeStringBox("payload");
             CS::detail::release(s);
         }
-        (void)dead;
     };
 
     std::thread a(churn);

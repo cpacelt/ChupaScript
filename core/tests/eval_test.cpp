@@ -13,6 +13,7 @@
 #include "diagnostic.hpp"
 #include "parser.hpp"
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -338,9 +339,9 @@ TEST(EvalAggregates, ArrayLiteralKeepsOrder) {
     CS::Execution exec(store);
     const Value a = evaluate(exec, "[1, 2, 3]");
     const Store &made = exec.storeOf(a);
-    ASSERT_EQ(made.arrayCount(a), 3u);
-    EXPECT_EQ(made.arrayAt(a, 0).numberValue(), 1.0);
-    EXPECT_EQ(made.arrayAt(a, 2).numberValue(), 3.0);
+    ASSERT_EQ(CS::arrayCount(a), 3u);
+    EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(CS::arrayAt(a, 2).numberValue(), 3.0);
 }
 
 TEST(EvalAggregates, ObjectLiteralStoresPairs) {
@@ -348,9 +349,9 @@ TEST(EvalAggregates, ObjectLiteralStoresPairs) {
     CS::Execution exec(store);
     const Value o = evaluate(exec, "{'a': 1, 'b': 2}");
     const Store &made = exec.storeOf(o);
-    ASSERT_EQ(made.objectCount(o), 2u);
-    EXPECT_EQ(made.objectGet(o, "a").numberValue(), 1.0);
-    EXPECT_EQ(made.objectGet(o, "b").numberValue(), 2.0);
+    ASSERT_EQ(CS::objectCount(o), 2u);
+    EXPECT_EQ(CS::objectGet(o, "a").numberValue(), 1.0);
+    EXPECT_EQ(CS::objectGet(o, "b").numberValue(), 2.0);
 }
 
 TEST(EvalAggregates, EmptyLiterals) {
@@ -358,8 +359,8 @@ TEST(EvalAggregates, EmptyLiterals) {
     CS::Execution exec(store);
     const Value a = evaluate(exec, "[]");
     const Value o = evaluate(exec, "{}");
-    EXPECT_EQ(exec.storeOf(a).arrayCount(a), 0u);
-    EXPECT_EQ(exec.storeOf(o).objectCount(o), 0u);
+    EXPECT_EQ(CS::arrayCount(a), 0u);
+    EXPECT_EQ(CS::objectCount(o), 0u);
 }
 
 TEST(EvalAggregates, ElementsAreArbitraryExpressions) {
@@ -374,11 +375,11 @@ TEST(EvalAggregates, ElementsAreArbitraryExpressions) {
     // данных хоста и копией не стала. Оба хранилища читаются по одному
     // значению, и в этом весь смысл owner.
     const Store &made = exec.storeOf(a);
-    ASSERT_EQ(made.arrayCount(a), 3u);
-    const Value first = made.arrayAt(a, 0);
+    ASSERT_EQ(CS::arrayCount(a), 3u);
+    const Value first = CS::arrayAt(a, 0);
     EXPECT_EQ(exec.storeOf(first).string(first), "Вася");
-    EXPECT_EQ(made.arrayAt(a, 1).numberValue(), 7.0);
-    EXPECT_EQ(made.arrayAt(a, 2).kind(), Value::Kind::Null);
+    EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), 7.0);
+    EXPECT_EQ(CS::arrayAt(a, 2).kind(), Value::Kind::Null);
 }
 
 TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
@@ -386,7 +387,7 @@ TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
     CS::Execution exec(store);
     put(store, "user", "{'name': 'Вася'}");
     const Value o = evaluate(exec, "{'who': user.name}");
-    const Value who = exec.storeOf(o).objectGet(o, "who");
+    const Value who = CS::objectGet(o, "who");
     EXPECT_EQ(exec.storeOf(who).string(who), "Вася");
 }
 
@@ -481,8 +482,8 @@ TEST(EvalAggregates, EachEvaluationCreatesANewAggregate) {
     // docs/semantics.md §2.3: литерал создаёт новый агрегат при каждом
     // вычислении. Без этого теста правило держится на честном слове.
     EXPECT_FALSE(first.sameAggregate(second));
-    EXPECT_EQ(exec.storeOf(first).arrayCount(first), 2u);
-    EXPECT_EQ(exec.storeOf(second).arrayCount(second), 2u);
+    EXPECT_EQ(CS::arrayCount(first), 2u);
+    EXPECT_EQ(CS::arrayCount(second), 2u);
 }
 
 TEST(EvalOperators, UnaryWorksThroughTheWalk) {
@@ -1073,7 +1074,7 @@ TEST(EvalScriptBehaviour, ErrorStopsTheScriptAndKeepsWhatWasDone) {
     EXPECT_EQ(evaluate(exec, "s.a").numberValue(), 1.0);
     EXPECT_EQ(evaluate(exec, "s.b").numberValue(), 2.0);
     EXPECT_EQ(evaluate(exec, "s.c").numberValue(), 0.0);
-    EXPECT_FALSE(store.objectHas(store.global("s"), "x"));
+    EXPECT_FALSE(CS::objectHas(store.global("s"), "x"));
 }
 
 TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
@@ -1082,7 +1083,7 @@ TEST(EvalScriptBehaviour, MutationIsVisibleThroughAnotherName) {
     // Хост кладёт один агрегат под двумя именами: значения — хендлы, поэтому
     // это тот же массив (docs/semantics.md §2.3).
     put(store, "state", "{'items': [1, 2]}");
-    const Value items = store.objectGet(store.global("state"), "items");
+    const Value items = CS::objectGet(store.global("state"), "items");
     store.setGlobal("shortcut", items);
 
     run(exec, "state.items[0] = 99;");
@@ -1167,12 +1168,12 @@ TEST(EvalCall, KeysReturnsEveryKey) {
     const Value keys = evaluate(exec, "keys(o)");
     ASSERT_EQ(keys.kind(), Value::Kind::Array);
     const Store &made = exec.storeOf(keys);
-    ASSERT_EQ(made.arrayCount(keys), 3u);
+    ASSERT_EQ(CS::arrayCount(keys), 3u);
     // Порядок docs/semantics.md §8.2 не определяет, поэтому тест собирает
     // множество, а не список: опираться на порядок значило бы обещать его.
     std::set<std::string> got;
     for (std::uint32_t i = 0; i < 3; ++i) {
-        const Value key = made.arrayAt(keys, i);
+        const Value key = CS::arrayAt(keys, i);
         got.insert(std::string(exec.storeOf(key).string(key)));
     }
     EXPECT_EQ(got, (std::set<std::string>{"a", "b", "c"}));
@@ -1183,7 +1184,7 @@ TEST(EvalCall, KeysOfEmptyObjectIsEmptyArray) {
     CS::Execution exec(store);
     put(store, "o", "{}");
     const Value keys = evaluate(exec, "keys(o)");
-    EXPECT_EQ(exec.storeOf(keys).arrayCount(keys), 0u);
+    EXPECT_EQ(CS::arrayCount(keys), 0u);
 }
 
 TEST(EvalCall, KeysRejectsNonObjects) {
@@ -1315,7 +1316,7 @@ TEST(EvalCall, PushAndPopAreVisibleThroughAnAlias) {
     Store store;
     CS::Execution exec(store);
     put(store, "state", "{'items': [1]}");
-    const Value items = store.objectGet(store.global("state"), "items");
+    const Value items = CS::objectGet(store.global("state"), "items");
     store.setGlobal("shortcut", items);
     // docs/semantics.md §2.3: мутация через один путь видна через второй.
     run(exec, "push(state.items, 2);");

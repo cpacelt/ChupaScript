@@ -6,6 +6,7 @@
 #include <string>
 
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -23,7 +24,7 @@ void BM_Store_ArrayPush(benchmark::State &state) {
         }
         // Локальная переменная, а не временное значение: DoNotOptimize от
         // rvalue не переживает смены версии Google Benchmark.
-        std::uint32_t filled = store.arrayCount(a);
+        std::uint32_t filled = CS::arrayCount(a);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * count);
@@ -39,7 +40,7 @@ void BM_Store_ArrayPushReserved(benchmark::State &state) {
         for (int i = 0; i < count; ++i) {
             store.arrayPush(a, Value::number(static_cast<double>(i)));
         }
-        std::uint32_t filled = store.arrayCount(a);
+        std::uint32_t filled = CS::arrayCount(a);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * count);
@@ -56,8 +57,8 @@ void BM_Store_ArrayTraverse(benchmark::State &state) {
 
     for (auto _ : state) {
         double sum = 0.0;
-        for (std::uint32_t i = 0; i < store.arrayCount(a); ++i) {
-            sum += store.arrayAt(a, i).numberValue();
+        for (std::uint32_t i = 0; i < CS::arrayCount(a); ++i) {
+            sum += CS::arrayAt(a, i).numberValue();
         }
         benchmark::DoNotOptimize(sum);
     }
@@ -82,7 +83,7 @@ void BM_Store_ObjectGet(benchmark::State &state) {
     const std::string last = "key" + std::to_string(keys - 1);
 
     for (auto _ : state) {
-        Value found = store.objectGet(o, last);
+        Value found = CS::objectGet(o, last);
         benchmark::DoNotOptimize(found);
     }
 }
@@ -96,7 +97,7 @@ void BM_Store_ObjectInsert(benchmark::State &state) {
     for (auto _ : state) {
         Store store;
         const Value o = makeFilledObject(store, keys);
-        std::uint32_t filled = store.objectCount(o);
+        std::uint32_t filled = CS::objectCount(o);
         benchmark::DoNotOptimize(filled);
     }
     state.SetItemsProcessed(state.iterations() * keys);

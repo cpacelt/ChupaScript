@@ -10,6 +10,7 @@
 #include "box.hpp"
 #include "operator.hpp"
 #include "text.hpp"
+#include "aggregate.hpp"
 
 namespace CS {
 namespace {
@@ -35,11 +36,11 @@ bool fail(const Ast &ast, NodeId node, ErrorCode code, const char *message,
 /// Объект — значение либо null; null — null; прочее — ошибка. Один и тот же
 /// разбор обслуживает и obj.k, и obj[k]: отличаются они только тем, откуда
 /// берётся ключ.
-bool readKey(const Ast &ast, NodeId node, const Store &store, Value base,
-             std::string_view key, Value *out, Diagnostic &diag) {
+bool readKey(const Ast &ast, NodeId node, Value base, std::string_view key,
+             Value *out, Diagnostic &diag) {
     switch (base.kind()) {
         case Value::Kind::Object:
-            *out = store.objectGet(base, key);
+            *out = CS::objectGet(base, key);
             return true;
         case Value::Kind::Null:
             *out = Value::null();
@@ -209,18 +210,18 @@ bool checkArrayIndex(const Ast &ast, NodeId node, Value subscript, double *out,
 }
 
 /// Чтение элемента массива (docs/semantics.md §6.1).
-bool readIndex(const Ast &ast, NodeId node, const Store &store, Value array,
-               Value subscript, Value *out, Diagnostic &diag) {
+bool readIndex(const Ast &ast, NodeId node, Value array, Value subscript,
+               Value *out, Diagnostic &diag) {
     double index = 0.0;
     if (!checkArrayIndex(ast, node, subscript, &index, diag)) { return false; }
 
     // За границей — штатное чтение. Сравнение в double, потому что индекс
     // может превышать всё, что влезает в uint32.
-    if (index >= static_cast<double>(store.arrayCount(array))) {
+    if (index >= static_cast<double>(CS::arrayCount(array))) {
         *out = Value::null();
         return true;
     }
-    *out = store.arrayAt(array, static_cast<std::uint32_t>(index));
+    *out = CS::arrayAt(array, static_cast<std::uint32_t>(index));
     return true;
 }
 
@@ -283,8 +284,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             Value base = Value::null();
             if (!eval(ast, source, ast.child(node, 0), exec, &base, diag)) { return false; }
             // Имя поля берётся из узла буквально, без приведения.
-            return readKey(ast, node, exec.storeOf(base), base,
-                           ast.text(node, source), out, diag);
+            return readKey(ast, node, base, ast.text(node, source), out, diag);
         }
 
         case NodeKind::Index: {
@@ -299,8 +299,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
 
             switch (base.kind()) {
                 case Value::Kind::Array:
-                    return readIndex(ast, node, exec.storeOf(base), base,
-                                     subscript, out, diag);
+                    return readIndex(ast, node, base, subscript, out, diag);
                 case Value::Kind::Object: {
                     char buffer[kNumberBufferSize];
                     std::string_view key;
@@ -309,8 +308,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                                         subscript, buffer, &key, diag)) {
                         return false;
                     }
-                    return readKey(ast, node, exec.storeOf(base), base,
-                                   key, out, diag);
+                    return readKey(ast, node, base, key, out, diag);
                 }
                 case Value::Kind::Null:
                     *out = Value::null();
@@ -538,7 +536,7 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
         // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
         // поэтому подвыражения цели вычислены ровно один раз
         // (docs/grammar.md §6.4).
-        const Value current = dest.objectGet(base, key);
+        const Value current = CS::objectGet(base, key);
         Value combined = Value::null();
         if (!applyBinary(compoundOperation(op), current, value,
                          exec.storeOf(current),
@@ -584,8 +582,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 // упирается не в границу записи, а в сложение с null: Type, а
                 // не Range (§7.3).
                 Value current = Value::null();
-                if (!readIndex(ast, target, dest, base, subscript, &current,
-                               diag)) {
+                if (!readIndex(ast, target, base, subscript, &current, diag)) {
                     return false;
                 }
                 Value combined = Value::null();
@@ -600,7 +597,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
 
             // Запись за границу — ошибка: расширяет только push (§6.1).
             // Сравнение в double, потому что индекс может превышать uint32.
-            if (index >= static_cast<double>(dest.arrayCount(base))) {
+            if (index >= static_cast<double>(CS::arrayCount(base))) {
                 return fail(ast, target, ErrorCode::Range,
                             "array index is out of bounds", diag);
             }
@@ -632,7 +629,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             }
 
             if (op != TokenKind::Assign) {
-                const Value current = dest.objectGet(base, key);
+                const Value current = CS::objectGet(base, key);
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
                                  exec.storeOf(current),

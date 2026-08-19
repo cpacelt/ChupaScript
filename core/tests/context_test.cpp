@@ -7,6 +7,7 @@
 #include <cstddef>
 
 #include "data.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -48,7 +49,7 @@ TEST(Context, ScriptChangesAreVisibleThroughTheStore) {
     ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
 
     const CS::Value state = ctx.store().global("state");
-    EXPECT_DOUBLE_EQ(ctx.store().objectGet(state, "count").numberValue(), 2.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(state, "count").numberValue(), 2.0);
 }
 
 TEST(Context, TypedEvalsReachTheSameExpression) {

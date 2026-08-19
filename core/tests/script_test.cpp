@@ -7,6 +7,7 @@
 #include "diagnostic.hpp"
 #include "script.hpp"
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -25,7 +26,7 @@ TEST(Script, CompilesAndRuns) {
     // Store::global и Store::objectGet возвращают Value, а не пишут в
     // выходной параметр (core/src/store.hpp:107,152).
     const CS::Value user = store.global("user");
-    const CS::Value name = store.objectGet(user, "name");
+    const CS::Value name = CS::objectGet(user, "name");
     EXPECT_EQ(store.string(name), "Петя");
 }
 
@@ -91,7 +92,7 @@ TEST(Script, SurvivesBeingMoved) {
 
     ASSERT_TRUE(units[0].run(exec, diag));
     const CS::Value obj = store.global("obj");
-    const CS::Value n = store.objectGet(obj, "n");
+    const CS::Value n = CS::objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 2.0);
 }
 
@@ -111,7 +112,7 @@ TEST(Script, RecompileReplacesEverything) {
 
     ASSERT_TRUE(script.run(exec, diag));
     const CS::Value obj = store.global("obj");
-    const CS::Value n = store.objectGet(obj, "n");
+    const CS::Value n = CS::objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 11.0);
 }
 
@@ -135,7 +136,7 @@ TEST(Script, FailedCompileDoesNotTouchOut) {
 
     ASSERT_TRUE(script.run(exec, diag));
     const CS::Value obj = store.global("obj");
-    const CS::Value n = store.objectGet(obj, "n");
+    const CS::Value n = CS::objectGet(obj, "n");
     EXPECT_DOUBLE_EQ(n.numberValue(), 2.0);
 }
 

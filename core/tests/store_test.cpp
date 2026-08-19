@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include "aggregate.hpp"
 
 namespace {
 
@@ -104,20 +105,20 @@ TEST(StoreArray, EmptyArrayHasNoElements) {
     Store store;
     const Value a = store.makeArray();
     EXPECT_EQ(a.kind(), Value::Kind::Array);
-    EXPECT_EQ(store.arrayCount(a), 0u);
+    EXPECT_EQ(CS::arrayCount(a), 0u);
 }
 
 TEST(StoreArray, CapacityDoesNotCreateElements) {
     Store store;
-    EXPECT_EQ(store.arrayCount(store.makeArray(16)), 0u);
+    EXPECT_EQ(CS::arrayCount(store.makeArray(16)), 0u);
 }
 
 TEST(StoreArray, ReadBeyondEndGivesNull) {
     Store store;
     const Value a = store.makeArray();
     // semantics.md §6.1: чтение за границей — штатная ситуация.
-    EXPECT_EQ(store.arrayAt(a, 0).kind(), Value::Kind::Null);
-    EXPECT_EQ(store.arrayAt(a, 1000).kind(), Value::Kind::Null);
+    EXPECT_EQ(CS::arrayAt(a, 0).kind(), Value::Kind::Null);
+    EXPECT_EQ(CS::arrayAt(a, 1000).kind(), Value::Kind::Null);
 }
 
 TEST(StoreArray, WriteBeyondEndIsRefused) {
@@ -157,7 +158,7 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
     scratch.arrayPush(outer, inner);
 
     const Value moved = persistent.promote(scratch, outer);
-    EXPECT_TRUE(persistent.arrayAt(moved, 0).sameAggregate(persistent.arrayAt(moved, 1)));
+    EXPECT_TRUE(CS::arrayAt(moved, 0).sameAggregate(CS::arrayAt(moved, 1)));
 }
 
 TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
@@ -171,8 +172,8 @@ TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
     scratch.arrayPush(outer, inner);
 
     const Value moved = persistent.promote(scratch, outer);
-    persistent.arraySet(persistent.arrayAt(moved, 1), 0, Value::number(3.0));
-    EXPECT_EQ(persistent.arrayAt(persistent.arrayAt(moved, 0), 0).numberValue(), 3.0);
+    persistent.arraySet(CS::arrayAt(moved, 1), 0, Value::number(3.0));
+    EXPECT_EQ(CS::arrayAt(CS::arrayAt(moved, 0), 0).numberValue(), 3.0);
 }
 
 TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
@@ -214,7 +215,7 @@ TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
 
     // Читается тем хранилищем, которое его выдало: значение осталось собой, а
     // не переехало копией во временный пул.
-    EXPECT_EQ(persistent.string(scratch.arrayAt(temporary, 0)), "шапка");
+    EXPECT_EQ(persistent.string(CS::arrayAt(temporary, 0)), "шапка");
 }
 
 TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
@@ -252,8 +253,8 @@ TEST(StorePromote, AggregateCrossesWithoutACopy) {
 
     EXPECT_TRUE(moved.sameAggregate(o));
     scratch.clear();
-    EXPECT_EQ(persistent.objectKeyAt(moved, 0), "имя");
-    EXPECT_EQ(persistent.string(persistent.objectValueAt(moved, 0)), "Вася");
+    EXPECT_EQ(CS::objectKeyAt(moved, 0), "имя");
+    EXPECT_EQ(persistent.string(CS::objectValueAt(moved, 0)), "Вася");
 }
 
 TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
@@ -265,7 +266,7 @@ TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
     const Value o = persistent.makeObject(1);
     persistent.objectSet(o, "имя", persistent.promote(scratch, temp));
     scratch.clear();
-    EXPECT_EQ(persistent.string(persistent.objectValueAt(o, 0)), "Вася");
+    EXPECT_EQ(persistent.string(CS::objectValueAt(o, 0)), "Вася");
 }
 
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
@@ -280,9 +281,9 @@ TEST(StoreArrayMutation, PushAppendsInOrder) {
     const Value a = store.makeArray();
     store.arrayPush(a, Value::number(1.0));
     store.arrayPush(a, Value::number(2.0));
-    ASSERT_EQ(store.arrayCount(a), 2u);
-    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), 1.0);
-    EXPECT_EQ(store.arrayAt(a, 1).numberValue(), 2.0);
+    ASSERT_EQ(CS::arrayCount(a), 2u);
+    EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), 2.0);
 }
 
 TEST(StoreArrayMutation, SetReplacesExistingElement) {
@@ -290,7 +291,7 @@ TEST(StoreArrayMutation, SetReplacesExistingElement) {
     const Value a = store.makeArray();
     store.arrayPush(a, Value::number(1.0));
     EXPECT_TRUE(store.arraySet(a, 0, Value::boolean(true)));
-    EXPECT_TRUE(store.arrayAt(a, 0).booleanValue());
+    EXPECT_TRUE(CS::arrayAt(a, 0).booleanValue());
 }
 
 TEST(StoreArrayMutation, PopReturnsLastAndShrinks) {
@@ -302,7 +303,7 @@ TEST(StoreArrayMutation, PopReturnsLastAndShrinks) {
     Value taken = Value::null();
     ASSERT_TRUE(store.arrayPop(a, &taken));
     EXPECT_EQ(taken.numberValue(), 2.0);
-    EXPECT_EQ(store.arrayCount(a), 1u);
+    EXPECT_EQ(CS::arrayCount(a), 1u);
 }
 
 TEST(StoreArrayMutation, PopOnEmptyIsRefused) {
@@ -324,9 +325,9 @@ TEST(StoreArrayMutation, AliasSurvivesGrowth) {
     }
 
     // semantics.md §2.3: изменение через одно имя видно через второе.
-    EXPECT_EQ(store.arrayCount(alias), 40u);
-    EXPECT_EQ(store.arrayAt(alias, 0).numberValue(), 0.0);
-    EXPECT_EQ(store.arrayAt(alias, 39).numberValue(), 39.0);
+    EXPECT_EQ(CS::arrayCount(alias), 40u);
+    EXPECT_EQ(CS::arrayAt(alias, 0).numberValue(), 0.0);
+    EXPECT_EQ(CS::arrayAt(alias, 39).numberValue(), 39.0);
     EXPECT_TRUE(a.sameAggregate(alias));
 }
 
@@ -337,7 +338,7 @@ TEST(StoreArrayMutation, WriteThroughAliasIsSeenByOriginal) {
     const Value alias = a;
 
     ASSERT_TRUE(store.arraySet(alias, 0, Value::number(99.0)));
-    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), 99.0);
+    EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 99.0);
 }
 
 TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
@@ -347,9 +348,9 @@ TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
     store.arrayPush(outer, inner);
     store.arrayPush(inner, Value::number(1.0));
 
-    const Value fetched = store.arrayAt(outer, 0);
+    const Value fetched = CS::arrayAt(outer, 0);
     EXPECT_TRUE(fetched.sameAggregate(inner));
-    EXPECT_EQ(store.arrayCount(fetched), 1u);
+    EXPECT_EQ(CS::arrayCount(fetched), 1u);
 }
 
 TEST(StoreArrayMutation, ArrayMayContainItself) {
@@ -357,7 +358,7 @@ TEST(StoreArrayMutation, ArrayMayContainItself) {
     const Value a = store.makeArray();
     store.arrayPush(a, a);
     // semantics.md §2.3: цикл допустим, рекурсивного обхода в слое нет.
-    EXPECT_TRUE(store.arrayAt(a, 0).sameAggregate(a));
+    EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(a));
 }
 
 TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
@@ -385,7 +386,7 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     for (int i = 0; i < 64; ++i) {
         store.arrayPush(a, Value::number(static_cast<double>(i)));
     }
-    EXPECT_EQ(store.arrayCount(a), 64u);
+    EXPECT_EQ(CS::arrayCount(a), 64u);
     EXPECT_EQ(store.bytesUsed(), before);
     // Ни одного лишнего коробки: рост вектора внутри коробки коробок не заводит.
     EXPECT_EQ(CS::detail::liveBoxCount(), nodes);
@@ -406,24 +407,24 @@ TEST(StoreObject, EmptyObjectHasNoKeys) {
     Store store;
     const Value o = store.makeObject();
     EXPECT_EQ(o.kind(), Value::Kind::Object);
-    EXPECT_EQ(store.objectCount(o), 0u);
+    EXPECT_EQ(CS::objectCount(o), 0u);
 }
 
 TEST(StoreObject, MissingKeyReadsAsNull) {
     Store store;
     const Value o = store.makeObject();
     // semantics.md §6.2: отсутствующий ключ читается как null.
-    EXPECT_EQ(store.objectGet(o, "нет").kind(), Value::Kind::Null);
-    EXPECT_FALSE(store.objectHas(o, "нет"));
+    EXPECT_EQ(CS::objectGet(o, "нет").kind(), Value::Kind::Null);
+    EXPECT_FALSE(CS::objectHas(o, "нет"));
 }
 
 TEST(StoreObject, StoredValueIsFound) {
     Store store;
     const Value o = store.makeObject();
     store.objectSet(o, "count", Value::number(3.0));
-    EXPECT_TRUE(store.objectHas(o, "count"));
-    EXPECT_EQ(store.objectGet(o, "count").numberValue(), 3.0);
-    EXPECT_EQ(store.objectCount(o), 1u);
+    EXPECT_TRUE(CS::objectHas(o, "count"));
+    EXPECT_EQ(CS::objectGet(o, "count").numberValue(), 3.0);
+    EXPECT_EQ(CS::objectCount(o), 1u);
 }
 
 TEST(StoreObject, NullValueIsDistinctFromAbsence) {
@@ -431,8 +432,8 @@ TEST(StoreObject, NullValueIsDistinctFromAbsence) {
     const Value o = store.makeObject();
     store.objectSet(o, "key", Value::null());
     // semantics.md §6.2: отличить одно от другого можно только через has.
-    EXPECT_EQ(store.objectGet(o, "key").kind(), Value::Kind::Null);
-    EXPECT_TRUE(store.objectHas(o, "key"));
+    EXPECT_EQ(CS::objectGet(o, "key").kind(), Value::Kind::Null);
+    EXPECT_TRUE(CS::objectHas(o, "key"));
 }
 
 TEST(StoreObject, FindsKeyAmongMany) {
@@ -443,9 +444,9 @@ TEST(StoreObject, FindsKeyAmongMany) {
         store.objectSet(o, keys[i], Value::number(static_cast<double>(i)));
     }
     for (int i = 0; i < 7; ++i) {
-        EXPECT_EQ(store.objectGet(o, keys[i]).numberValue(), static_cast<double>(i));
+        EXPECT_EQ(CS::objectGet(o, keys[i]).numberValue(), static_cast<double>(i));
     }
-    EXPECT_EQ(store.objectCount(o), 7u);
+    EXPECT_EQ(CS::objectCount(o), 7u);
 }
 
 TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
@@ -453,23 +454,23 @@ TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
     const Value o = store.makeObject();
     store.objectSet(o, "item", Value::number(1.0));
     store.objectSet(o, "items", Value::number(2.0));
-    EXPECT_EQ(store.objectGet(o, "item").numberValue(), 1.0);
-    EXPECT_EQ(store.objectGet(o, "items").numberValue(), 2.0);
+    EXPECT_EQ(CS::objectGet(o, "item").numberValue(), 1.0);
+    EXPECT_EQ(CS::objectGet(o, "items").numberValue(), 2.0);
 }
 
 TEST(StoreObject, NonAsciiKeyIsFound) {
     Store store;
     const Value o = store.makeObject();
     store.objectSet(o, "имя", store.makeString("Вася"));
-    EXPECT_EQ(store.string(store.objectGet(o, "имя")), "Вася");
+    EXPECT_EQ(store.string(CS::objectGet(o, "имя")), "Вася");
 }
 
 TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
     Store store;
     const Value o = store.makeObject();
     store.objectSet(o, "", Value::number(1.0));
-    EXPECT_TRUE(store.objectHas(o, ""));
-    EXPECT_EQ(store.objectGet(o, "").numberValue(), 1.0);
+    EXPECT_TRUE(CS::objectHas(o, ""));
+    EXPECT_EQ(CS::objectGet(o, "").numberValue(), 1.0);
 }
 
 TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
@@ -479,11 +480,11 @@ TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
     store.objectSet(o, "другой", Value::number(2.0));
 
     // Пустой ключ существует: срез пустой, но не нулевой.
-    ASSERT_EQ(store.objectCount(o), 2u);
-    EXPECT_TRUE(store.objectKeyAt(o, 0).empty());
-    EXPECT_NE(store.objectKeyAt(o, 0).data(), nullptr);
+    ASSERT_EQ(CS::objectCount(o), 2u);
+    EXPECT_TRUE(CS::objectKeyAt(o, 0).empty());
+    EXPECT_NE(CS::objectKeyAt(o, 0).data(), nullptr);
     // За границей — нулевой срез.
-    EXPECT_EQ(store.objectKeyAt(o, 99).data(), nullptr);
+    EXPECT_EQ(CS::objectKeyAt(o, 99).data(), nullptr);
 }
 
 TEST(StoreObject, EnumerationYieldsEveryKey) {
@@ -492,12 +493,12 @@ TEST(StoreObject, EnumerationYieldsEveryKey) {
     store.objectSet(o, "b", Value::number(2.0));
     store.objectSet(o, "a", Value::number(1.0));
 
-    ASSERT_EQ(store.objectCount(o), 2u);
+    ASSERT_EQ(CS::objectCount(o), 2u);
     std::string seen;
-    for (std::uint32_t i = 0; i < store.objectCount(o); ++i) {
-        seen += store.objectKeyAt(o, i);
+    for (std::uint32_t i = 0; i < CS::objectCount(o); ++i) {
+        seen += CS::objectKeyAt(o, i);
         seen += '=';
-        seen += std::to_string(static_cast<int>(store.objectValueAt(o, i).numberValue()));
+        seen += std::to_string(static_cast<int>(CS::objectValueAt(o, i).numberValue()));
         seen += ';';
     }
     // Порядок наружу не обещан (semantics.md §2.1), но хранение отсортировано.
@@ -507,8 +508,8 @@ TEST(StoreObject, EnumerationYieldsEveryKey) {
 TEST(StoreObject, EnumerationBeyondEndIsEmpty) {
     Store store;
     const Value o = store.makeObject();
-    EXPECT_TRUE(store.objectKeyAt(o, 0).empty());
-    EXPECT_EQ(store.objectValueAt(o, 0).kind(), Value::Kind::Null);
+    EXPECT_TRUE(CS::objectKeyAt(o, 0).empty());
+    EXPECT_EQ(CS::objectValueAt(o, 0).kind(), Value::Kind::Null);
 }
 
 TEST(StoreObject, TwoEmptyObjectsAreDistinct) {
@@ -521,8 +522,8 @@ TEST(StoreObjectMutation, RepeatedKeyReplacesValue) {
     const Value o = store.makeObject();
     store.objectSet(o, "k", Value::number(1.0));
     store.objectSet(o, "k", Value::number(2.0));
-    EXPECT_EQ(store.objectCount(o), 1u);
-    EXPECT_EQ(store.objectGet(o, "k").numberValue(), 2.0);
+    EXPECT_EQ(CS::objectCount(o), 1u);
+    EXPECT_EQ(CS::objectGet(o, "k").numberValue(), 2.0);
 }
 
 TEST(StoreObjectMutation, ReplacementCopiesNoKeyBytes) {
@@ -541,8 +542,8 @@ TEST(StoreObjectMutation, InsertionKeepsSortedOrder) {
     for (const char *key : keys) { store.objectSet(o, key, Value::null()); }
 
     std::string seen;
-    for (std::uint32_t i = 0; i < store.objectCount(o); ++i) {
-        seen += store.objectKeyAt(o, i);
+    for (std::uint32_t i = 0; i < CS::objectCount(o); ++i) {
+        seen += CS::objectKeyAt(o, i);
         seen += ' ';
     }
     EXPECT_EQ(seen, "alpha bravo charlie delta echo ");
@@ -555,9 +556,9 @@ TEST(StoreObjectMutation, EveryKeySurvivesGrowth) {
     for (int i = 0; i < 30; ++i) {
         store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
     }
-    ASSERT_EQ(store.objectCount(o), 30u);
+    ASSERT_EQ(CS::objectCount(o), 30u);
     for (int i = 0; i < 30; ++i) {
-        EXPECT_EQ(store.objectGet(o, "key" + std::to_string(i)).numberValue(),
+        EXPECT_EQ(CS::objectGet(o, "key" + std::to_string(i)).numberValue(),
                   static_cast<double>(i));
     }
 }
@@ -570,8 +571,8 @@ TEST(StoreObjectMutation, AliasSeesNewKey) {
         store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
     }
     // semantics.md §2.3: изменение через одно имя видно через второе.
-    EXPECT_EQ(store.objectCount(alias), 30u);
-    EXPECT_EQ(store.objectGet(alias, "key29").numberValue(), 29.0);
+    EXPECT_EQ(CS::objectCount(alias), 30u);
+    EXPECT_EQ(CS::objectGet(alias, "key29").numberValue(), 29.0);
     EXPECT_TRUE(o.sameAggregate(alias));
 }
 
@@ -581,7 +582,7 @@ TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
     const Value keyValue = store.makeString("динамический");
     // Ключ — срез собственного пула текста: приём, которым пользуется obj[k].
     store.objectSet(o, store.string(keyValue), Value::number(5.0));
-    EXPECT_EQ(store.objectGet(o, "динамический").numberValue(), 5.0);
+    EXPECT_EQ(CS::objectGet(o, "динамический").numberValue(), 5.0);
 }
 
 TEST(StoreObjectMutation, ObjectMayContainItself) {
@@ -589,8 +590,8 @@ TEST(StoreObjectMutation, ObjectMayContainItself) {
     const Value o = store.makeObject();
     store.objectSet(o, "self", o);
     // semantics.md §2.3: obj['self'] = obj — корректная программа.
-    EXPECT_TRUE(store.objectGet(o, "self").sameAggregate(o));
-    EXPECT_EQ(store.objectCount(o), 1u);
+    EXPECT_TRUE(CS::objectGet(o, "self").sameAggregate(o));
+    EXPECT_EQ(CS::objectCount(o), 1u);
 }
 
 TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
@@ -600,8 +601,8 @@ TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
     store.objectSet(o, "items", a);
     store.arrayPush(a, o);
 
-    EXPECT_TRUE(store.objectGet(o, "items").sameAggregate(a));
-    EXPECT_TRUE(store.arrayAt(a, 0).sameAggregate(o));
+    EXPECT_TRUE(CS::objectGet(o, "items").sameAggregate(a));
+    EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(o));
 }
 
 TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
@@ -611,9 +612,9 @@ TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
     store.objectSet(o, "items", a);
 
     for (int i = 0; i < 20; ++i) {
-        store.arrayPush(store.objectGet(o, "items"), Value::number(static_cast<double>(i)));
+        store.arrayPush(CS::objectGet(o, "items"), Value::number(static_cast<double>(i)));
     }
-    EXPECT_EQ(store.arrayCount(a), 20u);
+    EXPECT_EQ(CS::arrayCount(a), 20u);
 }
 
 TEST(StoreObjectMutation, KeyBytesLiveInTheTableNotInTheStore) {
@@ -683,7 +684,7 @@ TEST(StoreGlobals, GlobalHoldsAggregate) {
     store.setGlobal("items", items);
 
     EXPECT_TRUE(store.global("items").sameAggregate(items));
-    EXPECT_EQ(store.arrayCount(store.global("items")), 1u);
+    EXPECT_EQ(CS::arrayCount(store.global("items")), 1u);
 }
 
 TEST(StoreGlobals, MutationThroughGlobalIsSeenThroughTheOriginal) {
@@ -694,7 +695,7 @@ TEST(StoreGlobals, MutationThroughGlobalIsSeenThroughTheOriginal) {
         store.arrayPush(store.global("items"), Value::number(static_cast<double>(i)));
     }
     // docs/semantics.md §2.3: ссылочность наблюдаема и через глобальную переменную.
-    EXPECT_EQ(store.arrayCount(items), 30u);
+    EXPECT_EQ(CS::arrayCount(items), 30u);
 }
 
 TEST(StoreGlobals, EnumerationYieldsEveryName) {

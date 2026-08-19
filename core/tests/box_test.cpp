@@ -9,6 +9,7 @@
 
 #include "keytable.hpp"
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -139,10 +140,10 @@ TEST(KeyPrefix, EqualPrefixesFallThroughToTheBytes) {
     CS::Store store;
     const CS::Value o = objectWith(store, {"labelA", "labelB", "label"});
     EXPECT_EQ(CS::detail::keyPrefix("labelA"), CS::detail::keyPrefix("labelB"));
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "labelA").numberValue(), 0.0);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "labelB").numberValue(), 1.0);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "label").numberValue(), 2.0);
-    EXPECT_EQ(store.objectGet(o, "labelC").kind(), CS::Value::Kind::Null);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "labelA").numberValue(), 0.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "labelB").numberValue(), 1.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "label").numberValue(), 2.0);
+    EXPECT_EQ(CS::objectGet(o, "labelC").kind(), CS::Value::Kind::Null);
 }
 
 TEST(KeyPrefix, ShortKeysStayDistinct) {
@@ -150,12 +151,12 @@ TEST(KeyPrefix, ShortKeysStayDistinct) {
     // префикс добит нулями, и спутать их нельзя.
     CS::Store store;
     const CS::Value o = objectWith(store, {"", "a", "abc", "abcd"});
-    EXPECT_EQ(store.objectCount(o), 4u);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "").numberValue(), 0.0);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "a").numberValue(), 1.0);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "abc").numberValue(), 2.0);
-    EXPECT_DOUBLE_EQ(store.objectGet(o, "abcd").numberValue(), 3.0);
-    EXPECT_FALSE(store.objectHas(o, "ab"));
+    EXPECT_EQ(CS::objectCount(o), 4u);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "").numberValue(), 0.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "a").numberValue(), 1.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "abc").numberValue(), 2.0);
+    EXPECT_DOUBLE_EQ(CS::objectGet(o, "abcd").numberValue(), 3.0);
+    EXPECT_FALSE(CS::objectHas(o, "ab"));
 }
 
 TEST(KeyPrefix, EntryStaysTwentyFourBytes) {

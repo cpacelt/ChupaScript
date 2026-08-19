@@ -6,6 +6,7 @@
 
 #include "diagnostic.hpp"
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -198,52 +199,52 @@ TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
 TEST(DataAggregates, ArrayKeepsOrder) {
     Store store;
     const Value a = put(store, "items", "[1, 2, 3]");
-    ASSERT_EQ(store.arrayCount(a), 3u);
-    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), 1.0);
-    EXPECT_EQ(store.arrayAt(a, 2).numberValue(), 3.0);
+    ASSERT_EQ(CS::arrayCount(a), 3u);
+    EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 1.0);
+    EXPECT_EQ(CS::arrayAt(a, 2).numberValue(), 3.0);
 }
 
 TEST(DataAggregates, EmptyArrayAndObject) {
     Store store;
-    EXPECT_EQ(store.arrayCount(put(store, "a", "[]")), 0u);
-    EXPECT_EQ(store.objectCount(put(store, "o", "{}")), 0u);
+    EXPECT_EQ(CS::arrayCount(put(store, "a", "[]")), 0u);
+    EXPECT_EQ(CS::objectCount(put(store, "o", "{}")), 0u);
 }
 
 TEST(DataAggregates, ObjectStoresKeys) {
     Store store;
     const Value o = put(store, "user", "{\"name\": \"Вася\", \"age\": 30}");
-    ASSERT_EQ(store.objectCount(o), 2u);
-    EXPECT_EQ(store.string(store.objectGet(o, "name")), "Вася");
-    EXPECT_EQ(store.objectGet(o, "age").numberValue(), 30.0);
+    ASSERT_EQ(CS::objectCount(o), 2u);
+    EXPECT_EQ(store.string(CS::objectGet(o, "name")), "Вася");
+    EXPECT_EQ(CS::objectGet(o, "age").numberValue(), 30.0);
 }
 
 TEST(DataAggregates, KeyWithEscapeIsDecoded) {
     Store store;
     const Value o = put(store, "o", "{'a\\nb': 1}");
-    EXPECT_TRUE(store.objectHas(o, "a\nb"));
+    EXPECT_TRUE(CS::objectHas(o, "a\nb"));
 }
 
 TEST(DataAggregates, LastDuplicateKeyWins) {
     Store store;
     // Бэкенд отсутствия дубликатов не гарантирует; поведение определено.
     const Value o = put(store, "o", "{'k': 1, 'k': 2}");
-    EXPECT_EQ(store.objectCount(o), 1u);
-    EXPECT_EQ(store.objectGet(o, "k").numberValue(), 2.0);
+    EXPECT_EQ(CS::objectCount(o), 1u);
+    EXPECT_EQ(CS::objectGet(o, "k").numberValue(), 2.0);
 }
 
 TEST(DataAggregates, NestingWorks) {
     Store store;
     const Value o = put(store, "state", "{'items': [{'id': 1}, {'id': 2}]}");
-    const Value items = store.objectGet(o, "items");
-    ASSERT_EQ(store.arrayCount(items), 2u);
-    EXPECT_EQ(store.objectGet(store.arrayAt(items, 1), "id").numberValue(), 2.0);
+    const Value items = CS::objectGet(o, "items");
+    ASSERT_EQ(CS::arrayCount(items), 2u);
+    EXPECT_EQ(CS::objectGet(CS::arrayAt(items, 1), "id").numberValue(), 2.0);
 }
 
 TEST(DataAggregates, NegativeNumbersInsideAggregates) {
     Store store;
     const Value a = put(store, "a", "[-1, -2.5]");
-    EXPECT_EQ(store.arrayAt(a, 0).numberValue(), -1.0);
-    EXPECT_EQ(store.arrayAt(a, 1).numberValue(), -2.5);
+    EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), -1.0);
+    EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), -2.5);
 }
 
 TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
@@ -257,7 +258,7 @@ TEST(DataAggregates, ExactCapacityLeavesNoGarbage) {
 
     const std::size_t before = store.bytesUsed();
     const Value a = put(store, "hundred", text);
-    ASSERT_EQ(store.arrayCount(a), 100u);
+    ASSERT_EQ(CS::arrayCount(a), 100u);
     // Прирост — сто слотов плюс заголовок массива, пара глобальной переменной и байты его
     // имени; запас до ста десяти слотов это покрывает. При удвоении вместо
     // точного размера ушло бы сто двадцать восемь слотов, и порог не прошёл бы:

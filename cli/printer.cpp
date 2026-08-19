@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "text.hpp"
+#include "aggregate.hpp"
 
 namespace chupa {
 namespace {
@@ -94,20 +95,20 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
 
     if (value.kind() == CS::Value::Kind::Array) {
         out += '[';
-        const std::uint32_t count = store.arrayCount(value);
+        const std::uint32_t count = CS::arrayCount(value);
         for (std::uint32_t i = 0; i < count; ++i) {
             if (i != 0) { out += ", "; }
-            append(out, ctx, store.arrayAt(value, i), path, depth + 1);
+            append(out, ctx, CS::arrayAt(value, i), path, depth + 1);
         }
         out += ']';
     } else {
         out += '{';
-        const std::uint32_t count = store.objectCount(value);
+        const std::uint32_t count = CS::objectCount(value);
         for (std::uint32_t i = 0; i < count; ++i) {
             if (i != 0) { out += ", "; }
-            appendQuoted(out, store.objectKeyAt(value, i));
+            appendQuoted(out, CS::objectKeyAt(value, i));
             out += ": ";
-            append(out, ctx, store.objectValueAt(value, i), path, depth + 1);
+            append(out, ctx, CS::objectValueAt(value, i), path, depth + 1);
         }
         out += '}';
     }

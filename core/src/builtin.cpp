@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "text.hpp"
+#include "aggregate.hpp"
 
 namespace CS {
 namespace {
@@ -209,10 +210,10 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             // Array, Object либо String (§8.1); у строки — байты, не символы.
             switch (args[0].kind()) {
                 case Value::Kind::Array:
-                    *out = Value::number(first.arrayCount(args[0]));
+                    *out = Value::number(CS::arrayCount(args[0]));
                     return true;
                 case Value::Kind::Object:
-                    *out = Value::number(first.objectCount(args[0]));
+                    *out = Value::number(CS::objectCount(args[0]));
                     return true;
                 case Value::Kind::String:
                     *out = Value::number(
@@ -228,7 +229,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             if (args[0].kind() != Value::Kind::Object) {
                 return failType(offset, "keys expects an object", diag);
             }
-            const std::uint32_t size = first.objectCount(args[0]);
+            const std::uint32_t size = CS::objectCount(args[0]);
             // Результат — новое значение, значит временный регион; ключи
             // читаются оттуда, где лежит объект.
             // Точное выделение: длина известна заранее.
@@ -240,7 +241,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 // агрегат — узел и умеет пережить операцию. Смещение в арену
                 // он бы не пережил.
                 exec.scratch.arrayPush(
-                    result, exec.scratch.materialize(first.objectKeyAt(args[0], i)));
+                    result, exec.scratch.materialize(CS::objectKeyAt(args[0], i)));
             }
             *out = result;
             return true;
@@ -256,7 +257,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                                       buffer, &key, offset, diag)) {
                 return false;
             }
-            *out = Value::boolean(first.objectHas(args[0], key));
+            *out = Value::boolean(CS::objectHas(args[0], key));
             return true;
         }
 
@@ -264,9 +265,9 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             if (args[0].kind() != Value::Kind::Array) {
                 return failType(offset, "last expects an array", diag);
             }
-            const std::uint32_t size = first.arrayCount(args[0]);
+            const std::uint32_t size = CS::arrayCount(args[0]);
             // На пустом — null (§8.4): через индексацию это невыразимо.
-            *out = size == 0 ? Value::null() : first.arrayAt(args[0], size - 1);
+            *out = size == 0 ? Value::null() : CS::arrayAt(args[0], size - 1);
             return true;
         }
 

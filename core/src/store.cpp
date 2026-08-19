@@ -159,21 +159,6 @@ Value Store::makeArray(std::uint32_t capacity) {
     return Value::array(box);
 }
 
-std::uint32_t Store::arrayCount(Value a) const noexcept {
-    assert(a.kind() == Value::Kind::Array);
-    return static_cast<std::uint32_t>(
-        static_cast<const detail::ArrayBox *>(a.box())->items.size());
-}
-
-Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
-    assert(a.kind() == Value::Kind::Array);
-    const detail::ArrayBox *box = static_cast<const detail::ArrayBox *>(a.box());
-    if (index >= box->items.size()) { return Value::null(); }
-    // Ссылка не берётся: значение живо, пока его держит сам массив, а массив
-    // держит тот, кто его читает. Кадр скролла к счётчику не обращается.
-    return box->items[index];
-}
-
 bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     assert(a.kind() == Value::Kind::Array);
     assert(materialized(v) && "строка временного региона не материализована");
@@ -211,42 +196,6 @@ Value Store::makeObject(std::uint32_t capacity) {
     detail::ObjectBox *box = detail::makeObjectBox(keys_, capacity);
     pending_.push_back(box);   // ссылка создателя — до ближайшей границы
     return Value::object(box);
-}
-
-std::uint32_t Store::objectCount(Value o) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
-    return static_cast<std::uint32_t>(
-        static_cast<const detail::ObjectBox *>(o.box())->entries.size());
-}
-
-Value Store::objectGet(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectBox &box = *static_cast<const detail::ObjectBox *>(o.box());
-    bool found = false;
-    const std::uint32_t at = detail::findEntry(box, key, &found);
-    if (!found) { return Value::null(); }
-    return box.entries[at].value;
-}
-
-bool Store::objectHas(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
-    bool found = false;
-    detail::findEntry(*static_cast<const detail::ObjectBox *>(o.box()), key, &found);
-    return found;
-}
-
-std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectBox &box = *static_cast<const detail::ObjectBox *>(o.box());
-    if (i >= box.entries.size()) { return {}; }
-    return box.keys->bytes(box.entries[i].key);
-}
-
-Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectBox &box = *static_cast<const detail::ObjectBox *>(o.box());
-    if (i >= box.entries.size()) { return Value::null(); }
-    return box.entries[i].value;
 }
 
 void Store::objectSet(Value o, std::string_view key, Value v) {

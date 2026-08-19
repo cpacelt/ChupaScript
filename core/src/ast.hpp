@@ -52,8 +52,16 @@ inline constexpr NodeId kNoNode = 0;
 
 /// Дерево разбора: хранение, строитель, аксессоры.
 ///
-/// Ничем не владеет: текст имён и литералов — смещения в исходнике, который
-/// передаётся аксессорам параметром.
+/// Имена — смещения в исходнике, который передаётся аксессорам параметром, и
+/// им дерево не владеет. А вот строковые литералы дерево владеет: их байты не
+/// в исходнике (там могут быть экранированы), а в коробках, на которые узлы
+/// String указывают, и эти коробки — собственность дерева.
+///
+///   Ast
+///    ├── nodes_      vector<Node>          сами узлы
+///    ├── children_   vector<NodeId>        списки детей
+///    └── literals_   vector<StringBox *>   по одной ссылке на литерал,
+///                                          отпускаются при разрушении дерева
 class Ast {
    public:
     Ast();
@@ -63,9 +71,10 @@ class Ast {
     /// Выбрасывает всё, что было построено раньше: Ast пригоден для повторного
     /// разбора. Самого исходника дерево не держит — узлы хранят смещения, а
     /// байты приходят параметром в text(). Поэтому Ast безразличен к тому,
-    /// куда переехал буфер (docs/backlog.md B39). Литералы прежнего дерева
-    /// отпускаются тут же — иначе повторный разбор одного и того же Ast растил
-    /// бы literals_ без счёта: ссылки прежних узлов больше никто не отпустит.
+    /// куда переехал буфер (docs/backlog.md B39). The previous tree's literals
+    /// are released right here — otherwise reusing the same Ast for a second
+    /// parse would grow literals_ without bound: nothing else ever releases
+    /// the old nodes' references.
     void reset(std::uint32_t sourceLength);
 
     /// Объявляет узел корнем дерева.
@@ -194,12 +203,6 @@ class Ast {
     /// Lays the bytes of one string literal into a box owned by THIS Ast and
     /// returns it. Called once per String node, by compilation
     /// (core/src/compile.hpp).
-    ///
-    ///   Ast
-    ///    ├── nodes_      vector<Node>          the tree itself
-    ///    ├── children_   vector<NodeId>        child lists
-    ///    └── literals_   vector<StringBox *>   one reference each, released
-    ///                                          when this Ast is destroyed
     ///
     /// The box lives from this call until the Ast is destroyed. It is not a
     /// value the program creates but a constant the program contains, so it

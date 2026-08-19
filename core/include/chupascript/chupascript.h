@@ -161,8 +161,10 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 
 /* Compiled units are owned by the caller, not by the context. Destroying the
  * context does not free them; destroying a unit does not touch the context.
- * A unit may be destroyed in any order relative to the context it was
- * compiled against — it holds no reference to it.
+ * Nothing stops a unit from being destroyed before the context it was
+ * compiled against — it holds no reference to it. That is not permission to
+ * destroy a unit while a value obtained from evaluating it is still in use
+ * unretained: see the LIFETIME note near chupa_eval_value.
  *
  * A unit MUST be evaluated on the very context it was compiled against.
  * Every evaluation checks this — in release builds too — and a mismatch fails
@@ -254,7 +256,15 @@ chupa_eval_string_borrowed(ChupaContext *ctx, ChupaExpression *e,
  *
  * Key and string bytes are borrowed from the value that yielded them and stay
  * valid as long as that value does — which, for a retained value, is as long
- * as the host keeps it. They are NOT NUL-terminated. */
+ * as the host keeps it. They are NOT NUL-terminated.
+ *
+ * A bare string-literal result is a second, narrower case: its bytes belong
+ * to the compiled unit, not to the context, so destroying the ChupaExpression
+ * or ChupaScript that produced it ends the life of any un-retained value read
+ * from it — even though the context the unit was compiled against is still
+ * alive. Recompiling into that same unit does the same, because compiling
+ * discards what the unit held before. chupa_value_retain covers this case
+ * exactly as it covers every other borrowed value. */
 
 typedef struct ChupaValue { uint64_t _bits[2]; } ChupaValue;
 

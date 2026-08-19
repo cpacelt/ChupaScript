@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <set>
 #include <string>
 
@@ -23,13 +24,17 @@ using CS::Diagnostic;
 using CS::Value;
 
 /// Разбирает и вычисляет; требует успеха обоих шагов.
-///
-/// Ast — статическая переменная функции, не локальная: строковый литерал в
-/// возвращаемом Value указывает в коробку, которой теперь владеет дерево
-/// (задача 3), а не хранилище, — локальная Ast умерла бы раньше, чем
-/// EXPECT_EQ прочтёт результат.
 Value evaluate(CS::Execution &exec, std::string_view text) {
-    static thread_local Ast ast;
+    /// Every tree this helper compiles stays alive for the whole test binary.
+    ///
+    /// The Value this helper returns may point at a string-literal box owned
+    /// by the tree that produced it, and the box is released when that tree
+    /// is destroyed or reset. A single shared tree would therefore release
+    /// one test's literals as soon as the next test compiled into it. A
+    /// deque rather than a vector: growing a vector moves its elements, and
+    /// an Ast being evaluated must not move under the call.
+    static thread_local std::deque<Ast> trees;
+    Ast &ast = trees.emplace_back();
     Diagnostic diag;
     const std::uint32_t errors =
         CS::compileExpression(text.data(),

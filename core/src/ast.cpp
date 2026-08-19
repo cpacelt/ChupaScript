@@ -60,9 +60,10 @@ void Ast::reset(std::uint32_t sourceLength) {
     nodes_.clear();
     children_.clear();
     nodes_.push_back(Node{});  // индекс kNoNode
-    // Дерево выброшено — отметка уходит вместе с ним, и с ней уходят литералы:
-    // без release() здесь повторный разбор того же Ast растил бы literals_
-    // безостановочно, ведь ссылки старого дерева больше никто не отпустит.
+    // The tree is discarded here, and its literals go with it: without
+    // release() here, reusing the same Ast for another parse would grow
+    // literals_ without bound, since nothing else ever releases the old
+    // tree's references.
     for (detail::StringBox *literal : literals_) { detail::release(literal); }
     literals_.clear();
     checked_ = false;

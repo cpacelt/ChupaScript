@@ -16,21 +16,21 @@ std::uint32_t reportParseFailure(const Diagnostic &diag, Diagnostic *out,
     return 1;
 }
 
-/// Укладывает байты каждого строкового литерала в коробку, которой владеет
-/// само дерево (Ast::internLiteral), и кладёт получившийся указатель в узел.
+/// Lays the bytes of each string literal into a box owned by the tree itself
+/// (Ast::internLiteral) and stores the resulting pointer in the node.
 ///
-/// Литерал неизменен, поэтому одной копии на всю жизнь единицы довольно, и
-/// вычисление сводится к чтению готового значения из узла. Раньше копия
-/// делалась заново на каждом вычислении и уходила в пул хранилища, который
-/// поштучно не освобождается — то есть выражение со строкой, пересчитываемое
-/// на каждый кадр, растило память монотонно (docs/backlog.md B51).
+/// A literal is immutable, so one copy suffices for the whole unit's life,
+/// and evaluation reduces to reading the ready value out of the node.
+/// Previously the copy was remade on every evaluation and went into the
+/// store's pool, which is never freed piecemeal — so a string expression
+/// re-evaluated every frame grew memory monotonically (docs/backlog.md B51).
 ///
-/// Экранирование раскодируется здесь же, поэтому черновик scratch заводится
-/// один на весь проход, а не на каждое вычисление.
+/// Escapes are decoded right here, so the scratch buffer is set up once for
+/// the whole pass rather than once per evaluation.
 ///
-/// Зовётся только после успешной проверки: на дереве с ошибками укладывать
-/// литералы незачем, а коробки остались бы висеть до смерти дерева без
-/// всякой пользы.
+/// Called only after a successful check: on a tree with errors there is no
+/// point laying out literals, and the boxes would sit unused until the
+/// tree's death.
 void internStringLiterals(Ast &ast, std::string_view source) {
     const NodeId root = ast.root();
     std::string scratch;

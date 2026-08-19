@@ -45,10 +45,14 @@ TEST(StoreMetrics, MaterializedStringCostsABoxNotPoolBytes) {
 TEST(StoreMetrics, ReservedCoversUsed) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
-    for (int i = 0; i < 100; ++i) {
-        CS::arrayPush(a, Value::number(static_cast<double>(i)));
-    }
+    // A box (CS::makeArray/arrayPush) never touches the store's own pools —
+    // it lives by refcount, not by region — so the subject here has to be
+    // what actually writes into text_/globalNames_/globalValues_: a global
+    // variable. Without this, bytesUsed() and bytesReserved() both read 0 on
+    // a fresh Store and the assertion below would hold no matter what
+    // bytesReserved() did.
+    store.setGlobal("name", CS::materialize("значение", dead), dead);
+    EXPECT_GT(store.bytesUsed(), 0u);
     EXPECT_GE(store.bytesReserved(), store.bytesUsed());
 }
 

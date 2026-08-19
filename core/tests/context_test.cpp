@@ -339,4 +339,35 @@ TEST(Execution, AbortedBuildLeavesNoTail) {
     EXPECT_EQ(exec.string(exec.endString(second)), "kept");
 }
 
+/// Aborting an inner build must not disturb bytes an outer, still-open build
+/// already appended: the mark is a position in the shared buffer, and an
+/// inner abort truncates only back to its own mark.
+TEST(Execution, NestedAbortLeavesTheOuterAssemblyIntact) {
+    CS::Store store;
+    CS::Execution exec(store);
+
+    const std::uint32_t outer = exec.beginString();
+    exec.appendToString("внешнее ");
+    const std::uint32_t inner = exec.beginString();
+    exec.appendToString("выброшенное");
+    exec.abortString(inner);
+    exec.appendToString("продолжение");
+    EXPECT_EQ(exec.string(exec.endString(outer)), "внешнее продолжение");
+}
+
+/// The mark is a POSITION, not a pointer: growing builder_ well past its
+/// initial capacity must not corrupt a build already in progress.
+TEST(Execution, SurvivesBufferGrowth) {
+    CS::Store store;
+    CS::Execution exec(store);
+
+    const std::uint32_t mark = exec.beginString();
+    std::string expected;
+    for (int i = 0; i < 500; ++i) {
+        exec.appendToString("кусок");
+        expected += "кусок";
+    }
+    EXPECT_EQ(exec.string(exec.endString(mark)), expected);
+}
+
 }  // namespace

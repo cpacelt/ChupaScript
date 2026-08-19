@@ -1575,6 +1575,14 @@ MSG
 - Modify: `core/include/chupascript/chupascript.h` (поверхность целиком)
 - Modify: `core/src/c_api.cpp`
 - Modify: `core/src/context.hpp` (ячейка последнего результата, Р9)
+- Modify: `benchmarks/host_benchmark.cpp` — единственный потребитель C API за
+  пределами ядра и обёртки; зовёт `chupa_context_set`, `chupa_context_error`
+  старой формы, `chupa_value_string_borrowed` и четыре функции значения по
+  копии. Без него `build-rel` не собирается, а план обязан оставлять дерево
+  собранным после каждого коммита.
+- Modify: `core/src/context.cpp`/`context.hpp` — снять `evalValue` и
+  `evalString`: их звали только `chupa_eval_value` и
+  `chupa_eval_string_borrowed`, а обе функции эта задача удаляет.
 - Test: `core/tests/c_api_test.cpp`, `core/tests/smoke_test.cpp`
 
 **Interfaces:**

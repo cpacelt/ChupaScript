@@ -233,7 +233,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             // Результат — новое значение, значит временный регион; ключи
             // читаются оттуда, где лежит объект.
             // Точное выделение: длина известна заранее.
-            Value result = exec.scratch.makeArray(size);
+            Value result = CS::makeArray(size, exec.deferred());
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.

@@ -23,12 +23,9 @@ struct GlobalName {
 
 }  // namespace detail
 
-Store::Store(Value::Region region, KeyTable *keys, Deferred *deferred)
-    : region_(region),
-      keys_(keys != nullptr ? keys : KeyTable::create()),
-      deferred_(deferred != nullptr ? deferred : &owned_) {
-    if (keys != nullptr) { KeyTable::retain(keys_); }
-}
+Store::Store() : keys_(KeyTable::create()), deferred_(&owned_) {}
+
+Store::Store(Deferred &shared) : keys_(nullptr), deferred_(&shared) {}
 
 Store::~Store() {
     // Порядок важен: сначала ссылки, потом оснастка. Коробка объекта отпускает
@@ -37,7 +34,8 @@ Store::~Store() {
     // На месте, а не в список: границы операции больше не будет.
     for (Value v : globalValues_) { detail::releaseValue(v); }
     for (detail::StringBox *literal : literals_) { detail::release(literal); }
-    KeyTable::release(keys_);
+    // У арены операции таблицы нет вовсе — отпускать нечего.
+    if (keys_ != nullptr) { KeyTable::release(keys_); }
 }
 
 std::uint32_t Store::appendText(std::string_view bytes) {
@@ -75,12 +73,8 @@ std::string_view Store::textAt(std::uint32_t offset,
 }
 
 Value Store::makeString(std::string_view bytes) {
-    if (region_ == Value::Region::Scratch) {
-        const std::uint32_t offset = appendText(bytes);
-        return Value::scratchString(offset,
-                                    static_cast<std::uint32_t>(bytes.size()));
-    }
-    return materialize(bytes);
+    const std::uint32_t offset = appendText(bytes);
+    return Value::scratchString(offset, static_cast<std::uint32_t>(bytes.size()));
 }
 
 Value Store::materialize(std::string_view bytes) {
@@ -143,18 +137,6 @@ void Store::clearSlow() noexcept {
     // глобальные заводит только хост, а он пишет в постоянный.
 }
 
-Value Store::makeArray(std::uint32_t capacity) {
-    detail::ArrayBox *box = detail::makeArrayBox(capacity);
-    deferred_->take(box);  // ссылка создателя — до ближайшей границы
-    return Value::array(box);
-}
-
-Value Store::makeObject(std::uint32_t capacity) {
-    detail::ObjectBox *box = detail::makeObjectBox(keys_, capacity);
-    deferred_->take(box);  // ссылка создателя — до ближайшей границы
-    return Value::object(box);
-}
-
 std::uint32_t Store::findGlobal(std::string_view name,
                                 bool *found) const noexcept {
     // Тот же двоичный поиск, что и findEntry, но по своему массиву. Ходят сюда
@@ -204,7 +186,7 @@ bool Store::hasGlobal(std::string_view name) const noexcept {
 }
 
 void Store::setGlobal(std::string_view name, Value v) {
-    assert(materialized(v) && "строка временного региона не материализована");
+    assert(detail::materialized(v) && "строка временного региона не материализована");
 
     bool found = false;
     const std::uint32_t at = findGlobal(name, &found);

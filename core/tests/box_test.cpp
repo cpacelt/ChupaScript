@@ -107,7 +107,7 @@ namespace {
 /// Объект с этими ключами, собранный через хранилище, — чтобы порядок пар
 /// заводил сам objectSet, а не тест.
 CS::Value objectWith(CS::Store &store, std::initializer_list<std::string_view> keys) {
-    CS::Value o = store.makeObject(static_cast<std::uint32_t>(keys.size()));
+    CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), store.deferred());
     double n = 0.0;
     for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), store.deferred()); }
     return o;

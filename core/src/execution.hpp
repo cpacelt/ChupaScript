@@ -28,13 +28,14 @@ namespace CS {
 /// хранилищем на всю жизнь.
 class Execution {
    public:
-    /// Таблица имён у временного региона общая с постоянным: агрегат,
-    /// собранный вычислением и попавший в глобальную переменную, не
-    /// копируется, и переводить номера ключей было бы негде.
+    /// Арена берёт у постоянного хранилища только список отложенного
+    /// освобождения: сливаются они всё равно вместе, на одной границе.
+    ///
+    /// Таблицу имён она больше не удерживает. Нужна та ровно одному — тому,
+    /// кто создаёт объект, — и берёт он её теперь у владельца через
+    /// Execution::keys(), а не у арены дубликатом указателя.
     explicit Execution(Store &persistent) noexcept
-        : scratch(Value::Region::Scratch, persistent.keys(),
-                  &persistent.deferred()),
-          persistent_(persistent) {}
+        : scratch(persistent.deferred()), persistent_(persistent) {}
 
     Execution(const Execution &) = delete;
     Execution &operator=(const Execution &) = delete;
@@ -73,6 +74,10 @@ class Execution {
     /// Список отложенного освобождения этого выполнения. Один на оба
     /// хранилища — см. deferred.hpp.
     [[nodiscard]] Deferred &deferred() noexcept { return scratch.deferred(); }
+
+    /// Таблица имён полей контекста — та единственная, что есть. Нужна тому,
+    /// кто создаёт объект (CS::makeObject); владеет ею постоянное хранилище.
+    [[nodiscard]] KeyTable *keys() const noexcept { return persistent_.keys(); }
 
    private:
     Store &persistent_;

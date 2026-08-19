@@ -18,7 +18,7 @@ void BM_Store_ArrayPush(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = store.makeArray();
+        const Value a = CS::makeArray(0, store.deferred());
         for (int i = 0; i < count; ++i) {
             CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
@@ -36,7 +36,7 @@ void BM_Store_ArrayPushReserved(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = store.makeArray(static_cast<std::uint32_t>(count));
+        const Value a = CS::makeArray(static_cast<std::uint32_t>(count), store.deferred());
         for (int i = 0; i < count; ++i) {
             CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
@@ -50,7 +50,7 @@ BENCHMARK(BM_Store_ArrayPushReserved)->Arg(1000);
 /// Обход массива: цена разыменования через индекс.
 void BM_Store_ArrayTraverse(benchmark::State &state) {
     Store store;
-    const Value a = store.makeArray(1000);
+    const Value a = CS::makeArray(1000, store.deferred());
     for (int i = 0; i < 1000; ++i) {
         CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
@@ -68,7 +68,7 @@ BENCHMARK(BM_Store_ArrayTraverse);
 
 /// Объект заданного размера с ключами вида "keyNN".
 Value makeFilledObject(Store &store, int keys) {
-    const Value o = store.makeObject(static_cast<std::uint32_t>(keys));
+    const Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys), store.deferred());
     for (int i = 0; i < keys; ++i) {
         CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.deferred());
     }

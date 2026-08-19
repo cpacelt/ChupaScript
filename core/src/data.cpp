@@ -66,7 +66,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
             const std::uint32_t count = ast.childCount(node);
             // Размер известен заранее, поэтому ёмкость выделяется точно и
             // построение не оставляет мусора.
-            const Value array = store.makeArray(count);
+            const Value array = CS::makeArray(count, store.deferred());
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
                 if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
@@ -81,7 +81,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
         case NodeKind::Object: {
             // Дети чередуются: ключ, значение, ключ, значение.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = store.makeObject(count / 2);
+            const Value object = CS::makeObject(store.keys(), count / 2, store.deferred());
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();

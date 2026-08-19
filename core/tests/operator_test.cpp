@@ -70,7 +70,7 @@ TEST(OperatorUnary, BangRequiresBoolean) {
     EXPECT_EQ(unaryError(TokenKind::Bang, Value::null()).code, CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Bang, store.makeString("a")).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(unaryError(TokenKind::Bang, store.makeArray()).code,
+    EXPECT_EQ(unaryError(TokenKind::Bang, CS::makeArray(0, store.deferred())).code,
               CS::ErrorCode::Type);
 }
 
@@ -118,7 +118,7 @@ TEST(OperatorArithmetic, RequiresNumbersOnBothSides) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Plus, number(1.0), Value::boolean(true), store).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Star, store.makeArray(), number(2.0), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Star, CS::makeArray(0, store.deferred()), number(2.0), store).code,
               CS::ErrorCode::Type);
 }
 
@@ -184,7 +184,7 @@ TEST(OperatorOrdering, RequiresNumbers) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Less, Value::null(), number(1.0), store).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Greater, store.makeArray(), store.makeArray(), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Greater, CS::makeArray(0, store.deferred()), CS::makeArray(0, store.deferred()), store).code,
               CS::ErrorCode::Type);
     // Смешанная пара: число со строкой. Числа здесь достаточно, чтобы соблазн
     // «привести второй операнд» выглядел естественным, — приведения нет.
@@ -251,7 +251,7 @@ TEST(OperatorEquality, DifferentTypesAreAnError) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Equal, Value::boolean(true), number(1.0), store).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Equal, store.makeArray(), store.makeObject(), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Equal, CS::makeArray(0, store.deferred()), CS::makeObject(store.keys(), 0, store.deferred()), store).code,
               CS::ErrorCode::Type);
 }
 
@@ -303,10 +303,10 @@ TEST(OperatorEquality, BooleansCompareByValue) {
 
 TEST(OperatorEquality, AggregatesCompareByIdentity) {
     Store store;
-    const Value items = store.makeArray();
+    const Value items = CS::makeArray(0, store.deferred());
     CS::arrayPush(items, number(1.0));
     const Value alias = items;
-    const Value other = store.makeArray();
+    const Value other = CS::makeArray(0, store.deferred());
     CS::arrayPush(other, number(1.0));
 
     // docs/semantics.md §5.4: равны тогда и только тогда, когда это один и тот
@@ -316,10 +316,10 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
 
     // Объекты идут по той же ветке switch, что и массивы, но проверены до сих
     // пор были только массивы.
-    const Value box = store.makeObject();
+    const Value box = CS::makeObject(store.keys(), 0, store.deferred());
     CS::objectSet(box, "k", number(1.0), store.deferred());
     const Value boxAlias = box;
-    const Value otherBox = store.makeObject();
+    const Value otherBox = CS::makeObject(store.keys(), 0, store.deferred());
     CS::objectSet(otherBox, "k", number(1.0), store.deferred());
     EXPECT_TRUE(binary(TokenKind::Equal, box, boxAlias, store).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, box, otherBox, store).booleanValue());

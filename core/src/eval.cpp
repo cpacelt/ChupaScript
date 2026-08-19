@@ -327,7 +327,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // `[state.header]` — и это разрешено: барьер направленный, ссылка
             // умрёт раньше того, на что указывает.
             // Размер известен заранее — точное выделение, без переездов.
-            const Value array = exec.scratch.makeArray(count);
+            const Value array = CS::makeArray(count, exec.deferred());
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
                 if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
@@ -346,7 +346,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // Дети чередуются: ключ, значение. Ключ — строковый литерал по
             // грамматике, приведение §4 к нему не применяется.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = exec.scratch.makeObject(count / 2);
+            const Value object = CS::makeObject(exec.keys(), count / 2, exec.deferred());
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
                 if (!eval(ast, source, ast.child(node, i + 1), exec, &value, diag)) {

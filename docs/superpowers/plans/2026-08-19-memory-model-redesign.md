@@ -2457,7 +2457,24 @@ cmake --build build-rel -j8
   --benchmark_repetitions=9 --benchmark_report_aggregates_only=true \
   --benchmark_format=json > /tmp/bench-checkpoint-b.json
 python3 tools/bench-compare.py benchmarks/baseline.json /tmp/bench-checkpoint-b.json
+python3 tools/bench-compare.py /tmp/bench-checkpoint-a.json /tmp/bench-checkpoint-b.json
 ```
+
+**Сравнивать надо против двух точек, и они отвечают на разные вопросы.**
+Выяснилось на рубеже A: `benchmarks/baseline.json` был снят на чужой машине, и
+`tools/bench-compare.py` отказывался сравнивать вовсе (код 2), из-за чего рубеж
+не сказал ничего. База переснята на этой машине в точке ветвления `f8f0273`
+(коммит `e49f512`). Но между `f8f0273` и началом этой работы лежат 57 коммитов
+конверсии на счётчик ссылок, поэтому:
+
+- **против `benchmarks/baseline.json`** — что изменилось с эпохи арен, включая
+  ту конверсию. Долгий отсчёт, этой работе не принадлежит.
+- **против предыдущего рубежа** (`/tmp/bench-checkpoint-a.json` и далее) — что
+  стоила **эта** задача. Это и есть число, по которому судят её ожидания.
+
+Обе таблицы кладутся в документ рубежа, каждая с подписью, на какой вопрос
+отвечает. Смешивать их в одну — тот же дефект, что и межмашинное сравнение:
+число есть, смысла нет.
 
 Ожидания, названные заранее:
 
@@ -2748,7 +2765,24 @@ cmake --build build-rel -j8
   --benchmark_repetitions=9 --benchmark_report_aggregates_only=true \
   --benchmark_format=json > /tmp/bench-checkpoint-c.json
 python3 tools/bench-compare.py benchmarks/baseline.json /tmp/bench-checkpoint-c.json
+python3 tools/bench-compare.py /tmp/bench-checkpoint-b.json /tmp/bench-checkpoint-c.json
 ```
+
+**Сравнивать надо против двух точек, и они отвечают на разные вопросы.**
+Выяснилось на рубеже A: `benchmarks/baseline.json` был снят на чужой машине, и
+`tools/bench-compare.py` отказывался сравнивать вовсе (код 2), из-за чего рубеж
+не сказал ничего. База переснята на этой машине в точке ветвления `f8f0273`
+(коммит `e49f512`). Но между `f8f0273` и началом этой работы лежат 57 коммитов
+конверсии на счётчик ссылок, поэтому:
+
+- **против `benchmarks/baseline.json`** — что изменилось с эпохи арен, включая
+  ту конверсию. Долгий отсчёт, этой работе не принадлежит.
+- **против предыдущего рубежа** (`/tmp/bench-checkpoint-a.json` и далее) — что
+  стоила **эта** задача. Это и есть число, по которому судят её ожидания.
+
+Обе таблицы кладутся в документ рубежа, каждая с подписью, на какой вопрос
+отвечает. Смешивать их в одну — тот же дефект, что и межмашинное сравнение:
+число есть, смысла нет.
 
 | замер | ожидание на рубеже C |
 |---|---|

@@ -26,7 +26,9 @@ StringBox *makeStringBox(std::string_view bytes) {
     // Одна аллокация на заголовок и байты: у строки нет ни роста, ни
     // перезаписи, поэтому отдельный буфер ей был бы только лишней косвенностью.
     void *raw = ::operator new(sizeof(StringBox) + bytes.size());
-    StringBox *box = new (raw) StringBox();
+    // Без скобок: StringBox() занулил бы rc, kind и len ровно перед тем, как
+    // все три перезаписать следующими строками.
+    StringBox *box = new (raw) StringBox;
     box->rc = 1;
     box->kind = Value::Kind::String;
     box->len = static_cast<std::uint32_t>(bytes.size());
@@ -71,6 +73,11 @@ std::uint32_t keyPrefix(std::string_view key) noexcept {
 
 std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
                         bool *found) noexcept {
+    return findEntry(box, key, keyPrefix(key), found);
+}
+
+std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
+                        std::uint32_t want, bool *found) noexcept {
     // Пары отсортированы по байтам ключа, поиск двоичный: на типичных 3–20
     // ключах это дешевле хеш-таблицы и не выделяет ничего сверх самого вектора.
     //
@@ -78,7 +85,7 @@ std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
     // записи. Порядок префиксов совпадает с байтовым (см. keyPrefix), поэтому
     // различие префиксов решает пробу целиком, и таблица имён при этом не
     // читается. До байт дело доходит лишь когда первые четыре совпали.
-    const std::uint32_t want = keyPrefix(key);
+    assert(want == keyPrefix(key));
     std::uint32_t low = 0;
     std::uint32_t high = static_cast<std::uint32_t>(box.entries.size());
     while (low < high) {
@@ -100,13 +107,6 @@ std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
     }
     *found = false;
     return low;
-}
-
-/// Отпустить значение, если оно вообще на что-то ссылается счётчиком.
-static void releaseValue(Value v) noexcept {
-    if (v.addressesStore() && v.region() == Value::Region::Boxed) {
-        release(v.box());
-    }
 }
 
 void release(Box *box) noexcept {

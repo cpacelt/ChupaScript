@@ -98,16 +98,47 @@ struct ObjectBox : Box {
 std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
                         bool *found) noexcept;
 
+/// То же, но с уже посчитанным префиксом ключа. Для записи: та вставляет
+/// префикс в новую пару и иначе считала бы его дважды за один вызов.
+std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
+                        std::uint32_t prefix, bool *found) noexcept;
+
 /// Счётчик у новорождённого — 1, и эта ссылка принадлежит создателю.
 StringBox *makeStringBox(std::string_view bytes);
 ArrayBox *makeArrayBox(std::uint32_t capacity);
 /// Ссылку на таблицу коробка берёт сама.
 ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity);
 
+/// Коробка, которой значение владеет, либо nullptr, если не владеет ничем.
+///
+/// Один предикат на весь движок. Вопрос «держит ли это значение ссылку»
+/// задают четверо — взятие ссылки, отпускание, отложенное освобождение и
+/// граница с хостом, — и до этой функции каждый спрашивал своими словами,
+/// повторяя одно и то же условие пятью разными способами.
+///
+/// Отрицательных ответов два и они разные: у скаляра ссылаться нечему вовсе, у
+/// промежуточной строки коробки не существует — она смещение в арену.
+[[nodiscard]] inline Box *boxOf(Value v) noexcept {
+    if (!v.addressesStore() || v.region() != Value::Region::Boxed) {
+        return nullptr;
+    }
+    return v.box();
+}
+
 inline void retain(Box *box) noexcept { ++box->rc; }
 
 /// Отпускает ссылку; на нуле разрушает коробку, рекурсивно отпуская содержимое.
 void release(Box *box) noexcept;
+
+/// Отпускает ссылку значения, если оно ею владеет.
+inline void releaseValue(Value v) noexcept {
+    if (Box *box = boxOf(v)) { release(box); }
+}
+
+/// Берёт ссылку на значение, если оно ею владеет.
+inline void retainValue(Value v) noexcept {
+    if (Box *box = boxOf(v)) { retain(box); }
+}
 
 /// Сколько коробок сейчас живо во всём процессе.
 ///

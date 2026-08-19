@@ -171,15 +171,16 @@ class Value {
     /// Закрыта, потому что смещение полно как тип: без ограничения доступа
     /// любой код собрал бы строку, указывающую в произвольное место арены.
     ///
-    /// Индексных фабрик для массива и объекта здесь больше нет — агрегат
-    /// теперь всегда коробка, и звать их было неоткуда.
-    [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length,
-                                      Region region) noexcept {
+    /// Региона в параметрах нет: смещение осмысленно ровно в одном регионе, и
+    /// раньше он передавался сюда единственным значением. Индексных фабрик для
+    /// массива и объекта здесь тоже больше нет — агрегат теперь всегда коробка.
+    [[nodiscard]] static Value scratchString(std::uint32_t offset,
+                                             std::uint32_t length) noexcept {
         Value v;
         v.kind_ = Kind::String;
         v.length_ = length;
         v.index_ = offset;
-        v.region_ = region;
+        v.region_ = Region::Scratch;
         return v;
     }
 

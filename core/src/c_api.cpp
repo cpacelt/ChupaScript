@@ -367,13 +367,6 @@ const CS::detail::ObjectBox* asObject(CS::Value v) {
     return static_cast<const CS::detail::ObjectBox*>(v.box());
 }
 
-/// Ссылается ли значение счётчиком. Скаляр — нет, промежуточная строка — нет:
-/// у неё коробки не существует, и попасть сюда она не может, потому что
-/// chupa_eval_value её материализует.
-bool counted(CS::Value v) {
-    return v.addressesStore() && v.region() == CS::Value::Region::Boxed;
-}
-
 }  // namespace
 
 ChupaStatus chupa_eval_value(ChupaContext* ctx, ChupaExpression* e,
@@ -418,10 +411,10 @@ size_t chupa_array_count(ChupaValue v) {
 }
 
 ChupaValue chupa_array_at(ChupaValue v, size_t i) {
-    const CS::detail::ArrayBox* node = asArray(fromC(v));
-    if (i >= node->items.size()) { return toC(CS::Value::null()); }
+    const CS::detail::ArrayBox* box = asArray(fromC(v));
+    if (i >= box->items.size()) { return toC(CS::Value::null()); }
     // Ссылка не берётся: элемент держит сам массив, а массив держит хост.
-    return toC(node->items[i]);
+    return toC(box->items[i]);
 }
 
 size_t chupa_object_count(ChupaValue v) {
@@ -430,43 +423,42 @@ size_t chupa_object_count(ChupaValue v) {
 
 void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
                          size_t* len) {
-    const CS::detail::ObjectBox* node = asObject(fromC(v));
-    if (i >= node->entries.size()) {
+    const CS::detail::ObjectBox* box = asObject(fromC(v));
+    if (i >= box->entries.size()) {
         *bytes = nullptr;
         *len = 0;
         return;
     }
     // Имя берётся из таблицы коробки, а не из чьего-то хранилища: она и есть то,
     // что делает объект читаемым после смерти контекста.
-    const std::string_view key = node->keys->bytes(node->entries[i].key);
+    const std::string_view key = box->keys->bytes(box->entries[i].key);
     *bytes = key.data();
     *len = key.size();
 }
 
 ChupaValue chupa_object_value_at(ChupaValue v, size_t i) {
-    const CS::detail::ObjectBox* node = asObject(fromC(v));
-    if (i >= node->entries.size()) { return toC(CS::Value::null()); }
-    return toC(node->entries[i].value);
+    const CS::detail::ObjectBox* box = asObject(fromC(v));
+    if (i >= box->entries.size()) { return toC(CS::Value::null()); }
+    return toC(box->entries[i].value);
 }
 
 ChupaValue chupa_object_get(ChupaValue v, const char* key, size_t key_len) {
-    const CS::detail::ObjectBox* node = asObject(fromC(v));
+    const CS::detail::ObjectBox* box = asObject(fromC(v));
     bool found = false;
     const std::uint32_t at =
-        CS::detail::findEntry(*node, std::string_view(key, key_len), &found);
+        CS::detail::findEntry(*box, std::string_view(key, key_len), &found);
     if (!found) { return toC(CS::Value::null()); }
-    return toC(node->entries[at].value);
+    return toC(box->entries[at].value);
 }
 
-void chupa_value_retain(ChupaValue v) {
-    const CS::Value value = fromC(v);
-    if (counted(value)) { CS::detail::retain(value.box()); }
-}
+// Скаляр обе функции пропускают молча, и это не снисхождение: хост не обязан
+// разбирать, что ему вернули, — он держит ChupaValue и отпускает его так же,
+// каким бы тот ни оказался. Промежуточной строки здесь не бывает вовсе:
+// chupa_eval_value её материализует.
 
-void chupa_value_release(ChupaValue v) {
-    const CS::Value value = fromC(v);
-    if (counted(value)) { CS::detail::release(value.box()); }
-}
+void chupa_value_retain(ChupaValue v) { CS::detail::retainValue(fromC(v)); }
+
+void chupa_value_release(ChupaValue v) { CS::detail::releaseValue(fromC(v)); }
 
 // ─── Run ───
 

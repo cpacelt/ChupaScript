@@ -421,8 +421,10 @@ TEST(Expression, RefusesToEvaluateOnAnotherStore) {
 }
 ```
 
-Тот же тест для `Script::run` в `core/tests/script_test.cpp`, с телом
-скрипта `x = 1` и именем `x`, заведённым в `home`.
+Тот же тест для `Script::run` в `core/tests/script_test.cpp`. Цель
+присваивания — поле, а не имя: `state = {...}` грамматика разбирает, но
+компиляция отвергает (`docs/semantics.md` §7.2), поэтому телом скрипта берётся
+`x.n = 1;` над объектом `{'n': 1}`, заведённым в `home`.
 
 - [ ] **Step 2: Прогнать и убедиться, что он падает**
 

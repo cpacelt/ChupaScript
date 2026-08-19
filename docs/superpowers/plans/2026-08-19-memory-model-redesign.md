@@ -798,6 +798,11 @@ MSG
   `appendToString`, `endString`, `abortString`, член `build_`)
 - Modify: `core/src/eval.cpp:126-188` (`evalFormat`)
 - Modify: `core/src/builtin.cpp:296-311` (`Builtin::Str`)
+- Modify: `core/src/context.hpp` (`setGlobal`) — второй дефект того же семейства,
+  что и Б1, найденный при исполнении: единственной ссылкой у `v` бывает ссылка
+  создателя в списке отложенного освобождения, а `beginOperation()` сливает
+  именно этот список — то есть освобождает коробку до того, как её удержит
+  ячейка. Удержать надо **до** границы, а ссылку положить в свежий список.
 - Modify: `core/tests/store_test.cpp` (тесты снятого API)
 - Modify: `core/tests/operator_test.cpp:72,99` (два вызова `store.makeString`)
 - Modify: `benchmarks/store_benchmark.cpp:115-127` (`BM_Store_MakeString`)

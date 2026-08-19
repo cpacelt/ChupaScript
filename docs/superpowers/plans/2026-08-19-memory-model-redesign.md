@@ -799,6 +799,8 @@ MSG
 - Modify: `core/src/eval.cpp:126-188` (`evalFormat`)
 - Modify: `core/src/builtin.cpp:296-311` (`Builtin::Str`)
 - Modify: `core/tests/store_test.cpp` (тесты снятого API)
+- Modify: `core/tests/operator_test.cpp:72,99` (два вызова `store.makeString`)
+- Modify: `benchmarks/store_benchmark.cpp:115-127` (`BM_Store_MakeString`)
 - Test: `core/tests/context_test.cpp`, `core/tests/eval_test.cpp`
 
 **Interfaces:**
@@ -1048,14 +1050,46 @@ TEST(Execution, AbortedBuildLeavesNoTail) {
 }
 ```
 
-- [ ] **Step 8: Прогнать тесты**
+- [ ] **Step 8: Перевести оставшихся вызывающих `makeString`**
+
+`core/tests/operator_test.cpp:72,99` — `store.makeString("a")` →
+`CS::materialize("a", dead)`; список отложенного освобождения в этих тестах
+уже есть, иначе завести локальный `CS::Deferred dead;`.
+
+`benchmarks/store_benchmark.cpp` — замер `BM_Store_MakeString` мерил укладку
+байт в арену, которой больше нет. Переименовать в `BM_Value_Materialize` и
+мерить то, что её заменило:
+
+```cpp
+/// Creating a string: bytes copied into a reference-counted box.
+void BM_Value_Materialize(benchmark::State &state) {
+    const std::string text(32, 'x');
+    for (auto _ : state) {
+        CS::Deferred dead;
+        for (int i = 0; i < 100; ++i) {
+            Value made = CS::materialize(text, dead);
+            benchmark::DoNotOptimize(made);
+        }
+    }
+    state.SetItemsProcessed(state.iterations() * 100);
+}
+BENCHMARK(BM_Value_Materialize);
+```
+
+Имя меняется намеренно: старое обещало замер метода `Store`, а хранилище
+строк больше не делает. Следствие назвать вслух — `tools/bench-compare.py`
+на рубеже A вернёт код 1, потому что `BM_Store_MakeString` пропал из прогона
+(это его штатное поведение при исчезновении замера из базы). Считать это
+ожидаемым и записать в отчёт рубежа; база перезаписывается только в задаче 11.
+
+- [ ] **Step 9: Прогнать тесты**
 
 ```bash
 cmake --build build-dbg -j8 && ./build-dbg/core/tests/chupascript_tests
 ```
 Ожидается: зелено, включая оба теста шага 1.
 
-- [ ] **Step 9: Прогнать ASan**
+- [ ] **Step 10: Прогнать ASan**
 
 ```bash
 ./tools/asan.sh
@@ -1063,12 +1097,13 @@ cmake --build build-dbg -j8 && ./build-dbg/core/tests/chupascript_tests
 Ожидается: зелено. Задача создаёт коробку там, где раньше был бамп; утечка
 ссылки создателя — самый вероятный её промах.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add core/src/execution.hpp core/src/store.hpp core/src/store.cpp \
-        core/src/eval.cpp core/src/builtin.cpp \
-        core/tests/store_test.cpp core/tests/context_test.cpp
+        core/src/eval.cpp core/src/builtin.cpp benchmarks/store_benchmark.cpp \
+        core/tests/store_test.cpp core/tests/context_test.cpp \
+        core/tests/operator_test.cpp
 git commit -m "$(cat <<'MSG'
 fix: вычисленная строка была смещением в арену, которую граница операции стирала до её чтения
 
@@ -1102,9 +1137,13 @@ MSG
 - Modify: `core/src/builtin.hpp`/`builtin.cpp` (`coerceScalarToString` без
   хранилища), `core/src/eval.cpp` (`coerceToString`, вызовы `applyBinary`,
   `promote`), `core/src/expression.cpp`, `core/src/data.cpp`
-- Modify: `cli/main.cpp`, `cli/printer.cpp`
+- Modify: `core/src/c_api.cpp` (две компиляции через контекст)
+- Modify: `cli/main.cpp`, `cli/printer.cpp`, `cli/tests/printer_test.cpp`
+- Modify: `benchmarks/eval_benchmark.cpp` (обращения к `ctx.store()`,
+  счётчики `temp_bytes_per_iter`)
 - Test: `core/tests/value_test.cpp`, `core/tests/store_test.cpp`,
-  `core/tests/operator_test.cpp`, `core/tests/context_test.cpp`
+  `core/tests/operator_test.cpp`, `core/tests/context_test.cpp`,
+  `core/tests/eval_test.cpp`
 
 **Interfaces:**
 - Consumes: всё, что произвела задача 4.
@@ -1389,14 +1428,49 @@ grep -rn "temporaryBytesUsed" core cli benchmarks Sources
 - `core/src/data.cpp`: `buildValue` теряет параметр `Store &store` везде, кроме
   `store.keys()` в ветке `NodeKind::Object` — этот вызов остаётся.
 
-- [ ] **Step 10: Обновить оболочку**
+- [ ] **Step 10: Обновить всех, кто брал хранилище изменяемым**
 
+Константный `store()` ломает восемь мест за пределами ядра. Каждое — это не
+починка сборки, а перевод на ту дверь, которая у контекста и предназначена
+для этого действия.
+
+- `core/src/c_api.cpp:229,244`: `CS::Expression::compile(..., c->impl.store(), ...)`
+  → `c->impl.compileExpression(std::string_view(source, len), &e->impl, &diag, 1)`;
+  то же для скрипта.
 - `cli/main.cpp:69,93`: `CS::Expression::compile(source, ctx.store(), ...)` →
   `ctx.compileExpression(source, &expr, found, kMaxReported)`; то же для скрипта.
 - `cli/main.cpp:166`: `const CS::Store &store = ctx.store();` — остаётся, чтение.
 - `cli/main.cpp:203`: `runSet(ctx.store(), argument)` → перевести `runSet` на
   `CS::Context &` и `ctx.setVariableText(name, text, diag)`.
-- `cli/printer.cpp:73`: `ctx.string(value)` → `CS::stringBytes(value)`.
+- `cli/printer.cpp:73`: `ctx.string(value)` → сперва связать значение
+  именованной ссылкой, затем `CS::stringBytes(value)`.
+- `cli/tests/printer_test.cpp` — десять мест вида `Store &store = ctx.store();`
+  и вспомогательная `put(store, name, text)`. Перевести помощника на контекст:
+
+```cpp
+/// Seeds a global from literal text and hands its value back. Goes through the
+/// Context because a write to the store is an operation, with a boundary.
+Value put(CS::Context &ctx, std::string_view name, std::string_view text) {
+    CS::Diagnostic diag;
+    EXPECT_TRUE(ctx.setVariableText(name, text, diag)) << diag.message;
+    return ctx.store().global(name);
+}
+```
+
+  и снять локальные `Store &store` из всех тестов, где они держались только
+  ради `put`.
+- `benchmarks/eval_benchmark.cpp:53,218,223,229,335,765,771`:
+  `CS::setVariable(ctx.store(), dead, name, text, diag)` →
+  `ctx.setVariableText(name, text, diag)`;
+  `CS::Expression::compile(source, ctx.store(), ...)` → `ctx.compileExpression(...)`;
+  `fill(ctx.store())` → перевести `fill` на `CS::Context &`.
+  Замеры, работающие с самостоятельным `Store store;` (а не через контекст),
+  не трогать — там хранилище своё и изменяемое законно.
+- `benchmarks/eval_benchmark.cpp:787,822`: счётчики `temp_bytes_per_iter`
+  удалить вместе с подсчётом итераций, который их кормит. Мерить нечего:
+  временного региона не существует. Замер `BM_Eval_ContextAggregate` и
+  `BM_Eval_RawAggregate` остаются — исчезает только счётчик, а не имя, поэтому
+  сравнение с базой не ломается.
 
 - [ ] **Step 11: Обновить тесты**
 

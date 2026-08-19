@@ -99,27 +99,17 @@ bool coerceToString(const Ast &ast, NodeId node, const Store &store, Value value
 /// направо, по одному на плейсхолдер, поэтому лениво выходит и проще, и без
 /// придуманного предела.
 ///
-/// Разбор шаблона — через nextFormatPiece (builtin.hpp): это та же функция,
-/// которой статический проход (check.cpp) считает плейсхолдеры у литерального
-/// шаблона, так что правило «$${} — литерал, ${} — плейсхолдер» записано один
-/// раз и держит обоих потребителей синхронными не по договорённости, а по
-/// устройству.
+/// The template is parsed by nextFormatPiece (builtin.hpp) — the same function
+/// the static pass uses on a literal template (check.cpp), so the rule
+/// "$${} is a literal, ${} is a placeholder" is written once and keeps both
+/// readers in step by construction rather than by agreement.
 ///
-/// Срез шаблона берётся заново на каждый вызов nextFormatPiece, а не один раз
-/// до цикла: вычисление аргумента-плейсхолдера (eval ниже) вправе само писать
-/// в пул текста — строковый литерал зовёт makeString, вложенный format
-/// завершает свою сборку в тот же пул, — и это может переселить text_ в новую
-/// память. Смещение, на которое указывает tmpl, при переезде остаётся верным
-/// (Store::string пересчитывает срез из смещения и длины), а вот кэшированный
-/// указатель — уже нет. Свежий вызов string(tmpl) перед каждым обращением к
-/// шаблону — единственный способ не держать такой указатель через границу, за
-/// которой могла случиться запись.
-///
-/// Разделение регионов эту опасность не сняло, а сузило: шаблон-литерал лежит
-/// в постоянном пуле, а сборка идёт во временном, и тогда переселять его
-/// нечему. Но вычисленный шаблон (`format(tpl.two, 1, 2)` после [B57] — всё
-/// ещё постоянный, а `format(format(...), x)` — уже временный) попадает в тот
-/// же пул, куда пишет сборка, и случай возвращается целиком.
+/// The template is read where it lies and the result is assembled in
+/// Execution's builder; the two are different buffers, and that is what makes
+/// evaluating an argument in the middle of a build safe. Both the template and
+/// every piece produced by an argument are boxes now, so nothing an argument
+/// does can move the bytes this loop is reading — the concern that made the
+/// old code re-slice the template on every iteration is gone with the arena.
 bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                 Execution &exec, Value *out, Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);
@@ -131,40 +121,34 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                     "format expects a string template", diag);
     }
 
-    // Результат — новое значение, поэтому собирается во временном регионе.
-    // Шаблон, наоборот, читается там, где лежит: литерал уложен в постоянный
-    // пул на компиляции, вычисленная строка — во временном.
-    Store &result = exec.scratch;
-    const Store &from = exec.scratch;
-
-    const std::uint32_t mark = result.beginString();
+    const std::uint32_t mark = exec.beginString();
     std::uint32_t next = 1;  // следующий аргумент
     FormatCursor cursor;
 
     for (;;) {
         FormatPiece kind = FormatPiece::Literal;
         std::string_view chunk;
-        if (!nextFormatPiece(from.string(tmpl), cursor, &kind, &chunk)) { break; }
+        if (!nextFormatPiece(exec.string(tmpl), cursor, &kind, &chunk)) { break; }
 
         if (kind == FormatPiece::Literal) {
-            result.appendToString(chunk);
+            exec.appendToString(chunk);
             continue;
         }
         if (kind == FormatPiece::Escaped) {
-            result.appendToString("${}");
+            exec.appendToString("${}");
             continue;
         }
 
         // FormatPiece::Placeholder — потребляет следующий аргумент.
         if (next >= argCount) {
-            result.abortString(mark);
+            exec.abortString(mark);
             return fail(ast, node, ErrorCode::Type,
                         "format placeholder count does not match arguments",
                         diag);
         }
         Value argument = Value::null();
         if (!eval(ast, source, ast.child(node, next), exec, &argument, diag)) {
-            result.abortString(mark);
+            exec.abortString(mark);
             return false;
         }
         ++next;
@@ -173,18 +157,18 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
         std::string_view text;
         if (!coerceToString(ast, node, exec.scratch, argument,
                             buffer, &text, diag)) {
-            result.abortString(mark);
+            exec.abortString(mark);
             return false;
         }
-        result.appendToString(text);
+        exec.appendToString(text);
     }
 
     if (next != argCount) {
-        result.abortString(mark);
+        exec.abortString(mark);
         return fail(ast, node, ErrorCode::Type,
                     "format placeholder count does not match arguments", diag);
     }
-    *out = result.endString(mark);
+    *out = exec.endString(mark);
     return true;
 }
 

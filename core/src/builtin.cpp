@@ -306,7 +306,10 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                                       diag)) {
                 return false;
             }
-            *out = exec.scratch.makeString(text);
+            // materialize, not an arena offset: the result of str is an
+            // ordinary value and its caller may do anything with it —
+            // including putting it into an aggregate or a global variable.
+            *out = CS::materialize(text, exec.deferred());
             return true;
         }
 

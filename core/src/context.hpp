@@ -72,7 +72,16 @@ class Context {
     /// до конца жизни контекста. Хост, который только пишет и ни разу не
     /// вычисляет, — обычное дело на старте экрана.
     void setGlobal(std::string_view name, Value v) {
+        // v may be all that is left of a value eval() handed back from an
+        // earlier operation: its only reference is the creator reference
+        // sitting in exec_.deferred_, and beginOperation() below is about to
+        // drain exactly that list. Retaining first keeps the box alive
+        // across the drain; the reference is deposited into the fresh list
+        // right after, so it is not immortal — merely carried across this
+        // one boundary, same as every other reference this method creates.
+        detail::retainValue(v);
         beginOperation();
+        exec_.deferred().take(v);
         store_.setGlobal(name, exec_.promote(v), exec_.deferred());
     }
 

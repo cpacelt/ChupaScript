@@ -8,6 +8,7 @@
 
 #include "data.hpp"
 #include "aggregate.hpp"
+#include "execution.hpp"
 
 namespace {
 
@@ -97,24 +98,18 @@ TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
     CS::Context ctx;
     CS::Diagnostic diag;
 
-    // Склейка строит новые байты на каждом вычислении, поэтому без сброса на
-    // границе операции временный регион рос бы линейно от числа вычислений —
-    // ровно то, что [B57] и убирает.
-    //
-    // Раньше здесь стоял литерал массива. Он больше не годится: агрегат теперь
-    // коробка со счётчиком, во временном регионе её не бывает, и байт она туда не
-    // кладёт. Мерить рост арены надо тем, что в ней правда живёт, — строкой.
+    // format used to assemble its result in the temporary region, so without a
+    // reset at the operation boundary that region grew linearly with the
+    // number of evaluations — exactly what [B57] closes. Now format builds
+    // through Execution's own buffer and hands back a box, so nothing lands
+    // in the temporary region at all; the invariant this test guards still
+    // holds, just for a stronger reason: there is nothing here to grow.
     const CS::Expression expr = compileIn(ctx, "format('${}${}', 1, 2)");
 
     CS::Value out = CS::Value::null();
-    ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
-    const std::size_t afterFirst = ctx.temporaryBytesUsed();
-    ASSERT_GT(afterFirst, 0u) << "вычисление ничего не положило во временный "
-                                 "регион — тест перестал что-либо проверять";
-
     for (int i = 0; i < 16; ++i) {
         ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
-        EXPECT_EQ(ctx.temporaryBytesUsed(), afterFirst);
+        EXPECT_EQ(ctx.temporaryBytesUsed(), 0u);
     }
 }
 
@@ -126,20 +121,59 @@ TEST(Context, ScriptAlsoOpensAnOperation) {
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    // Строка, а не агрегат: во временном регионе теперь живут только байты.
+    // A string, not an aggregate: the temporary region now carries only bytes,
+    // and format's result is a box, so nothing lands there at all.
     ASSERT_EQ(CS::Script::compile("state.n = format('${}${}', 1, 2);", ctx.store(),
                                   &script, diags, 1),
               0u)
         << diags[0].message;
 
     ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
-    const std::size_t afterFirst = ctx.temporaryBytesUsed();
-    ASSERT_GT(afterFirst, 0u) << "скрипт ничего не положил во временный регион "
-                                 "— тест перестал что-либо проверять";
     for (int i = 0; i < 16; ++i) {
         ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
-        EXPECT_EQ(ctx.temporaryBytesUsed(), afterFirst);
+        EXPECT_EQ(ctx.temporaryBytesUsed(), 0u);
     }
+}
+
+/// A computed string handed straight back into a global variable keeps its
+/// bytes. This is defect Б1 from the design document: setGlobal opened the
+/// operation boundary, which cleared the arena, and only then promoted the
+/// value out of that same arena — yielding an empty slice that no assert
+/// caught, because the promoted box was a genuine box, merely an empty one.
+TEST(Context, ComputedStringSurvivesBeingStoredInAGlobal) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("who", "'Вася'", diag));
+
+    const CS::Expression expr = compileIn(ctx, "format('привет, ${}', who)");
+
+    CS::Value computed = CS::Value::null();
+    ASSERT_TRUE(ctx.eval(expr, &computed, diag)) << diag.message;
+    ASSERT_EQ(computed.kind(), CS::Value::Kind::String);
+
+    ctx.setGlobal("saved", computed);
+    EXPECT_EQ(ctx.string(ctx.store().global("saved")), "привет, Вася");
+}
+
+/// And it stays readable across any number of later operations: a boxed string
+/// is owned by the global's slot, not by the operation that produced it.
+TEST(Context, StoredComputedStringSurvivesLaterOperations) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("who", "'Вася'", diag));
+
+    const CS::Expression build = compileIn(ctx, "format('привет, ${}', who)");
+    CS::Value computed = CS::Value::null();
+    ASSERT_TRUE(ctx.eval(build, &computed, diag)) << diag.message;
+    ctx.setGlobal("saved", computed);
+
+    const CS::Expression noise = compileIn(ctx, "format('${} ${}', 1, 2)");
+    for (int i = 0; i < 8; ++i) {
+        CS::Value ignored = CS::Value::null();
+        ASSERT_TRUE(ctx.eval(noise, &ignored, diag)) << diag.message;
+    }
+
+    EXPECT_EQ(ctx.string(ctx.store().global("saved")), "привет, Вася");
 }
 
 #ifndef NDEBUG
@@ -255,6 +289,54 @@ TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
     std::string_view got;
     ASSERT_EQ(ctx.evalString(expr, &got, diag), CS::EvalStatus::Ok) << diag.message;
     EXPECT_EQ(got, "12");
+}
+
+/// The builder hands back a box, and a box is readable without asking any
+/// Store: that is what lets a format result be stored, pushed and returned.
+TEST(Execution, BuildsAStringIntoABox) {
+    CS::Store store;
+    CS::Execution exec(store);
+
+    const std::uint32_t mark = exec.beginString();
+    exec.appendToString("при");
+    exec.appendToString("вет");
+    const CS::Value built = exec.endString(mark);
+
+    EXPECT_EQ(built.kind(), CS::Value::Kind::String);
+    EXPECT_EQ(built.region(), CS::Value::Region::Boxed);
+    EXPECT_EQ(exec.string(built), "привет");
+}
+
+/// A nested build finishes before the outer one continues, because the inner
+/// mark sits above the outer mark in the same buffer.
+TEST(Execution, NestedBuildTakesOnlyItsOwnTail) {
+    CS::Store store;
+    CS::Execution exec(store);
+
+    const std::uint32_t outer = exec.beginString();
+    exec.appendToString("a");
+    const std::uint32_t inner = exec.beginString();
+    exec.appendToString("bc");
+    const CS::Value innerResult = exec.endString(inner);
+    exec.appendToString("d");
+    const CS::Value outerResult = exec.endString(outer);
+
+    EXPECT_EQ(exec.string(innerResult), "bc");
+    EXPECT_EQ(exec.string(outerResult), "ad");
+}
+
+/// An abandoned build leaves nothing behind for the next one to pick up.
+TEST(Execution, AbortedBuildLeavesNoTail) {
+    CS::Store store;
+    CS::Execution exec(store);
+
+    const std::uint32_t first = exec.beginString();
+    exec.appendToString("discarded");
+    exec.abortString(first);
+
+    const std::uint32_t second = exec.beginString();
+    exec.appendToString("kept");
+    EXPECT_EQ(exec.string(exec.endString(second)), "kept");
 }
 
 }  // namespace

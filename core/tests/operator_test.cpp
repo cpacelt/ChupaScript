@@ -69,7 +69,7 @@ TEST(OperatorUnary, BangRequiresBoolean) {
     Store store;
     EXPECT_EQ(unaryError(TokenKind::Bang, number(1.0)).code, CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Bang, Value::null()).code, CS::ErrorCode::Type);
-    EXPECT_EQ(unaryError(TokenKind::Bang, store.makeString("a")).code,
+    EXPECT_EQ(unaryError(TokenKind::Bang, CS::materialize("a", dead)).code,
               CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Bang, CS::makeArray(0, dead)).code,
               CS::ErrorCode::Type);
@@ -91,12 +91,13 @@ TEST(OperatorUnary, MinusOnZeroGivesNegativeZero) {
 }
 
 TEST(OperatorUnary, MinusRequiresNumber) {
+    CS::Deferred dead;
     Store store;
     EXPECT_EQ(unaryError(TokenKind::Minus, Value::boolean(true)).code,
               CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Minus, Value::null()).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(unaryError(TokenKind::Minus, store.makeString("1")).code,
+    EXPECT_EQ(unaryError(TokenKind::Minus, CS::materialize("1", dead)).code,
               CS::ErrorCode::Type);
 }
 
@@ -111,7 +112,7 @@ TEST(OperatorArithmetic, FourOperationsWork) {
 TEST(OperatorArithmetic, RequiresNumbersOnBothSides) {
     CS::Deferred dead;
     Store store;
-    const Value text = store.makeString("1");
+    const Value text = CS::materialize("1", dead);
     EXPECT_EQ(binaryError(TokenKind::Plus, number(1.0), text, store).code,
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Plus, text, number(1.0), store).code,
@@ -125,10 +126,11 @@ TEST(OperatorArithmetic, RequiresNumbersOnBothSides) {
 }
 
 TEST(OperatorArithmetic, ThereIsNoStringConcatenation) {
+    CS::Deferred dead;
     Store store;
     // docs/semantics.md §5.2: строки собирает format, а не плюс. Это место,
     // где привычка из JavaScript обманывает чаще всего.
-    EXPECT_EQ(binaryError(TokenKind::Plus, store.makeString("a"), store.makeString("b"), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Plus, CS::materialize("a", dead), CS::materialize("b", dead), store).code,
               CS::ErrorCode::Type);
 }
 
@@ -181,7 +183,7 @@ TEST(OperatorOrdering, RequiresNumbers) {
     // сравнивать нельзя. Побайтовый порядок строк не соответствует
     // алфавитному, а порядок, зависящий от языка, — это коллация, которой
     // в рантайме нет.
-    EXPECT_EQ(binaryError(TokenKind::Less, store.makeString("a"), store.makeString("b"), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Less, CS::materialize("a", dead), CS::materialize("b", dead), store).code,
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Less, Value::boolean(false), Value::boolean(true), store).code,
               CS::ErrorCode::Type);
@@ -191,7 +193,7 @@ TEST(OperatorOrdering, RequiresNumbers) {
               CS::ErrorCode::Type);
     // Смешанная пара: число со строкой. Числа здесь достаточно, чтобы соблазн
     // «привести второй операнд» выглядел естественным, — приведения нет.
-    EXPECT_EQ(binaryError(TokenKind::Less, number(1.0), store.makeString("2"), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Less, number(1.0), CS::materialize("2", dead), store).code,
               CS::ErrorCode::Type);
 }
 
@@ -238,20 +240,21 @@ TEST(OperatorOrdering, InfinitiesOrderAsExpected) {
 }
 
 TEST(OperatorEquality, NullEqualsOnlyNull) {
+    CS::Deferred dead;
     Store store;
     // Правило 1 применяется раньше правила 2, поэтому null == 5 даёт false,
     // а не ошибку (docs/semantics.md §5.4).
     EXPECT_TRUE(binary(TokenKind::Equal, Value::null(), Value::null(), store).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, Value::null(), number(5.0), store).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, number(5.0), Value::null(), store).booleanValue());
-    EXPECT_FALSE(binary(TokenKind::Equal, Value::null(), store.makeString("a"), store).booleanValue());
+    EXPECT_FALSE(binary(TokenKind::Equal, Value::null(), CS::materialize("a", dead), store).booleanValue());
 }
 
 TEST(OperatorEquality, DifferentTypesAreAnError) {
     CS::Deferred dead;
     Store store;
     // Правило 2: типы различаются — ошибка, а не false.
-    EXPECT_EQ(binaryError(TokenKind::Equal, number(1.0), store.makeString("1"), store).code,
+    EXPECT_EQ(binaryError(TokenKind::Equal, number(1.0), CS::materialize("1", dead), store).code,
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Equal, Value::boolean(true), number(1.0), store).code,
               CS::ErrorCode::Type);
@@ -279,10 +282,11 @@ TEST(OperatorEquality, NegativeZeroEqualsZero) {
 }
 
 TEST(OperatorEquality, StringsCompareByBytes) {
+    CS::Deferred dead;
     Store store;
-    const Value a = store.makeString("привет");
-    const Value b = store.makeString("привет");
-    const Value c = store.makeString("пока");
+    const Value a = CS::materialize("привет", dead);
+    const Value b = CS::materialize("привет", dead);
+    const Value c = CS::materialize("пока", dead);
     // Два разных значения с одинаковым содержимым равны: сравниваются байты,
     // а не хранилище.
     EXPECT_TRUE(binary(TokenKind::Equal, a, b, store).booleanValue());
@@ -290,12 +294,13 @@ TEST(OperatorEquality, StringsCompareByBytes) {
 }
 
 TEST(OperatorEquality, StringsAreNotNormalized) {
+    CS::Deferred dead;
     Store store;
     // docs/semantics.md §5.4: нормализация юникода не выполняется. Одна и та
     // же буква, записанная как готовый символ и как база с комбинирующим
     // знаком, — разные строки.
-    const Value composed = store.makeString("\xD0\xB9");                  // й
-    const Value decomposed = store.makeString("\xD0\xB8\xCC\x86");        // и + бреве
+    const Value composed = CS::materialize("\xD0\xB9", dead);                  // й
+    const Value decomposed = CS::materialize("\xD0\xB8\xCC\x86", dead);        // и + бреве
     EXPECT_FALSE(binary(TokenKind::Equal, composed, decomposed, store).booleanValue());
 }
 
@@ -338,10 +343,11 @@ TEST(OperatorEquality, NotEqualNegatesEqual) {
 }
 
 TEST(OperatorEquality, NotEqualPropagatesTheError) {
+    CS::Deferred dead;
     Store store;
     // docs/semantics.md §5.4: != эквивалентен отрицанию == во всём, включая
     // случай ошибки.
-    EXPECT_EQ(binaryError(TokenKind::NotEqual, number(1.0), store.makeString("1"), store).code,
+    EXPECT_EQ(binaryError(TokenKind::NotEqual, number(1.0), CS::materialize("1", dead), store).code,
               CS::ErrorCode::Type);
 }
 

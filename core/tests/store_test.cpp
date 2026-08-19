@@ -15,54 +15,6 @@ using CS::Execution;
 using CS::Store;
 using CS::Value;
 
-TEST(StoreString, RoundTripsBytes) {
-    Store store;
-    const Value v = store.makeString("привет");
-    EXPECT_EQ(v.kind(), Value::Kind::String);
-    EXPECT_EQ(store.string(v), "привет");
-}
-
-TEST(StoreString, EmptyStringIsEmptyView) {
-    Store store;
-    const Value v = store.makeString("");
-    EXPECT_EQ(v.kind(), Value::Kind::String);
-    EXPECT_TRUE(store.string(v).empty());
-}
-
-TEST(StoreString, LengthIsCountedInBytes) {
-    Store store;
-    // Шесть кириллических букв — двенадцать байт (semantics.md §2.1).
-    EXPECT_EQ(store.string(store.makeString("привет")).size(), 12u);
-}
-
-TEST(StoreString, KeepsEmbeddedNulByte) {
-    Store store;
-    const std::string bytes("a\0b", 3);
-    const Value v = store.makeString(bytes);
-    EXPECT_EQ(store.string(v).size(), 3u);
-    EXPECT_EQ(store.string(v)[1], '\0');
-}
-
-TEST(StoreString, EqualStringsAreStoredTwice) {
-    Store store;
-    const Value a = store.makeString("одинаково");
-    const Value b = store.makeString("одинаково");
-    EXPECT_EQ(store.string(a), store.string(b));
-    // Дедупликации нет: второй экземпляр занял место (спека §6).
-    EXPECT_NE(store.string(a).data(), store.string(b).data());
-}
-
-TEST(StoreString, AcceptsSliceOfItsOwnTextPool) {
-    Store store;
-    // Копирование строки, которая уже лежит в пуле: источник может переехать
-    // прямо во время копирования, и наивный insert здесь был бы UB.
-    Value seed = store.makeString("исходная строка");
-    for (int i = 0; i < 64; ++i) {
-        seed = store.makeString(store.string(seed));
-    }
-    EXPECT_EQ(store.string(seed), "исходная строка");
-}
-
 TEST(StoreMetrics, FreshStoreHoldsNothing) {
     Store store;
     // Раньше здесь лежал пустой объект глобальных переменных — один заголовок,
@@ -90,17 +42,6 @@ TEST(StoreMetrics, MaterializedStringCostsABoxNotPoolBytes) {
 }
 #endif
 
-TEST(StoreMetrics, StringOfScratchStoreAddsItsBytes) {
-    // А промежуточная строка по-прежнему смещение в арену операции, и байты
-    // её видны там же, где и были.
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const std::size_t before = scratch.bytesUsed();
-    scratch.makeString("12345");
-    EXPECT_EQ(scratch.bytesUsed(), before + 5u);
-}
-
 TEST(StoreMetrics, ReservedCoversUsed) {
     Store store;
     Deferred dead;
@@ -108,7 +49,6 @@ TEST(StoreMetrics, ReservedCoversUsed) {
     for (int i = 0; i < 100; ++i) {
         CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
-    store.makeString("строка");
     EXPECT_GE(store.bytesReserved(), store.bytesUsed());
 }
 
@@ -204,26 +144,6 @@ TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
     EXPECT_TRUE(exec.promote(a).sameAggregate(a));
 }
 
-TEST(StoreClear, EmptiesTheRegionButKeepsItsCapacity) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value a = CS::makeArray(0, exec.deferred());
-    for (int i = 0; i < 100; ++i) {
-        CS::arrayPush(a, Value::number(static_cast<double>(i)));
-    }
-    scratch.makeString("строка");
-    const std::size_t reserved = scratch.bytesReserved();
-    ASSERT_GT(scratch.bytesUsed(), 0u);
-
-    scratch.clear();
-
-    EXPECT_EQ(scratch.bytesUsed(), 0u);
-    // Ёмкость остаётся — на этом держится «ноль обращений к аллокатору в
-    // установившемся режиме» (docs/backlog.md [B57]).
-    EXPECT_EQ(scratch.bytesReserved(), reserved);
-}
-
 TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
     // Раньше это разрешал направленный барьер записи. Барьера больше нет, и
     // разрешать нечего: коробка живёт по счётчику, а не по региону, и оказаться
@@ -281,19 +201,6 @@ TEST(StorePromote, AggregateCrossesWithoutACopy) {
     scratch.clear();
     EXPECT_EQ(CS::objectKeyAt(moved, 0), "имя");
     EXPECT_EQ(persistent.string(CS::objectValueAt(moved, 0)), "Вася");
-}
-
-TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value temp = scratch.makeString("Вася");
-    ASSERT_EQ(temp.region(), Value::Region::Scratch);
-
-    const Value o = CS::makeObject(persistent.keys(), 1, exec.deferred());
-    CS::objectSet(o, "имя", exec.promote(temp), exec.deferred());
-    scratch.clear();
-    EXPECT_EQ(persistent.string(CS::objectValueAt(o, 0)), "Вася");
 }
 
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
@@ -638,8 +545,9 @@ TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
     Store store;
     Deferred dead;
     const Value o = CS::makeObject(store.keys(), 0, dead);
-    const Value keyValue = store.makeString("динамический");
-    // Ключ — срез собственного пула текста: приём, которым пользуется obj[k].
+    const Value keyValue = CS::materialize("динамический", dead);
+    // The key is a string Value, not a literal spelled inline: the same shape
+    // obj[k] uses.
     CS::objectSet(o, store.string(keyValue), Value::number(5.0), dead);
     EXPECT_EQ(CS::objectGet(o, "динамический").numberValue(), 5.0);
 }
@@ -783,76 +691,6 @@ TEST(StoreGlobals, EnumerationYieldsEveryName) {
     EXPECT_EQ(seen, "state user ");
 }
 
-TEST(StoreStringBuilder, AssemblesFromParts) {
-    Store store;
-    const std::uint32_t mark = store.beginString();
-    store.appendToString("Привет");
-    store.appendToString(", ");
-    store.appendToString("мир");
-    const Value built = store.endString(mark);
-    EXPECT_EQ(store.string(built), "Привет, мир");
-}
-
-TEST(StoreStringBuilder, EmptyBuildGivesEmptyString) {
-    Store store;
-    const std::uint32_t mark = store.beginString();
-    const Value built = store.endString(mark);
-    EXPECT_EQ(store.string(built), "");
-}
-
-TEST(StoreStringBuilder, AbortLeavesNothingBehind) {
-    Store store;
-    // Сборка идёт в собственном буфере, отдельном от пула текста (§ store.hpp
-    // «сборка строки по частям»), поэтому bytesUsed() её не видит вовсе — до
-    // endString пул текста не трогается. Наблюдаем через то, что действительно
-    // меняется: прежняя строка цела, а следующая сборка не видит отменённого
-    // хвоста.
-    const Value before = store.makeString("уже в пуле");
-
-    const std::uint32_t mark = store.beginString();
-    store.appendToString("это будет выброшено");
-    store.abortString(mark);
-
-    EXPECT_EQ(store.string(before), "уже в пуле");
-
-    const std::uint32_t nextMark = store.beginString();
-    store.appendToString("новая сборка");
-    EXPECT_EQ(store.string(store.endString(nextMark)), "новая сборка");
-}
-
-TEST(StoreStringBuilder, SurvivesPoolGrowth) {
-    Store store;
-    // Кусков заведомо больше, чем влезет без переезда пула: сборка обязана
-    // держаться на смещениях, а не на указателях.
-    const std::uint32_t mark = store.beginString();
-    std::string expected;
-    for (int i = 0; i < 500; ++i) {
-        store.appendToString("кусок");
-        expected += "кусок";
-    }
-    EXPECT_EQ(store.string(store.endString(mark)), expected);
-}
-
-TEST(StoreStringBuilder, NestedAbortLeavesTheOuterAssemblyIntact) {
-    Store store;
-    const std::uint32_t outer = store.beginString();
-    store.appendToString("внешнее ");
-    const std::uint32_t inner = store.beginString();
-    store.appendToString("выброшенное");
-    store.abortString(inner);
-    store.appendToString("продолжение");
-    EXPECT_EQ(store.string(store.endString(outer)), "внешнее продолжение");
-}
-
-TEST(StoreString, ScratchStoreMakesOffsets) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value v = scratch.makeString("a");
-    EXPECT_EQ(v.region(), Value::Region::Scratch);
-    EXPECT_EQ(scratch.string(v), "a");
-}
-
 TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
     Store persistent;
     Execution exec{persistent};
@@ -863,21 +701,6 @@ TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
     // Узел арену не заметил. Ссылку держит список отложенного освобождения
     // хранилища, поэтому отпускать её здесь не надо и нельзя.
     EXPECT_EQ(scratch.string(v), "a");
-}
-
-TEST(StorePromote, ScratchStringBecomesABoxAndOutlivesTheArena) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value temp = scratch.makeString("привет");
-    ASSERT_EQ(temp.region(), Value::Region::Scratch);
-
-    // Продвигает та арена, что выдала смещение, — другой прочитать его негде.
-    const Value kept = exec.promote(temp);
-    EXPECT_EQ(kept.region(), Value::Region::Boxed);
-    scratch.clear();
-    // А вот прочитать коробку вправе любое хранилище: она самодостаточна.
-    EXPECT_EQ(persistent.string(kept), "привет");
 }
 
 }  // namespace

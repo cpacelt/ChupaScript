@@ -111,18 +111,18 @@ void BM_Store_ObjectInsert(benchmark::State &state) {
 }
 BENCHMARK(BM_Store_ObjectInsert)->Arg(3)->Arg(8)->Arg(20);
 
-/// Создание строки: копия в пул текста.
-void BM_Store_MakeString(benchmark::State &state) {
+/// Creating a string: bytes copied into a reference-counted box.
+void BM_Value_Materialize(benchmark::State &state) {
     const std::string text(32, 'x');
     for (auto _ : state) {
-        Store store;
+        CS::Deferred dead;
         for (int i = 0; i < 100; ++i) {
-            Value made = store.makeString(text);
+            Value made = CS::materialize(text, dead);
             benchmark::DoNotOptimize(made);
         }
     }
     state.SetItemsProcessed(state.iterations() * 100);
 }
-BENCHMARK(BM_Store_MakeString);
+BENCHMARK(BM_Value_Materialize);
 
 }  // namespace

@@ -81,11 +81,6 @@ std::string_view Store::textAt(std::uint32_t offset,
     return std::string_view(text_.data() + offset, length);
 }
 
-Value Store::makeString(std::string_view bytes) {
-    const std::uint32_t offset = appendText(bytes);
-    return Value::scratchString(offset, static_cast<std::uint32_t>(bytes.size()));
-}
-
 std::string_view Store::string(Value v) const noexcept {
     assert(v.kind() == Value::Kind::String);
     // Два представления, один бит различения. Коробка самодостаточна и читается
@@ -95,28 +90,6 @@ std::string_view Store::string(Value v) const noexcept {
     return static_cast<const detail::StringBox *>(v.box())->view();
 }
 
-std::uint32_t Store::beginString() noexcept {
-    assert(build_.size() <= 0xffffffffu && "буфер сборки строки перерос uint32");
-    return static_cast<std::uint32_t>(build_.size());
-}
-
-void Store::appendToString(std::string_view bytes) {
-    build_.append(bytes);
-}
-
-Value Store::endString(std::uint32_t mark) noexcept {
-    // makeString копирует из build_ в text_; алиас-проверка в appendText
-    // сравнивает источник с диапазоном text_, а build_ — другое хранилище,
-    // поэтому спутать их не может.
-    const Value result = makeString(std::string_view(build_).substr(mark));
-    build_.resize(mark);
-    return result;
-}
-
-void Store::abortString(std::uint32_t mark) noexcept {
-    build_.resize(mark);
-}
-
 void Store::clearSlow() noexcept {
     // Ёмкость при этом остаётся: std::vector::clear её не отдаёт, а
     // shrink_to_fit здесь не зовётся нигде — в этом весь смысл сброса.
@@ -124,11 +97,6 @@ void Store::clearSlow() noexcept {
     // Агрегатов здесь нет и быть не может: они коробки, и живут они по счётчику,
     // а не по региону. Сбрасывать остаётся только байты.
     text_.clear();
-
-    // Черновик сборки в норме уже пуст: format снимает за собой и на успехе
-    // (endString), и на отказе (abortString). Очистка здесь — не уборка за
-    // ним, а страховка на случай выхода посреди сборки.
-    build_.clear();
 
     // Таблица имён не трогается: у временного региона она пуста всегда —
     // глобальные заводит только хост, а он пишет в постоянный.
@@ -231,7 +199,7 @@ std::size_t Store::bytesUsed() const noexcept {
 }
 
 std::size_t Store::bytesReserved() const noexcept {
-    return text_.capacity() + build_.capacity() +
+    return text_.capacity() +
            globalNames_.capacity() * sizeof(detail::GlobalName) +
            globalValues_.capacity() * sizeof(Value);
 }

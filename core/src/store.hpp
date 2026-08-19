@@ -67,20 +67,6 @@ class Store {
 
     // ─── создание ───
 
-    /// Кладёт байты в арену и отдаёт строку смещением в неё.
-    ///
-    /// Ветки «а если регион постоянный — сделать коробку» здесь больше нет, и
-    /// вместе с ней ушёл член region_. Ветка была недостижима: зовут makeString
-    /// только endString и билтин str, оба на арене выполнения, а данные хоста
-    /// идут через materialize напрямую, а литералы — через Ast::internLiteral,
-    /// минуя хранилище вовсе. Арена умеет одни смещения, хранилище — одни
-    /// коробки, и признак, различавший их, различал состояние, которого не
-    /// бывает.
-    ///
-    /// Допускает срез собственной арены — так выглядит пересборка строки из
-    /// того же хранилища.
-    Value makeString(std::string_view bytes);
-
     // Строка коробкой сюда не входит: CS::materialize (core/src/aggregate.hpp)
     // не читает ни одного члена хранилища, ей нужен только список
     // отложенного освобождения.
@@ -92,44 +78,13 @@ class Store {
     // смещение у арены и положить байты в коробку, чью ссылку примет список
     // операции. Живёт в Execution::promote.
 
-    // ─── сборка строки по частям ───
-    //
-    // Нужна format (docs/semantics.md §8.8): длина результата заранее
-    // неизвестна, а требовать её вторым проходом значило бы представлять числа
-    // дважды. Сборка идёт в собственном буфере build_, отдельном от пула
-    // текста text_, а не в самом text_. Причина — не переезд как таковой (с
-    // ним переживший переезд срез был бы в порядке), а то, что вычисление
-    // очередного куска (аргумент format — строковый литерал, str, вложенный
-    // format) само пишет в text_ и не спрашивает разрешения.
-    // Если бы сборка велась в text_, чужая запись легла бы прямо между уже
-    // собранными кусками и endString забрал бы её как часть результата —
-    // сборка не умеет отличить свою запись от чужой, если обе в одном месте.
-    // Раздельные хранилища снимают вопрос целиком: что бы ни писало в text_
-    // между beginString и endString, build_ этого не видит.
-    //
-    // Тем же свойством вложенная сборка становится безопасной сама по себе:
-    // внутренний format получает мету — позицию в build_ выше меты внешнего,
-    // достраивает свой хвост и снимает его целиком через endString раньше,
-    // чем внешний допишет следующий кусок. Это стек, а не разделяемый пул, и
-    // рекурсивная сборка на этом свойстве и держится.
-    //
-    // Метка — позиция в build_, а не указатель: как и с любым vector-подобным
-    // буфером, рост может переселить данные, и держаться за смещение, а не за
-    // адрес, здесь по-прежнему обязательно.
-
-    /// Начинает сборку. Возвращает метку для endString либо abortString.
-    std::uint32_t beginString() noexcept;
-
-    /// Дописывает кусок к собираемой строке.
-    void appendToString(std::string_view bytes);
-
-    /// Завершает сборку: копирует собранное — всё, что дописано после метки —
-    /// в пул текста и возвращает получившуюся строку. Сам build_ усекается
-    /// обратно к метке: собранный хвост в нём больше не нужен.
-    Value endString(std::uint32_t mark) noexcept;
-
-    /// Отменяет сборку, усекая build_ к метке.
-    void abortString(std::uint32_t mark) noexcept;
+    // Building a string piece by piece is not here either: format
+    // (docs/semantics.md §8.8) assembles it in its own buffer, owned by the
+    // execution — Execution::builder_ (core/src/execution.hpp) — not by the
+    // store. The store used to carry build_ and five methods for this, back
+    // when the assembled result was an offset into its own arena; the result
+    // is a box now, and nothing is shared between the assembly and the store
+    // any more.
 
     /// Освобождает всё разом: пулы усекаются в ноль, ёмкость остаётся. Это и
     /// есть освобождение региона — поштучного здесь нет и не будет
@@ -150,7 +105,7 @@ class Store {
         // нечего, и до проверки дело не доходило.
         assert(keys_ == nullptr &&
                "постоянный регион не сбрасывается: на его значения ссылается хост");
-        if (text_.empty() && build_.empty()) { return; }
+        if (text_.empty()) { return; }
         clearSlow();
     }
 
@@ -251,13 +206,9 @@ class Store {
 
     // ─── метрики ───
 
-    /// Сколько байт занято выданными данными. Черновик сборки build_ сюда не
-    /// входит: пока endString не скопировал его в text_, это ничей черновик, а
-    /// не выданные данные — на него не указывает ни одно Value.
+    /// How many bytes the data handed out so far occupy.
     std::size_t bytesUsed() const noexcept;
-    /// Сколько байт занято у аллокатора, включая запас пулов — в том числе
-    /// build_: endString возвращает его к нулевой длине, но не к нулевой
-    /// ёмкости, и эта ёмкость — тот же самый резерв, что и у прочих пулов.
+    /// How many bytes the allocator holds, including the pool's spare capacity.
     std::size_t bytesReserved() const noexcept;
 
    private:
@@ -270,23 +221,16 @@ class Store {
     std::uint32_t findGlobal(std::string_view name, bool *found) const noexcept;
 
 
-    // ─── байты: выданные отдельно от черновика ───
+    // ─── байты ───
     //
-    // text_ — единственное адресное пространство строк: Value вида String это
-    // пара «смещение, длина» в нём и ничего другого означать не может. Сюда
-    // попадает всё, на что такой Value указывает, и всё, на что указывает
-    // Entry либо GlobalName: содержимое строковых литералов, результат str и
-    // format, ключи объектов, имена глобальных переменных. Только дописывание;
-    // усечения нет, поэтому равные строки лежат столькими копиями, сколько раз
-    // их создали (docs/backlog.md B1, B51).
-    //
-    // build_ — черновик format и только он. Отдельный от text_ потому, что
-    // вычисление очередного аргумента само пишет в text_ и легло бы прямо
-    // между уже собранными кусками; развёрнуто это разобрано выше, у
-    // beginString. endString переносит собранное в text_ и усекает build_
-    // обратно к метке.
-    std::vector<char> text_;   // байты промежуточных строк и имён глобальных
-    std::string build_;        // черновик сборки format
+    // text_ is the sole address space for strings: a String-kind Value used
+    // to be an (offset, length) pair into it and nothing else. What lands
+    // here now is only what a GlobalName points at — the bytes of global
+    // variable names — and nothing more: a string literal's bytes live in
+    // the Ast, an object key lives in the KeyTable, and the result of str or
+    // format lives in a box. Append-only, no truncation, so two equal names
+    // occupy two copies (docs/backlog.md B1, B51).
+    std::vector<char> text_;   // bytes of global variable names
 
     /// Таблица имён полей контекста. Ею владеет постоянное хранилище и только
     /// оно; у арены операции здесь nullptr, и на этом же признаке стоит

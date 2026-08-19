@@ -23,8 +23,13 @@ using CS::Diagnostic;
 using CS::Value;
 
 /// Разбирает и вычисляет; требует успеха обоих шагов.
+///
+/// Ast — статическая переменная функции, не локальная: строковый литерал в
+/// возвращаемом Value указывает в коробку, которой теперь владеет дерево
+/// (задача 3), а не хранилище, — локальная Ast умерла бы раньше, чем
+/// EXPECT_EQ прочтёт результат.
 Value evaluate(CS::Execution &exec, std::string_view text) {
-    Ast ast;
+    static thread_local Ast ast;
     Diagnostic diag;
     const std::uint32_t errors =
         CS::compileExpression(text.data(),

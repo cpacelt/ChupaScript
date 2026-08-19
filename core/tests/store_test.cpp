@@ -880,17 +880,4 @@ TEST(StorePromote, ScratchStringBecomesABoxAndOutlivesTheArena) {
     EXPECT_EQ(persistent.string(kept), "привет");
 }
 
-#ifndef NDEBUG
-TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {
-    const std::size_t before = CS::detail::liveBoxCount();
-    {
-        Store store;
-        CS::detail::StringBox *literal = store.internLiteral("abc");
-        EXPECT_EQ(literal->view(), "abc");
-        EXPECT_EQ(CS::detail::liveBoxCount(), before + 1);
-    }
-    EXPECT_EQ(CS::detail::liveBoxCount(), before);
-}
-#endif
-
 }  // namespace

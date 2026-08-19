@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "box.hpp"
 #include "diagnostic.hpp"
 #include "data.hpp"
 #include "expression.hpp"
@@ -311,5 +312,27 @@ TEST(Expression, RefusesToEvaluateOnAnotherStore) {
     EXPECT_FALSE(expr.eval(elsewhere, &out, failure));
     EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
 }
+
+#ifndef NDEBUG
+/// A string literal belongs to the Ast that parsed it, not to the Store the
+/// unit was compiled against: the literal is part of the PROGRAM. The box
+/// therefore outlives the Store and dies with the unit.
+TEST(Expression, LiteralOutlivesTheStoreItWasCompiledAgainst) {
+    const std::size_t before = CS::detail::liveBoxCount();
+
+    CS::Expression expr;
+    {
+        CS::Store store;
+        CS::Diagnostic diags[1];
+        ASSERT_EQ(CS::Expression::compile("'literal'", store, &expr, diags, 1), 0u);
+        EXPECT_EQ(CS::detail::liveBoxCount(), before + 1);
+    }
+    // The Store is gone; the literal is not.
+    EXPECT_EQ(CS::detail::liveBoxCount(), before + 1);
+
+    expr = CS::Expression{};
+    EXPECT_EQ(CS::detail::liveBoxCount(), before);
+}
+#endif
 
 }  // namespace

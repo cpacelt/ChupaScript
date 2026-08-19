@@ -63,7 +63,9 @@ class Ast {
     /// Выбрасывает всё, что было построено раньше: Ast пригоден для повторного
     /// разбора. Самого исходника дерево не держит — узлы хранят смещения, а
     /// байты приходят параметром в text(). Поэтому Ast безразличен к тому,
-    /// куда переехал буфер (docs/backlog.md B39).
+    /// куда переехал буфер (docs/backlog.md B39). Литералы прежнего дерева
+    /// отпускаются тут же — иначе повторный разбор одного и того же Ast растил
+    /// бы literals_ без счёта: ссылки прежних узлов больше никто не отпустит.
     void reset(std::uint32_t sourceLength);
 
     /// Объявляет узел корнем дерева.
@@ -172,11 +174,9 @@ class Ast {
     /// Указатель, а не Value: Value шестнадцать байт, а здесь их восемь, и
     /// ложатся они туда, где у узла без детей всё равно пустота (см. Node).
     ///
-    /// Владеет узлом хранилище, в котором единицу скомпилировали
-    /// (Store::internLiteral): литерал — оснастка, часть программы, а не
-    /// создаваемое значение, и живёт он до смерти этого хранилища. Отсюда то
-    /// же требование, что и на номера ячеек: единица годна только для своего
-    /// контекста.
+    /// Владеет узлом это дерево (Ast::internLiteral): литерал — часть
+    /// программы, а не создаваемое значение, и живёт он до смерти этого
+    /// дерева, а не хранилища, против которого единицу скомпилировали.
     ///
     /// Предусловие: дерево прошло укладку литералов (core/src/compile.hpp).
     /// На дереве, собранном в обход компиляции — разбор данных хоста
@@ -191,9 +191,37 @@ class Ast {
     /// отличается: и та и другая — нули.
     [[nodiscard]] bool hasStringLiteral(NodeId node) const noexcept;
 
+    /// Lays the bytes of one string literal into a box owned by THIS Ast and
+    /// returns it. Called once per String node, by compilation
+    /// (core/src/compile.hpp).
+    ///
+    ///   Ast
+    ///    ├── nodes_      vector<Node>          the tree itself
+    ///    ├── children_   vector<NodeId>        child lists
+    ///    └── literals_   vector<StringBox *>   one reference each, released
+    ///                                          when this Ast is destroyed
+    ///
+    /// The box lives from this call until the Ast is destroyed. It is not a
+    /// value the program creates but a constant the program contains, so it
+    /// never enters the deferred-release list: the first operation boundary
+    /// would take it away from the tree that still points at it.
+    detail::StringBox *internLiteral(std::string_view bytes);
 
     /// Число узлов, включая пустышку с индексом kNoNode. Для тестов и замеров.
     [[nodiscard]] std::uint32_t nodeCount() const noexcept;
+
+    /// Declared because the Ast owns literal boxes: the implicit destructor
+    /// would leak one reference per string literal. Defined in ast.cpp, where
+    /// StringBox is a complete type.
+    ~Ast();
+
+    /// Move-only. Copying would give two Asts one reference each to the same
+    /// literal boxes and free them twice; there is no use for a copy — a unit
+    /// is compiled, evaluated and destroyed.
+    Ast(const Ast &) = delete;
+    Ast &operator=(const Ast &) = delete;
+    Ast(Ast &&) noexcept;
+    Ast &operator=(Ast &&) noexcept;
 
    private:
     /// Узел дерева — двадцать четыре байта.
@@ -271,6 +299,7 @@ class Ast {
     bool checked_ = false;
     std::vector<Node> nodes_;      // TODO(B7): переехать в арену хранилища
     std::vector<NodeId> children_; // TODO(B10): боковой пул детей
+    std::vector<detail::StringBox *> literals_;  // one reference each
 };
 
 }  // namespace CS

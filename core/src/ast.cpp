@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include "box.hpp"
+
 namespace CS {
 namespace {
 
@@ -26,13 +28,43 @@ Ast::Ast() {
     nodes_.push_back(Node{});
 }
 
+Ast::~Ast() {
+    for (detail::StringBox *literal : literals_) { detail::release(literal); }
+}
+
+Ast::Ast(Ast &&) noexcept = default;
+
+Ast &Ast::operator=(Ast &&other) noexcept {
+    if (this == &other) { return *this; }
+    // Release first: assignment overwrites literals_ wholesale, and the boxes
+    // this Ast held would otherwise leak.
+    for (detail::StringBox *literal : literals_) { detail::release(literal); }
+    nodes_ = std::move(other.nodes_);
+    children_ = std::move(other.children_);
+    literals_ = std::move(other.literals_);
+    sourceLength_ = other.sourceLength_;
+    root_ = other.root_;
+    checked_ = other.checked_;
+    return *this;
+}
+
+detail::StringBox *Ast::internLiteral(std::string_view bytes) {
+    detail::StringBox *box = detail::makeStringBox(bytes);
+    literals_.push_back(box);
+    return box;
+}
+
 void Ast::reset(std::uint32_t sourceLength) {
     sourceLength_ = sourceLength;
     root_ = kNoNode;
     nodes_.clear();
     children_.clear();
     nodes_.push_back(Node{});  // индекс kNoNode
-    // Дерево выброшено — отметка уходит вместе с ним.
+    // Дерево выброшено — отметка уходит вместе с ним, и с ней уходят литералы:
+    // без release() здесь повторный разбор того же Ast растил бы literals_
+    // безостановочно, ведь ссылки старого дерева больше никто не отпустит.
+    for (detail::StringBox *literal : literals_) { detail::release(literal); }
+    literals_.clear();
     checked_ = false;
 }
 

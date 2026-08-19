@@ -43,7 +43,6 @@ Store::~Store() {
     // здесь больше нет — он принадлежит выполнению, и то умирает раньше
     // (Context объявляет его после хранилища).
     for (Value v : globalValues_) { detail::releaseValue(v); }
-    for (detail::StringBox *literal : literals_) { detail::release(literal); }
     // У арены операции таблицы нет вовсе — отпускать нечего.
     if (keys_ != nullptr) { KeyTable::release(keys_); }
 }
@@ -85,12 +84,6 @@ std::string_view Store::textAt(std::uint32_t offset,
 Value Store::makeString(std::string_view bytes) {
     const std::uint32_t offset = appendText(bytes);
     return Value::scratchString(offset, static_cast<std::uint32_t>(bytes.size()));
-}
-
-detail::StringBox *Store::internLiteral(std::string_view bytes) {
-    detail::StringBox *box = detail::makeStringBox(bytes);
-    literals_.push_back(box);
-    return box;
 }
 
 std::string_view Store::string(Value v) const noexcept {

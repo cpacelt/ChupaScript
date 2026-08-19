@@ -39,34 +39,33 @@ bool fill(Store &store) {
            CS::setVariable(store, "map", "{'0': 'zero', '1': 'one'}", diag);
 }
 
-/// Общая часть: наполнить хранилище, разобрать выражение, мерить вычисление.
+/// Общая часть: наполнить контекст, скомпилировать выражение, мерить вычисление.
+///
+/// Через Context, а не через Execution напрямую, и это не стилистика.
+/// Границу операции открывает только Context: он сбрасывает арену и сливает
+/// список отложенного освобождения. Замер мимо него мерил бы вычисление без
+/// той работы, которую хост оплачивает на каждом вызове, и вдобавок копил бы
+/// в арене и в списке всё, что породили миллионы итераций, — то есть измерял
+/// бы установившийся режим, в который движок в этой сборке не входит никогда.
 void runEval(benchmark::State &state, std::string_view source) {
-    Store store;
-    if (!fill(store)) {
+    CS::Context ctx;
+    if (!fill(ctx.store())) {
         state.SkipWithError("setVariable failed");
         return;
     }
 
-    Ast ast;
-    Diagnostic diag;
-    // Срез строкового литерала: данные статические, дерево хранит их срезами.
-    // compileExpression вместо parseExpression: evalExpression утверждением
-    // требует отметку прохода, а разбор без проверки её не ставит.
-    if (CS::compileExpression(source.data(),
-                              static_cast<std::uint32_t>(source.size()), ast,
-                              store, &diag, 1) != 0) {
-        state.SkipWithError("compileExpression failed");
+    CS::Expression expr;
+    Diagnostic diags[1];
+    if (CS::Expression::compile(source, ctx.store(), &expr, diags, 1) != 0) {
+        state.SkipWithError("Expression::compile failed");
         return;
     }
 
-    // Состояние выполнения живёт дольше вычисления — как и в контексте C
-    // API (core/src/execution.hpp).
-    CS::Execution exec(store);
+    Diagnostic diag;
     for (auto _ : state) {
         Value out = Value::null();
-        bool ok = CS::evalExpression(ast, source, exec, &out, diag);
-        if (!ok) {
-            state.SkipWithError("evalExpression failed");
+        if (!ctx.eval(expr, &out, diag)) {
+            state.SkipWithError("eval failed");
             return;
         }
         benchmark::DoNotOptimize(out);
@@ -211,33 +210,30 @@ BENCHMARK(BM_Eval_DeepChain);
 /// Общая часть для чувствительности к числу имён: то же выражение, но в
 /// хранилище лежит names глобальных переменных, а нужная — последняя.
 void runEvalWithGlobals(benchmark::State &state, int names) {
-    Store store;
+    CS::Context ctx;
     Diagnostic diag;
     for (int i = 0; i < names; ++i) {
-        if (!CS::setVariable(store, "var" + std::to_string(i), "1", diag)) {
+        if (!CS::setVariable(ctx.store(), "var" + std::to_string(i), "1", diag)) {
             state.SkipWithError("setVariable failed");
             return;
         }
     }
-    if (!CS::setVariable(store, "zzz_user", "{'name': 'Вася'}", diag)) {
+    if (!CS::setVariable(ctx.store(), "zzz_user", "{'name': 'Вася'}", diag)) {
         state.SkipWithError("setVariable failed");
         return;
     }
 
-    const std::string_view source = "zzz_user.name";
-    Ast ast;
-    if (CS::compileExpression(source.data(),
-                              static_cast<std::uint32_t>(source.size()), ast,
-                              store, &diag, 1) != 0) {
-        state.SkipWithError("compileExpression failed");
+    CS::Expression expr;
+    if (CS::Expression::compile("zzz_user.name", ctx.store(), &expr, &diag, 1) != 0) {
+        state.SkipWithError("Expression::compile failed");
         return;
     }
 
-    CS::Execution exec(store);
+    // Через Context: см. runEval — граница операции есть только у него.
     for (auto _ : state) {
         Value out = Value::null();
-        if (!CS::evalExpression(ast, source, exec, &out, diag)) {
-            state.SkipWithError("evalExpression failed");
+        if (!ctx.eval(expr, &out, diag)) {
+            state.SkipWithError("eval failed");
             return;
         }
         benchmark::DoNotOptimize(out);
@@ -331,28 +327,28 @@ BENCHMARK(BM_Eval_Script);
 /// иначе вторая итерация работает уже на других данных. Отсюда и состав ниже:
 /// присваивание существующему ключу числа, а не push и не строкового литерала.
 void runScriptHot(benchmark::State &state, std::string_view source) {
-    Store store;
-    if (!fill(store)) {
+    // Через Context по той же причине, что и runEval: границу операции
+    // открывает только он, и без неё мерился бы не тот режим.
+    CS::Context ctx;
+    if (!fill(ctx.store())) {
         state.SkipWithError("setVariable failed");
         return;
     }
-    Ast ast;
-    Diagnostic diag;
-    if (CS::compileScript(source.data(),
-                          static_cast<std::uint32_t>(source.size()), ast, store,
-                          &diag, 1) != 0) {
-        state.SkipWithError("compileScript failed");
+
+    CS::Script script;
+    Diagnostic diags[1];
+    if (CS::Script::compile(source, ctx.store(), &script, diags, 1) != 0) {
+        state.SkipWithError("Script::compile failed");
         return;
     }
 
-    CS::Execution exec(store);
+    Diagnostic diag;
     for (auto _ : state) {
-        bool ok = CS::runScript(ast, source, exec, diag);
-        if (!ok) {
-            state.SkipWithError("runScript failed");
+        if (!ctx.run(script, diag)) {
+            state.SkipWithError("run failed");
             return;
         }
-        benchmark::DoNotOptimize(ok);
+        benchmark::DoNotOptimize(script);
     }
 }
 

@@ -37,15 +37,11 @@ void internStringLiterals(Ast &ast, std::string_view source, Store &store) {
     // надо все — литерал бывает где угодно, вплоть до ключа объекта.
     for (NodeId node = 1; node <= root; ++node) {
         if (ast.kind(node) != NodeKind::String) { continue; }
-        const Value literal =
-            store.makeString(literalText(ast, node, source, scratch));
-        // Узел хранит строку парой чисел, а не готовым Value: шестнадцать байт
-        // в него не влезли бы, не растя сам узел. Разложить значение может
-        // только хранилище — фабрика Value::string закрыта (core/src/store.hpp).
-        std::uint32_t offset = 0;
-        std::uint32_t length = 0;
-        store.stringParts(literal, &offset, &length);
-        ast.setStringLiteral(node, offset, length);
+        // Узел дерева хранит указатель, а не готовый Value: шестнадцать байт в
+        // него не влезли бы, не растя сам узел, а восемь ложатся туда, где у
+        // узла без детей всё равно пустота.
+        ast.setStringLiteral(node,
+                             store.internLiteral(literalText(ast, node, source, scratch)));
     }
 }
 

@@ -1,5 +1,7 @@
 #include "store.hpp"
 
+#include "node.hpp"
+
 #include <gtest/gtest.h>
 
 #include <string>
@@ -67,11 +69,25 @@ TEST(StoreMetrics, FreshStoreHoldsNothing) {
     EXPECT_EQ(store.bytesUsed(), 0u);
 }
 
-TEST(StoreMetrics, StringAddsItsBytes) {
+TEST(StoreMetrics, StringOfCountedStoreCostsANodeNotPoolBytes) {
+    // Метрика хранилища мерит его собственные арены, а байты долгоживущей
+    // строки лежат в узле — памятью узла хранилище не владеет и видеть её не
+    // может. Раньше здесь стояло before + 5.
     Store store;
     const std::size_t before = store.bytesUsed();
+    const std::size_t nodes = CS::detail::liveNodeCount();
     store.makeString("12345");
-    EXPECT_EQ(store.bytesUsed(), before + 5u);
+    EXPECT_EQ(store.bytesUsed(), before);
+    EXPECT_EQ(CS::detail::liveNodeCount(), nodes + 1);
+}
+
+TEST(StoreMetrics, StringOfScratchStoreAddsItsBytes) {
+    // А промежуточная строка по-прежнему смещение в арену операции, и байты
+    // её видны там же, где и были.
+    Store scratch(Value::Region::Scratch);
+    const std::size_t before = scratch.bytesUsed();
+    scratch.makeString("12345");
+    EXPECT_EQ(scratch.bytesUsed(), before + 5u);
 }
 
 TEST(StoreMetrics, ReservedCoversUsed) {
@@ -715,6 +731,53 @@ TEST(StoreStringBuilder, NestedAbortLeavesTheOuterAssemblyIntact) {
     store.abortString(inner);
     store.appendToString("продолжение");
     EXPECT_EQ(store.string(store.endString(outer)), "внешнее продолжение");
+}
+
+TEST(StoreString, CountedStoreMakesNodes) {
+    Store store;
+    EXPECT_EQ(store.makeString("a").region(), Value::Region::Counted);
+    EXPECT_EQ(store.string(store.makeString("привет")), "привет");
+}
+
+TEST(StoreString, ScratchStoreMakesOffsets) {
+    Store scratch(Value::Region::Scratch);
+    const Value v = scratch.makeString("a");
+    EXPECT_EQ(v.region(), Value::Region::Scratch);
+    EXPECT_EQ(scratch.string(v), "a");
+}
+
+TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
+    Store scratch(Value::Region::Scratch);
+    const Value v = scratch.materialize("a");
+    EXPECT_EQ(v.region(), Value::Region::Counted);
+    scratch.clear();
+    // Узел арену не заметил.
+    EXPECT_EQ(scratch.string(v), "a");
+    CS::detail::release(v.node());
+}
+
+TEST(StorePromote, ScratchStringBecomesNodeAndOutlivesTheArena) {
+    Store persistent;
+    Store scratch(Value::Region::Scratch);
+    const Value temp = scratch.makeString("привет");
+    ASSERT_EQ(temp.region(), Value::Region::Scratch);
+
+    const Value kept = persistent.promote(scratch, temp);
+    EXPECT_EQ(kept.region(), Value::Region::Counted);
+    scratch.clear();
+    EXPECT_EQ(persistent.string(kept), "привет");
+    CS::detail::release(kept.node());
+}
+
+TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {
+    const std::size_t before = CS::detail::liveNodeCount();
+    {
+        Store store;
+        CS::detail::StrNode *literal = store.internLiteral("abc");
+        EXPECT_EQ(literal->view(), "abc");
+        EXPECT_EQ(CS::detail::liveNodeCount(), before + 1);
+    }
+    EXPECT_EQ(CS::detail::liveNodeCount(), before);
 }
 
 }  // namespace

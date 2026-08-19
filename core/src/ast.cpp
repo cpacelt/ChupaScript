@@ -315,23 +315,19 @@ bool Ast::hasGlobalValuesSlot(NodeId node) const noexcept {
     return (nodes_[node].flags & kFlagSlot) != 0;
 }
 
-void Ast::stringLiteral(NodeId node, std::uint32_t *offset,
-                        std::uint32_t *length) const noexcept {
+detail::StrNode *Ast::stringLiteral(NodeId node) const noexcept {
     assert(node < nodes_.size());
     assert(nodes_[node].kind == NodeKind::String &&
            "уложенный литерал бывает только у строкового литерала");
     assert(hasStringLiteral(node) && "литерал обязан быть уложен");
-    *offset = nodes_[node].payload.literal.offset;
-    *length = nodes_[node].payload.literal.length;
+    return nodes_[node].payload.literal;
 }
 
-void Ast::setStringLiteral(NodeId node, std::uint32_t offset,
-                           std::uint32_t length) noexcept {
+void Ast::setStringLiteral(NodeId node, detail::StrNode *literal) noexcept {
     assert(node < nodes_.size());
     assert(nodes_[node].kind == NodeKind::String &&
            "уложенный литерал бывает только у строкового литерала");
-    nodes_[node].payload.literal.offset = offset;
-    nodes_[node].payload.literal.length = length;
+    nodes_[node].payload.literal = literal;
     nodes_[node].flags |= kFlagLiteral;
 }
 

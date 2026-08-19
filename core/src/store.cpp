@@ -1,5 +1,7 @@
 #include "store.hpp"
 
+#include "node.hpp"
+
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -14,7 +16,7 @@ struct ArrayRep {
     std::uint32_t capacity;
 };
 
-struct Entry {
+struct PairRep {
     std::uint32_t keyOffset;  // индекс первого байта ключа в text_
     std::uint32_t keyLength;
     Value value;
@@ -47,7 +49,10 @@ struct Promoted {
 
 Store::Store(Value::Region region) : region_(region) {}
 
-Store::~Store() = default;
+Store::~Store() {
+    // Литералы — единственное, чем хранилище владеет напрямую и до конца.
+    for (detail::StrNode *literal : literals_) { detail::release(literal); }
+}
 
 std::uint32_t Store::appendText(std::string_view bytes) {
     const std::uint32_t offset = static_cast<std::uint32_t>(text_.size());
@@ -84,30 +89,32 @@ std::string_view Store::textAt(std::uint32_t offset,
 }
 
 Value Store::makeString(std::string_view bytes) {
-    const std::uint32_t offset = appendText(bytes);
-    return Value::string(offset, static_cast<std::uint32_t>(bytes.size()), region_);
+    if (region_ == Value::Region::Scratch) {
+        const std::uint32_t offset = appendText(bytes);
+        return Value::string(offset, static_cast<std::uint32_t>(bytes.size()),
+                             Value::Region::Scratch);
+    }
+    return materialize(bytes);
+}
+
+Value Store::materialize(std::string_view bytes) {
+    detail::StrNode *node = detail::makeStrNode(bytes);
+    return Value::string(node, node->len);
+}
+
+detail::StrNode *Store::internLiteral(std::string_view bytes) {
+    detail::StrNode *node = detail::makeStrNode(bytes);
+    literals_.push_back(node);
+    return node;
 }
 
 std::string_view Store::string(Value v) const noexcept {
-    assert(v.kind() == Value::Kind::String && sameRegion(v));
-    return textAt(v.index(), v.length());
-}
-
-void Store::stringParts(Value v, std::uint32_t *offset,
-                        std::uint32_t *length) const noexcept {
-    assert(v.kind() == Value::Kind::String && sameRegion(v));
-    *offset = v.index();
-    *length = v.length();
-}
-
-Value Store::stringAt(std::uint32_t offset,
-                      std::uint32_t length) const noexcept {
-    // Сложение в size_t: сумма двух uint32 переполнила бы uint32 и утверждение
-    // прошло бы на диапазоне, который на самом деле за пулом.
-    assert(static_cast<std::size_t>(offset) + length <= text_.size() &&
-           "строка за пределами пула текста: координаты выданы не этим "
-           "хранилищем");
-    return Value::string(offset, length, region_);
+    assert(v.kind() == Value::Kind::String);
+    // Два представления, один бит различения. Узел самодостаточен и читается
+    // без хранилища вовсе — метод остаётся методом только ради единообразия
+    // вызова.
+    if (v.region() == Value::Region::Scratch) { return textAt(v.index(), v.length()); }
+    return static_cast<const detail::StrNode *>(v.node())->view();
 }
 
 std::uint32_t Store::beginString() noexcept {
@@ -301,7 +308,7 @@ void Store::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact)
 
     assert(entries_.size() + capacity <= 0xffffffffu && "пул пар перерос uint32");
     const std::uint32_t start = static_cast<std::uint32_t>(entries_.size());
-    entries_.insert(entries_.end(), capacity, detail::Entry{0, 0, Value::null()});
+    entries_.insert(entries_.end(), capacity, detail::PairRep{0, 0, Value::null()});
     for (std::uint32_t i = 0; i < rep.count; ++i) {
         entries_[start + i] = entries_[rep.start + i];
     }
@@ -318,7 +325,7 @@ std::uint32_t Store::findKey(const detail::ObjectRep &rep, std::string_view key,
     std::uint32_t high = rep.count;
     while (low < high) {
         const std::uint32_t mid = low + (high - low) / 2;
-        const detail::Entry &entry = entries_[rep.start + mid];
+        const detail::PairRep &entry = entries_[rep.start + mid];
         const std::string_view candidate = textAt(entry.keyOffset, entry.keyLength);
         if (candidate < key) {
             low = mid + 1;
@@ -365,7 +372,7 @@ std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
     assert(o.kind() == Value::Kind::Object && sameRegion(o));
     const detail::ObjectRep &rep = objects_[o.index()];
     if (i >= rep.count) { return {}; }
-    const detail::Entry &entry = entries_[rep.start + i];
+    const detail::PairRep &entry = entries_[rep.start + i];
     return textAt(entry.keyOffset, entry.keyLength);
 }
 
@@ -401,7 +408,7 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
     for (std::uint32_t i = rep.count; i > at; --i) {
         entries_[rep.start + i] = entries_[rep.start + i - 1];
     }
-    entries_[rep.start + at] = detail::Entry{keyOffset, keyLength, v};
+    entries_[rep.start + at] = detail::PairRep{keyOffset, keyLength, v};
     rep.count += 1;
 }
 
@@ -492,7 +499,7 @@ std::size_t Store::bytesUsed() const noexcept {
     return pool_.size() * sizeof(Value) +
            arrays_.size() * sizeof(detail::ArrayRep) +
            objects_.size() * sizeof(detail::ObjectRep) +
-           entries_.size() * sizeof(detail::Entry) + text_.size() +
+           entries_.size() * sizeof(detail::PairRep) + text_.size() +
            globalNames_.size() * sizeof(detail::GlobalName) +
            globalValues_.size() * sizeof(Value);
 }
@@ -501,7 +508,7 @@ std::size_t Store::bytesReserved() const noexcept {
     return pool_.capacity() * sizeof(Value) +
            arrays_.capacity() * sizeof(detail::ArrayRep) +
            objects_.capacity() * sizeof(detail::ObjectRep) +
-           entries_.capacity() * sizeof(detail::Entry) + text_.capacity() +
+           entries_.capacity() * sizeof(detail::PairRep) + text_.capacity() +
            build_.capacity() +
            globalNames_.capacity() * sizeof(detail::GlobalName) +
            globalValues_.capacity() * sizeof(Value);

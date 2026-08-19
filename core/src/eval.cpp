@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "builtin.hpp"
+#include "node.hpp"
 #include "operator.hpp"
 #include "text.hpp"
 
@@ -256,12 +257,12 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // заводился черновик и байты дописывались в пул заново, а он
             // поштучно не освобождается: выражение со строкой растило память на
             // каждом кадре (docs/backlog.md B51).
-            std::uint32_t offset = 0;
-            std::uint32_t length = 0;
-            ast.stringLiteral(node, &offset, &length);
-            // Литерал уложен в постоянный пул на компиляции: он часть
-            // программы, а не создаваемое значение.
-            *out = exec.persistent().stringAt(offset, length);
+            // Литерал уложен на компиляции: он часть программы, а не
+            // создаваемое значение. Узлом владеет хранилище контекста и
+            // отпускает его только вместе с собой, поэтому ссылки здесь никто
+            // не берёт — брать её было бы не у кого и не для кого.
+            detail::StrNode *literal = ast.stringLiteral(node);
+            *out = Value::string(literal, literal->len);
             return true;
         }
 
@@ -350,20 +351,12 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 if (!eval(ast, source, ast.child(node, i + 1), exec, &value, diag)) {
                     return false;
                 }
-                // Ключ берётся уложенным, а не разбирается заново: сам objectSet
-                // всё равно копирует байты себе, но раскодировать экранирование
-                // на каждом вычислении незачем. Срез указывает в пул текста
-                // постоянного хранилища, а копия ложится во временный — пулы
-                // разные, поэтому распознавание алиаса в appendText (store.cpp)
-                // тут не при чём и мешать переезду нечему.
-                std::uint32_t keyOffset = 0;
-                std::uint32_t keyLength = 0;
-                ast.stringLiteral(ast.child(node, i), &keyOffset, &keyLength);
-                const Store &program = exec.persistent();
+                // Ключ берётся уложенным, а не разбирается заново: раскодировать
+                // экранирование на каждом вычислении незачем. Байты лежат в
+                // узле литерала, которым владеет хранилище контекста, и живут
+                // дольше всякого объекта, который их примет.
                 exec.scratch.objectSet(
-                    object,
-                    program.string(program.stringAt(keyOffset, keyLength)),
-                    value);
+                    object, ast.stringLiteral(ast.child(node, i))->view(), value);
             }
             *out = object;
             return true;

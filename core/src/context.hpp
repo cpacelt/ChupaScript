@@ -73,7 +73,7 @@ class Context {
     /// вычисляет, — обычное дело на старте экрана.
     void setGlobal(std::string_view name, Value v) {
         beginOperation();
-        store_.setGlobal(name, store_.promote(exec_.storeOf(v), v));
+        store_.setGlobal(name, exec_.promote(v));
     }
 
     /// Строка от хоста: укладывается коробкой, потому что переживёт операцию.
@@ -97,18 +97,17 @@ class Context {
     [[nodiscard]] Store &store() noexcept { return store_; }
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
-    /// Хранилище, способное прочитать значение.
+    /// Байты строки.
     ///
-    /// Роль сузилась до одного случая: агрегат и коробка строки самодостаточны, а
-    /// вот результат вычисления вправе быть промежуточной строкой
-    /// (`format(...)`), и смысл её смещению придаёт только арена операции.
-    /// Такое значение годно до следующей операции над контекстом.
+    /// Коробка самодостаточна, а промежуточная строка (`format(...)`) —
+    /// смещение в арену операции, и такое значение годно до следующей
+    /// операции над контекстом.
     ///
     /// Наружу метод остаётся ради того, кто читает сырой результат eval, — это
     /// оболочка (cli/printer.cpp). Обёртка на Swift сюда не ходит: ей строка
     /// приходит срезом через evalString, и она копирует её немедленно.
-    [[nodiscard]] const Store &storeOf(Value v) const noexcept {
-        return exec_.storeOf(v);
+    [[nodiscard]] std::string_view string(Value v) const noexcept {
+        return exec_.string(v);
     }
 
     /// Сколько байт занято временным регионом сейчас.
@@ -138,8 +137,7 @@ class Context {
     /// которую шла водяная метка [B1] (docs/backlog.md [B57]).
     void beginOperation() noexcept {
         exec_.scratch.clear();
-        exec_.scratch.drainPending();
-        store_.drainPending();
+        exec_.deferred().drain();
     }
 
     Store store_;

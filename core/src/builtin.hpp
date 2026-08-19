@@ -82,10 +82,10 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
 ///
 /// offset — смещение узла вызова, для диагностики.
 ///
-/// exec, а не хранилище, потому что три роли здесь разные: аргумент читается
-/// тем хранилищем, которое его выдало (Execution::storeOf), результат создаётся
-/// во временном регионе, а push пишет туда, где лежит его цель — и потому
-/// единственный зовёт promote (docs/backlog.md [B57]).
+/// exec, а не хранилище: результат создаётся в арене операции, push
+/// продвигает записываемое значение (Execution::promote) и отдаёт вытесненную
+/// ссылку в список отложенного освобождения. Выбора хранилища здесь больше нет
+/// — арена одна, а агрегат себя описывает сам.
 bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
                   Diagnostic &diag);

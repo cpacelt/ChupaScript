@@ -6,6 +6,7 @@
 #include <limits>
 
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -303,10 +304,10 @@ TEST(OperatorEquality, BooleansCompareByValue) {
 TEST(OperatorEquality, AggregatesCompareByIdentity) {
     Store store;
     const Value items = store.makeArray();
-    store.arrayPush(items, number(1.0));
+    CS::arrayPush(items, number(1.0));
     const Value alias = items;
     const Value other = store.makeArray();
-    store.arrayPush(other, number(1.0));
+    CS::arrayPush(other, number(1.0));
 
     // docs/semantics.md §5.4: равны тогда и только тогда, когда это один и тот
     // же объект. Одинаковое содержимое не делает их равными.
@@ -316,10 +317,10 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
     // Объекты идут по той же ветке switch, что и массивы, но проверены до сих
     // пор были только массивы.
     const Value box = store.makeObject();
-    store.objectSet(box, "k", number(1.0));
+    CS::objectSet(box, "k", number(1.0), store.deferred());
     const Value boxAlias = box;
     const Value otherBox = store.makeObject();
-    store.objectSet(otherBox, "k", number(1.0));
+    CS::objectSet(otherBox, "k", number(1.0), store.deferred());
     EXPECT_TRUE(binary(TokenKind::Equal, box, boxAlias, store).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, box, otherBox, store).booleanValue());
 }

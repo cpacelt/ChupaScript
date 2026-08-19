@@ -23,8 +23,10 @@ struct GlobalName {
 
 }  // namespace detail
 
-Store::Store(Value::Region region, KeyTable *keys)
-    : region_(region), keys_(keys != nullptr ? keys : KeyTable::create()) {
+Store::Store(Value::Region region, KeyTable *keys, Deferred *deferred)
+    : region_(region),
+      keys_(keys != nullptr ? keys : KeyTable::create()),
+      deferred_(deferred != nullptr ? deferred : &owned_) {
     if (keys != nullptr) { KeyTable::retain(keys_); }
 }
 
@@ -36,18 +38,6 @@ Store::~Store() {
     for (Value v : globalValues_) { detail::releaseValue(v); }
     for (detail::StringBox *literal : literals_) { detail::release(literal); }
     KeyTable::release(keys_);
-}
-
-void Store::defer(Value v) {
-    if (detail::Box *box = detail::boxOf(v)) { pending_.push_back(box); }
-}
-
-void Store::drainPendingSlow() noexcept {
-    // Дописать в список освобождение не может: detail::release не видит ни
-    // одного хранилища — он рекурсивно зовёт себя и KeyTable::release, и
-    // только их. Поэтому обход обычный.
-    for (detail::Box *box : pending_) { detail::release(box); }
-    pending_.clear();
 }
 
 std::uint32_t Store::appendText(std::string_view bytes) {
@@ -95,7 +85,7 @@ Value Store::makeString(std::string_view bytes) {
 
 Value Store::materialize(std::string_view bytes) {
     detail::StringBox *box = detail::makeStringBox(bytes);
-    pending_.push_back(box);   // ссылка создателя — до ближайшей границы
+    deferred_->take(box);  // ссылка создателя — до ближайшей границы
     return Value::string(box, box->len);
 }
 
@@ -155,68 +145,14 @@ void Store::clearSlow() noexcept {
 
 Value Store::makeArray(std::uint32_t capacity) {
     detail::ArrayBox *box = detail::makeArrayBox(capacity);
-    pending_.push_back(box);   // ссылка создателя — до ближайшей границы
+    deferred_->take(box);  // ссылка создателя — до ближайшей границы
     return Value::array(box);
-}
-
-bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
-    assert(a.kind() == Value::Kind::Array);
-    assert(materialized(v) && "строка временного региона не материализована");
-    detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
-    if (index >= box->items.size()) { return false; }
-    detail::retainValue(v);
-    defer(box->items[index]);
-    box->items[index] = v;
-    return true;
-}
-
-void Store::arrayPush(Value a, Value v) {
-    assert(a.kind() == Value::Kind::Array);
-    assert(materialized(v) && "строка временного региона не материализована");
-    // Дописывание в хвост, а не переезд диапазона в конец пула: массив теперь
-    // владеет своими элементами сам.
-    detail::retainValue(v);
-    static_cast<detail::ArrayBox *>(a.box())->items.push_back(v);
-}
-
-bool Store::arrayPop(Value a, Value *out) noexcept {
-    assert(a.kind() == Value::Kind::Array);
-    detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
-    if (box->items.empty()) { return false; }
-    const Value last = box->items.back();
-    box->items.pop_back();
-    if (out != nullptr) { *out = last; }
-    // Ссылка ячейки уходит в список, а не в delete: вызывающий читает снятое
-    // значение сразу после возврата.
-    defer(last);
-    return true;
 }
 
 Value Store::makeObject(std::uint32_t capacity) {
     detail::ObjectBox *box = detail::makeObjectBox(keys_, capacity);
-    pending_.push_back(box);   // ссылка создателя — до ближайшей границы
+    deferred_->take(box);  // ссылка создателя — до ближайшей границы
     return Value::object(box);
-}
-
-void Store::objectSet(Value o, std::string_view key, Value v) {
-    assert(o.kind() == Value::Kind::Object);
-    assert(materialized(v) && "строка временного региона не материализована");
-    detail::ObjectBox &box = *static_cast<detail::ObjectBox *>(o.box());
-
-    const std::uint32_t prefix = detail::keyPrefix(key);
-    bool found = false;
-    const std::uint32_t at = detail::findEntry(box, key, prefix, &found);
-    detail::retainValue(v);
-    if (found) {
-        defer(box.entries[at].value);
-        box.entries[at].value = v;
-        return;
-    }
-    // Интернируется только тот ключ, который правда заводится: чтение
-    // отсутствующего имени таблицу не засоряет — за этим следит findEntry,
-    // который сравнивает байты и в таблицу не пишет.
-    box.entries.insert(box.entries.begin() + at,
-                       detail::Entry{box.keys->intern(key), prefix, v});
 }
 
 std::uint32_t Store::findGlobal(std::string_view name,
@@ -278,7 +214,7 @@ void Store::setGlobal(std::string_view name, Value v) {
         // отпускает, и без этого повторное присваивание растило бы память
         // вечно.
         Value &slot = globalValues_[globalNames_[at].slot];
-        defer(slot);
+        deferred_->take(slot);
         slot = v;
         return;
     }

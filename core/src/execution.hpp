@@ -32,7 +32,8 @@ class Execution {
     /// собранный вычислением и попавший в глобальную переменную, не
     /// копируется, и переводить номера ключей было бы негде.
     explicit Execution(Store &persistent) noexcept
-        : scratch(Value::Region::Scratch, persistent.keys()),
+        : scratch(Value::Region::Scratch, persistent.keys(),
+                  &persistent.deferred()),
           persistent_(persistent) {}
 
     Execution(const Execution &) = delete;
@@ -49,22 +50,29 @@ class Execution {
     [[nodiscard]] Store &persistent() noexcept { return persistent_; }
     [[nodiscard]] const Store &persistent() const noexcept { return persistent_; }
 
-    /// Хранилище, способное прочитать значение.
+    /// Байты строки.
     ///
-    /// Роль с приходом коробок сузилась до одного случая. Агрегат себя описывает
-    /// сам, коробка строки тоже — им хранилище не нужно вовсе. Разрешать надо
-    /// только промежуточную строку: она смещение, и смысл ему придаёт арена
-    /// операции, которая здесь одна.
+    /// Хранилище в вопросе больше не участвует. Коробка самодостаточна и
+    /// читается без всякого пула, а промежуточная строка — смещение, и арена,
+    /// придающая ему смысл, во всём выполнении ровно одна. Спрашивать «в каком
+    /// хранилище лежит это значение» стало не у кого: раньше на этот вопрос
+    /// отвечал storeOf, и у агрегата ответ был предрешён.
     ///
-    /// У скаляра региона нет, поле у него Boxed по умолчанию, и вернётся
-    /// постоянное хранилище. Это безвредно: читать у скаляра нечего.
-    [[nodiscard]] const Store &storeOf(Value v) const noexcept {
-        return v.region() == Value::Region::Scratch ? scratch : persistent_;
+    /// Срез действителен до ближайшей записи в арену либо до смерти коробки.
+    [[nodiscard]] std::string_view string(Value v) const noexcept {
+        return scratch.string(v);
     }
 
-    [[nodiscard]] Store &storeOf(Value v) noexcept {
-        return v.region() == Value::Region::Scratch ? scratch : persistent_;
-    }
+    /// Принять значение туда, что переживёт текущую операцию: промежуточная
+    /// строка становится коробкой, прочее проходит как есть.
+    ///
+    /// Звать надо перед укладкой в агрегат либо в глобальную переменную.
+    /// Агрегат арены — такая же коробка и умеет уехать, продвигать его незачем.
+    [[nodiscard]] Value promote(Value v) { return scratch.promote(v); }
+
+    /// Список отложенного освобождения этого выполнения. Один на оба
+    /// хранилища — см. deferred.hpp.
+    [[nodiscard]] Deferred &deferred() noexcept { return scratch.deferred(); }
 
    private:
     Store &persistent_;

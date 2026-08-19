@@ -136,6 +136,13 @@ inline void releaseValue(Value v) noexcept {
     if (Box *box = boxOf(v)) { release(box); }
 }
 
+/// Годно ли значение к укладке в то, что переживёт операцию. Негодна ровно
+/// одна вещь — промежуточная строка: она смещение в сбрасываемую арену.
+/// Провести её надо через Execution::promote.
+[[nodiscard]] inline bool materialized(Value v) noexcept {
+    return v.kind() != Value::Kind::String || v.region() != Value::Region::Scratch;
+}
+
 /// Берёт ссылку на значение, если оно ею владеет.
 inline void retainValue(Value v) noexcept {
     if (Box *box = boxOf(v)) { retain(box); }

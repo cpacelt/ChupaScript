@@ -20,7 +20,7 @@ void BM_Store_ArrayPush(benchmark::State &state) {
         Store store;
         const Value a = store.makeArray();
         for (int i = 0; i < count; ++i) {
-            store.arrayPush(a, Value::number(static_cast<double>(i)));
+            CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
         // Локальная переменная, а не временное значение: DoNotOptimize от
         // rvalue не переживает смены версии Google Benchmark.
@@ -38,7 +38,7 @@ void BM_Store_ArrayPushReserved(benchmark::State &state) {
         Store store;
         const Value a = store.makeArray(static_cast<std::uint32_t>(count));
         for (int i = 0; i < count; ++i) {
-            store.arrayPush(a, Value::number(static_cast<double>(i)));
+            CS::arrayPush(a, Value::number(static_cast<double>(i)));
         }
         std::uint32_t filled = CS::arrayCount(a);
         benchmark::DoNotOptimize(filled);
@@ -52,7 +52,7 @@ void BM_Store_ArrayTraverse(benchmark::State &state) {
     Store store;
     const Value a = store.makeArray(1000);
     for (int i = 0; i < 1000; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
 
     for (auto _ : state) {
@@ -70,7 +70,7 @@ BENCHMARK(BM_Store_ArrayTraverse);
 Value makeFilledObject(Store &store, int keys) {
     const Value o = store.makeObject(static_cast<std::uint32_t>(keys));
     for (int i = 0; i < keys; ++i) {
-        store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.deferred());
     }
     return o;
 }

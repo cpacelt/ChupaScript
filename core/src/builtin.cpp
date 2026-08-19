@@ -201,10 +201,10 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                   Diagnostic &diag) {
     (void)count;  // арность гарантирована проходом
 
-    // Каждый аргумент читается тем хранилищем, которое его выдало: count(
-    // state.items) и count([1, 2]) приходят сюда одинаково, а лежат в разных
-    // регионах (docs/backlog.md [B57]).
-    const Store &first = exec.storeOf(args[0]);
+    // Арена одна на выполнение, поэтому хранилище под аргумент больше не
+    // выбирается: count(state.items) и count([1, 2]) приходят сюда одинаково
+    // и читаются одинаково.
+    const Store &first = exec.scratch;
     switch (id) {
         case Builtin::Count:
             // Array, Object либо String (§8.1); у строки — байты, не символы.
@@ -240,8 +240,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 // materialize, а не makeString: строка ложится в агрегат, а
                 // агрегат — узел и умеет пережить операцию. Смещение в арену
                 // он бы не пережил.
-                exec.scratch.arrayPush(
-                    result, exec.scratch.materialize(CS::objectKeyAt(args[0], i)));
+                arrayPush(result, exec.scratch.materialize(CS::objectKeyAt(args[0], i)));
             }
             *out = result;
             return true;
@@ -253,7 +252,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceScalarToString(exec.storeOf(args[1]), args[1],
+            if (!coerceScalarToString(exec.scratch, args[1],
                                       buffer, &key, offset, diag)) {
                 return false;
             }
@@ -282,12 +281,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             // массив в постоянный, и без продвижения записанный индекс пережил
             // бы сброс своего региона. promote отдаёт значение как есть, когда
             // копировать нечего.
-            {
-                Store &target = exec.storeOf(args[0]);
-                target.arrayPush(
-                    args[0],
-                    target.promote(exec.storeOf(args[1]), args[1]));
-            }
+            arrayPush(args[0], exec.promote(args[1]));
             return true;
 
         case Builtin::Pop:
@@ -296,7 +290,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             }
             // На пустом ничего не делает и не отказывает (§8.6). Снятое
             // значение никуда не идёт: pop его не возвращает.
-            exec.storeOf(args[0]).arrayPop(args[0], nullptr);
+            arrayPop(args[0], nullptr, exec.deferred());
             return true;
 
         case Builtin::Str: {

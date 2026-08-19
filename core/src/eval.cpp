@@ -135,7 +135,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
     // Шаблон, наоборот, читается там, где лежит: литерал уложен в постоянный
     // пул на компиляции, вычисленная строка — во временном.
     Store &result = exec.scratch;
-    const Store &from = exec.storeOf(tmpl);
+    const Store &from = exec.scratch;
 
     const std::uint32_t mark = result.beginString();
     std::uint32_t next = 1;  // следующий аргумент
@@ -171,7 +171,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
 
         char buffer[kNumberBufferSize];
         std::string_view text;
-        if (!coerceToString(ast, node, exec.storeOf(argument), argument,
+        if (!coerceToString(ast, node, exec.scratch, argument,
                             buffer, &text, diag)) {
             result.abortString(mark);
             return false;
@@ -304,7 +304,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                     char buffer[kNumberBufferSize];
                     std::string_view key;
                     if (!coerceToString(ast, node,
-                                        exec.storeOf(subscript),
+                                        exec.scratch,
                                         subscript, buffer, &key, diag)) {
                         return false;
                     }
@@ -336,9 +336,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 // Продвижение обязательно и здесь, хотя массив временный:
                 // агрегат — узел и умеет уехать в глобальную переменную, а
                 // смещение в арену операции туда попасть не должно.
-                exec.scratch.arrayPush(array,
-                                       exec.scratch.promote(exec.storeOf(element),
-                                                            element));
+                arrayPush(array, exec.promote(element));
             }
             *out = array;
             return true;
@@ -358,9 +356,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 // экранирование на каждом вычислении незачем. Байты лежат в
                 // узле литерала, которым владеет хранилище контекста, и живут
                 // дольше всякого объекта, который их примет.
-                exec.scratch.objectSet(
-                    object, ast.stringLiteral(ast.child(node, i))->view(),
-                    exec.scratch.promote(exec.storeOf(value), value));
+                objectSet(object, ast.stringLiteral(ast.child(node, i))->view(),
+                          exec.promote(value), exec.deferred());
             }
             *out = object;
             return true;
@@ -423,8 +420,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             if (!eval(ast, source, ast.child(node, 0), exec, &lhs, diag)) { return false; }
             Value rhs = Value::null();
             if (!eval(ast, source, ast.child(node, 1), exec, &rhs, diag)) { return false; }
-            return applyBinary(op, lhs, rhs, exec.storeOf(lhs),
-                               exec.storeOf(rhs), ast.offset(node), out,
+            return applyBinary(op, lhs, rhs, exec.scratch,
+                               exec.scratch, ast.offset(node), out,
                                diag);
         }
 
@@ -529,7 +526,6 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
 
     // Писать надо туда, где лежит цель: state.k = ... в постоянное,
     // [{'k': 1}][0].k = ... во временное (docs/backlog.md [B57]).
-    Store &dest = exec.storeOf(base);
 
     const TokenKind op = ast.op(node);
     if (op != TokenKind::Assign) {
@@ -539,8 +535,7 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
         const Value current = CS::objectGet(base, key);
         Value combined = Value::null();
         if (!applyBinary(compoundOperation(op), current, value,
-                         exec.storeOf(current),
-                         exec.storeOf(value), ast.offset(node),
+                         exec.scratch, exec.scratch, ast.offset(node),
                          &combined, diag)) {
             return false;
         }
@@ -550,7 +545,7 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
     // Барьер записи: временное значение в постоянном агрегате пережило бы
     // сброс своего региона, поэтому копируется. Обратное направление promote
     // пропускает как есть.
-    dest.objectSet(base, key, dest.promote(exec.storeOf(value), value));
+    objectSet(base, key, exec.promote(value), exec.deferred());
     return true;
 }
 
@@ -574,7 +569,6 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 return false;
             }
 
-            Store &dest = exec.storeOf(base);
 
             const TokenKind op = ast.op(node);
             if (op != TokenKind::Assign) {
@@ -587,8 +581,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 }
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 exec.storeOf(current),
-                                 exec.storeOf(value), ast.offset(node),
+                                 exec.scratch, exec.scratch, ast.offset(node),
                                  &combined, diag)) {
                     return false;
                 }
@@ -602,14 +595,12 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                             "array index is out of bounds", diag);
             }
             // Границу проверили выше, поэтому запись не отказывает.
-            static_cast<void>(dest.arraySet(
-                base, static_cast<std::uint32_t>(index),
-                dest.promote(exec.storeOf(value), value)));
+            static_cast<void>(arraySet(base, static_cast<std::uint32_t>(index),
+                                       exec.promote(value), exec.deferred()));
             return true;
         }
 
         case Value::Kind::Object: {
-            Store &dest = exec.storeOf(base);
             const TokenKind op = ast.op(node);
 
             // Продвижение стоит **до** приведения ключа, а не рядом с записью.
@@ -617,13 +608,11 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             // допишет копию; взятый раньше, он повис бы ровно так, как
             // предупреждает комментарий у coerceToString. Порядок здесь и есть
             // защита.
-            if (op == TokenKind::Assign) {
-                value = dest.promote(exec.storeOf(value), value);
-            }
+            if (op == TokenKind::Assign) { value = exec.promote(value); }
 
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceToString(ast, target, exec.storeOf(subscript),
+            if (!coerceToString(ast, target, exec.scratch,
                                 subscript, buffer, &key, diag)) {
                 return false;
             }
@@ -632,8 +621,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 const Value current = CS::objectGet(base, key);
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 exec.storeOf(current),
-                                 exec.storeOf(value), ast.offset(node),
+                                 exec.scratch, exec.scratch, ast.offset(node),
                                  &combined, diag)) {
                     return false;
                 }
@@ -651,7 +639,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             // значение уже прошло promote выше, до приведения ключа, а при
             // составном присваивании оно результат applyBinary, и то, что оно
             // ничего не адресует, утверждается строкой выше.
-            dest.objectSet(base, key, value);
+            objectSet(base, key, value, exec.deferred());
             return true;
         }
 

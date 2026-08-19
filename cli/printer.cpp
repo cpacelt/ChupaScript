@@ -55,12 +55,10 @@ constexpr std::uint32_t kMaxPrintDepth = 64;
 /// поэтому растёт между строками сессии и с высотой дерева разбора одной
 /// строки не связана (docs/backlog.md B5). Печатник поэтому ограничивает
 /// глубину сам — `kMaxPrintDepth` выше.
-/// ctx, а не Store: агрегат вправе смешивать регионы — `[state.header]` это
-/// временный массив с постоянным элементом внутри, — и хранилище выбирается
-/// заново на каждом узле обхода (docs/backlog.md [B57]).
+/// ctx, а не Store: строку контекст читает сам, а агрегат себя описывает
+/// целиком и хранилища не спрашивает вовсе.
 void append(std::string &out, const CS::Context &ctx, CS::Value value,
             std::vector<CS::Value> &path, std::uint32_t depth) {
-    const CS::Store &store = ctx.storeOf(value);
     switch (value.kind()) {
         case CS::Value::Kind::Null: out += "null"; return;
         case CS::Value::Kind::Boolean:
@@ -72,7 +70,7 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
             return;
         }
         case CS::Value::Kind::String:
-            appendQuoted(out, store.string(value));
+            appendQuoted(out, ctx.string(value));
             return;
         default: break;
     }

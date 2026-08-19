@@ -9,6 +9,7 @@
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "store.hpp"
+#include "aggregate.hpp"
 
 namespace {
 
@@ -80,7 +81,7 @@ TEST(PrintValue, SelfReferencingObjectTerminates) {
     CS::Context ctx;
     Store &store = ctx.store();
     const Value o = put(store, "o", "{'n': 1}");
-    store.objectSet(o, "self", o);
+    CS::objectSet(o, "self", o, store.deferred());
     // docs/semantics.md §2.3 объявляет такую программу корректной; печатник
     // обязан завершиться, а не зациклиться.
     EXPECT_EQ(chupa::printValue(ctx, o), "{'n': 1, 'self': {...}}");
@@ -90,7 +91,7 @@ TEST(PrintValue, SelfReferencingArrayTerminates) {
     CS::Context ctx;
     Store &store = ctx.store();
     const Value a = put(store, "a", "[1]");
-    store.arrayPush(a, a);
+    CS::arrayPush(a, a);
     EXPECT_EQ(chupa::printValue(ctx, a), "[1, [...]]");
 }
 
@@ -99,8 +100,8 @@ TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
     Store &store = ctx.store();
     const Value shared = put(store, "shared", "[1, 2]");
     const Value holder = put(store, "holder", "{}");
-    store.objectSet(holder, "a", shared);
-    store.objectSet(holder, "b", shared);
+    CS::objectSet(holder, "a", shared, store.deferred());
+    CS::objectSet(holder, "b", shared, store.deferred());
     // Один агрегат под двумя ключами — не цикл. Отслеживается путь печати, а
     // не всё виденное, поэтому оба вхождения печатаются целиком.
     EXPECT_EQ(chupa::printValue(ctx, holder), "{'a': [1, 2], 'b': [1, 2]}");
@@ -120,7 +121,7 @@ TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
         arrays.push_back(put(store, "r" + std::to_string(i), "[]"));
     }
     for (int i = 0; i + 1 < kCount; ++i) {
-        store.arrayPush(arrays[static_cast<std::size_t>(i)],
+        CS::arrayPush(arrays[static_cast<std::size_t>(i)],
                       arrays[static_cast<std::size_t>(i + 1)]);
     }
     const std::string printed = chupa::printValue(ctx, arrays[0]);
@@ -133,8 +134,8 @@ TEST(PrintValue, MutualCycleTerminates) {
     Store &store = ctx.store();
     const Value a = put(store, "a", "{}");
     const Value b = put(store, "b", "{}");
-    store.objectSet(a, "b", b);
-    store.objectSet(b, "a", a);
+    CS::objectSet(a, "b", b, store.deferred());
+    CS::objectSet(b, "a", a, store.deferred());
     // Цикл длиной два: путь ловит и его.
     EXPECT_EQ(chupa::printValue(ctx, a), "{'b': {'a': {...}}}");
 }

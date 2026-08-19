@@ -1,5 +1,7 @@
 #include "data.hpp"
 
+#include "aggregate.hpp"
+
 #include <cassert>
 #include <cstdint>
 #include <string>
@@ -70,7 +72,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                 if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
-                store.arrayPush(array, element);
+                arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -87,9 +89,9 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                     return false;
                 }
                 // Повторный ключ заменяет значение: последний выигрывает.
-                store.objectSet(
-                    object, literalText(ast, ast.child(node, i), source, scratch),
-                    value);
+                objectSet(object,
+                          literalText(ast, ast.child(node, i), source, scratch),
+                          value, store.deferred());
             }
             *out = object;
             return true;

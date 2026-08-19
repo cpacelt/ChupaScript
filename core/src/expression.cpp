@@ -68,7 +68,7 @@ EvalStatus Expression::evalString(Execution &exec, std::string_view *out,
     const EvalStatus status = evalOfKind(exec, Value::Kind::String,
                                          "eval_string: value is not a string",
                                          &value, diag);
-    if (status == EvalStatus::Ok) { *out = exec.storeOf(value).string(value); }
+    if (status == EvalStatus::Ok) { *out = exec.string(value); }
     return status;
 }
 

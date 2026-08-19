@@ -10,6 +10,7 @@ add_library(chupascript STATIC
     src/eval.cpp
     src/keytable.cpp
     src/box.cpp
+    src/deferred.cpp
     src/expression.cpp
     src/lexer.cpp
     src/operator.cpp

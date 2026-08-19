@@ -109,7 +109,7 @@ namespace {
 CS::Value objectWith(CS::Store &store, std::initializer_list<std::string_view> keys) {
     CS::Value o = store.makeObject(static_cast<std::uint32_t>(keys.size()));
     double n = 0.0;
-    for (std::string_view key : keys) { store.objectSet(o, key, CS::Value::number(n++)); }
+    for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), store.deferred()); }
     return o;
 }
 

@@ -20,7 +20,7 @@ bool Context::evalValue(const Expression &expr, Value *out, Diagnostic &diag) {
     // через чтение освобождённой арены.
     //
     // Прочее проходит как есть: скаляр самодостаточен, коробка уже коробка.
-    *out = store_.promote(exec_.storeOf(value), value);
+    *out = exec_.promote(value);
     return true;
 }
 

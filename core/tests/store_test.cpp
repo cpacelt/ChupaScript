@@ -95,7 +95,7 @@ TEST(StoreMetrics, ReservedCoversUsed) {
     Store store;
     const Value a = store.makeArray();
     for (int i = 0; i < 100; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
     store.makeString("строка");
     EXPECT_GE(store.bytesReserved(), store.bytesUsed());
@@ -125,7 +125,7 @@ TEST(StoreArray, WriteBeyondEndIsRefused) {
     Store store;
     const Value a = store.makeArray(8);
     // semantics.md §7.2: запись за границу — ошибка, ёмкость её не оправдывает.
-    EXPECT_FALSE(store.arraySet(a, 0, Value::number(1.0)));
+    EXPECT_FALSE(CS::arraySet(a, 0, Value::number(1.0), store.deferred()));
 }
 
 TEST(StoreArray, TwoEmptyArraysAreDistinct) {
@@ -152,12 +152,12 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
     Store persistent(Value::Region::Boxed);
 
     const Value inner = scratch.makeArray(1);
-    scratch.arrayPush(inner, Value::number(1.0));
+    CS::arrayPush(inner, Value::number(1.0));
     const Value outer = scratch.makeArray(2);
-    scratch.arrayPush(outer, inner);
-    scratch.arrayPush(outer, inner);
+    CS::arrayPush(outer, inner);
+    CS::arrayPush(outer, inner);
 
-    const Value moved = persistent.promote(scratch, outer);
+    const Value moved = persistent.promote(outer);
     EXPECT_TRUE(CS::arrayAt(moved, 0).sameAggregate(CS::arrayAt(moved, 1)));
 }
 
@@ -166,13 +166,13 @@ TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
     Store persistent(Value::Region::Boxed);
 
     const Value inner = scratch.makeArray(1);
-    scratch.arrayPush(inner, Value::number(1.0));
+    CS::arrayPush(inner, Value::number(1.0));
     const Value outer = scratch.makeArray(2);
-    scratch.arrayPush(outer, inner);
-    scratch.arrayPush(outer, inner);
+    CS::arrayPush(outer, inner);
+    CS::arrayPush(outer, inner);
 
-    const Value moved = persistent.promote(scratch, outer);
-    persistent.arraySet(CS::arrayAt(moved, 1), 0, Value::number(3.0));
+    const Value moved = persistent.promote(outer);
+    CS::arraySet(CS::arrayAt(moved, 1), 0, Value::number(3.0), persistent.deferred());
     EXPECT_EQ(CS::arrayAt(CS::arrayAt(moved, 0), 0).numberValue(), 3.0);
 }
 
@@ -181,14 +181,14 @@ TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
     Store scratch(Value::Region::Scratch);
     const Value a = persistent.makeArray();
     // Копии не случилось: тот же агрегат, а не равный ему по содержимому.
-    EXPECT_TRUE(persistent.promote(scratch, a).sameAggregate(a));
+    EXPECT_TRUE(persistent.promote(a).sameAggregate(a));
 }
 
 TEST(StoreClear, EmptiesTheRegionButKeepsItsCapacity) {
     Store scratch(Value::Region::Scratch);
     const Value a = scratch.makeArray();
     for (int i = 0; i < 100; ++i) {
-        scratch.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
     scratch.makeString("строка");
     const std::size_t reserved = scratch.bytesReserved();
@@ -211,7 +211,7 @@ TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
 
     const Value header = persistent.makeString("шапка");
     const Value temporary = scratch.makeArray(1);
-    scratch.arrayPush(temporary, header);
+    CS::arrayPush(temporary, header);
 
     // Читается тем хранилищем, которое его выдало: значение осталось собой, а
     // не переехало копией во временный пул.
@@ -226,7 +226,7 @@ TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
     Store scratch(Value::Region::Scratch);
 
     const Value header = persistent.makeArray();
-    EXPECT_TRUE(scratch.promote(persistent, header).sameAggregate(header));
+    EXPECT_TRUE(scratch.promote(header).sameAggregate(header));
 }
 
 TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
@@ -235,7 +235,7 @@ TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
     // регион и пытаться скопировать то, чего нет.
     Store scratch(Value::Region::Scratch);
     Store persistent(Value::Region::Boxed);
-    EXPECT_EQ(scratch.promote(persistent, Value::number(7.0)).numberValue(), 7.0);
+    EXPECT_EQ(scratch.promote(Value::number(7.0)).numberValue(), 7.0);
 }
 
 TEST(StorePromote, AggregateCrossesWithoutACopy) {
@@ -248,8 +248,8 @@ TEST(StorePromote, AggregateCrossesWithoutACopy) {
     const Value o = scratch.makeObject(1);
     // Строка кладётся в агрегат, значит обязана быть материализована: смещение
     // в арену операции коробка не переживёт.
-    scratch.objectSet(o, "имя", scratch.materialize("Вася"));
-    const Value moved = persistent.promote(scratch, o);
+    CS::objectSet(o, "имя", scratch.materialize("Вася"), scratch.deferred());
+    const Value moved = persistent.promote(o);
 
     EXPECT_TRUE(moved.sameAggregate(o));
     scratch.clear();
@@ -264,7 +264,7 @@ TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
     ASSERT_EQ(temp.region(), Value::Region::Scratch);
 
     const Value o = persistent.makeObject(1);
-    persistent.objectSet(o, "имя", persistent.promote(scratch, temp));
+    CS::objectSet(o, "имя", scratch.promote(temp), persistent.deferred());
     scratch.clear();
     EXPECT_EQ(persistent.string(CS::objectValueAt(o, 0)), "Вася");
 }
@@ -279,8 +279,8 @@ TEST(StoreArray, CopyOfValueIsTheSameArray) {
 TEST(StoreArrayMutation, PushAppendsInOrder) {
     Store store;
     const Value a = store.makeArray();
-    store.arrayPush(a, Value::number(1.0));
-    store.arrayPush(a, Value::number(2.0));
+    CS::arrayPush(a, Value::number(1.0));
+    CS::arrayPush(a, Value::number(2.0));
     ASSERT_EQ(CS::arrayCount(a), 2u);
     EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 1.0);
     EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), 2.0);
@@ -289,19 +289,19 @@ TEST(StoreArrayMutation, PushAppendsInOrder) {
 TEST(StoreArrayMutation, SetReplacesExistingElement) {
     Store store;
     const Value a = store.makeArray();
-    store.arrayPush(a, Value::number(1.0));
-    EXPECT_TRUE(store.arraySet(a, 0, Value::boolean(true)));
+    CS::arrayPush(a, Value::number(1.0));
+    EXPECT_TRUE(CS::arraySet(a, 0, Value::boolean(true), store.deferred()));
     EXPECT_TRUE(CS::arrayAt(a, 0).booleanValue());
 }
 
 TEST(StoreArrayMutation, PopReturnsLastAndShrinks) {
     Store store;
     const Value a = store.makeArray();
-    store.arrayPush(a, Value::number(1.0));
-    store.arrayPush(a, Value::number(2.0));
+    CS::arrayPush(a, Value::number(1.0));
+    CS::arrayPush(a, Value::number(2.0));
 
     Value taken = Value::null();
-    ASSERT_TRUE(store.arrayPop(a, &taken));
+    ASSERT_TRUE(CS::arrayPop(a, &taken, store.deferred()));
     EXPECT_EQ(taken.numberValue(), 2.0);
     EXPECT_EQ(CS::arrayCount(a), 1u);
 }
@@ -309,7 +309,7 @@ TEST(StoreArrayMutation, PopReturnsLastAndShrinks) {
 TEST(StoreArrayMutation, PopOnEmptyIsRefused) {
     Store store;
     Value taken = Value::number(7.0);
-    EXPECT_FALSE(store.arrayPop(store.makeArray(), &taken));
+    EXPECT_FALSE(CS::arrayPop(store.makeArray(), &taken, store.deferred()));
     // Отказ не трогает выходной параметр.
     EXPECT_EQ(taken.numberValue(), 7.0);
 }
@@ -321,7 +321,7 @@ TEST(StoreArrayMutation, AliasSurvivesGrowth) {
 
     // Рост через все удвоения: 4, 8, 16, 32 — данные переезжают четырежды.
     for (int i = 0; i < 40; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
 
     // semantics.md §2.3: изменение через одно имя видно через второе.
@@ -334,10 +334,10 @@ TEST(StoreArrayMutation, AliasSurvivesGrowth) {
 TEST(StoreArrayMutation, WriteThroughAliasIsSeenByOriginal) {
     Store store;
     const Value a = store.makeArray();
-    store.arrayPush(a, Value::number(1.0));
+    CS::arrayPush(a, Value::number(1.0));
     const Value alias = a;
 
-    ASSERT_TRUE(store.arraySet(alias, 0, Value::number(99.0)));
+    ASSERT_TRUE(CS::arraySet(alias, 0, Value::number(99.0), store.deferred()));
     EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 99.0);
 }
 
@@ -345,8 +345,8 @@ TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
     Store store;
     const Value outer = store.makeArray();
     const Value inner = store.makeArray();
-    store.arrayPush(outer, inner);
-    store.arrayPush(inner, Value::number(1.0));
+    CS::arrayPush(outer, inner);
+    CS::arrayPush(inner, Value::number(1.0));
 
     const Value fetched = CS::arrayAt(outer, 0);
     EXPECT_TRUE(fetched.sameAggregate(inner));
@@ -356,7 +356,7 @@ TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
 TEST(StoreArrayMutation, ArrayMayContainItself) {
     Store store;
     const Value a = store.makeArray();
-    store.arrayPush(a, a);
+    CS::arrayPush(a, a);
     // semantics.md §2.3: цикл допустим, рекурсивного обхода в слое нет.
     EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(a));
 }
@@ -366,7 +366,7 @@ TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
     const Value a = store.makeArray(64);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 64; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
     // Размер известен заранее — переездов и мусора нет (спека §5).
     EXPECT_EQ(store.bytesUsed(), afterReserve);
@@ -384,7 +384,7 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     const std::size_t before = store.bytesUsed();
     const std::size_t nodes = CS::detail::liveBoxCount();
     for (int i = 0; i < 64; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
     EXPECT_EQ(CS::arrayCount(a), 64u);
     EXPECT_EQ(store.bytesUsed(), before);
@@ -397,7 +397,7 @@ TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
     const Value a = store.makeArray(100);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 100; ++i) {
-        store.arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)));
     }
     // Сто элементов занимают сто слотов, а не ближайшую степень двойки.
     EXPECT_EQ(store.bytesUsed(), afterReserve);
@@ -421,7 +421,7 @@ TEST(StoreObject, MissingKeyReadsAsNull) {
 TEST(StoreObject, StoredValueIsFound) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "count", Value::number(3.0));
+    CS::objectSet(o, "count", Value::number(3.0), store.deferred());
     EXPECT_TRUE(CS::objectHas(o, "count"));
     EXPECT_EQ(CS::objectGet(o, "count").numberValue(), 3.0);
     EXPECT_EQ(CS::objectCount(o), 1u);
@@ -430,7 +430,7 @@ TEST(StoreObject, StoredValueIsFound) {
 TEST(StoreObject, NullValueIsDistinctFromAbsence) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "key", Value::null());
+    CS::objectSet(o, "key", Value::null(), store.deferred());
     // semantics.md §6.2: отличить одно от другого можно только через has.
     EXPECT_EQ(CS::objectGet(o, "key").kind(), Value::Kind::Null);
     EXPECT_TRUE(CS::objectHas(o, "key"));
@@ -441,7 +441,7 @@ TEST(StoreObject, FindsKeyAmongMany) {
     const Value o = store.makeObject();
     const char *keys[] = {"zeta", "alpha", "mu", "beta", "omega", "kappa", "iota"};
     for (int i = 0; i < 7; ++i) {
-        store.objectSet(o, keys[i], Value::number(static_cast<double>(i)));
+        CS::objectSet(o, keys[i], Value::number(static_cast<double>(i)), store.deferred());
     }
     for (int i = 0; i < 7; ++i) {
         EXPECT_EQ(CS::objectGet(o, keys[i]).numberValue(), static_cast<double>(i));
@@ -452,8 +452,8 @@ TEST(StoreObject, FindsKeyAmongMany) {
 TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "item", Value::number(1.0));
-    store.objectSet(o, "items", Value::number(2.0));
+    CS::objectSet(o, "item", Value::number(1.0), store.deferred());
+    CS::objectSet(o, "items", Value::number(2.0), store.deferred());
     EXPECT_EQ(CS::objectGet(o, "item").numberValue(), 1.0);
     EXPECT_EQ(CS::objectGet(o, "items").numberValue(), 2.0);
 }
@@ -461,14 +461,14 @@ TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
 TEST(StoreObject, NonAsciiKeyIsFound) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "имя", store.makeString("Вася"));
+    CS::objectSet(o, "имя", store.makeString("Вася"), store.deferred());
     EXPECT_EQ(store.string(CS::objectGet(o, "имя")), "Вася");
 }
 
 TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "", Value::number(1.0));
+    CS::objectSet(o, "", Value::number(1.0), store.deferred());
     EXPECT_TRUE(CS::objectHas(o, ""));
     EXPECT_EQ(CS::objectGet(o, "").numberValue(), 1.0);
 }
@@ -476,8 +476,8 @@ TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
 TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "", Value::number(1.0));
-    store.objectSet(o, "другой", Value::number(2.0));
+    CS::objectSet(o, "", Value::number(1.0), store.deferred());
+    CS::objectSet(o, "другой", Value::number(2.0), store.deferred());
 
     // Пустой ключ существует: срез пустой, но не нулевой.
     ASSERT_EQ(CS::objectCount(o), 2u);
@@ -490,8 +490,8 @@ TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
 TEST(StoreObject, EnumerationYieldsEveryKey) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "b", Value::number(2.0));
-    store.objectSet(o, "a", Value::number(1.0));
+    CS::objectSet(o, "b", Value::number(2.0), store.deferred());
+    CS::objectSet(o, "a", Value::number(1.0), store.deferred());
 
     ASSERT_EQ(CS::objectCount(o), 2u);
     std::string seen;
@@ -520,8 +520,8 @@ TEST(StoreObject, TwoEmptyObjectsAreDistinct) {
 TEST(StoreObjectMutation, RepeatedKeyReplacesValue) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "k", Value::number(1.0));
-    store.objectSet(o, "k", Value::number(2.0));
+    CS::objectSet(o, "k", Value::number(1.0), store.deferred());
+    CS::objectSet(o, "k", Value::number(2.0), store.deferred());
     EXPECT_EQ(CS::objectCount(o), 1u);
     EXPECT_EQ(CS::objectGet(o, "k").numberValue(), 2.0);
 }
@@ -529,9 +529,9 @@ TEST(StoreObjectMutation, RepeatedKeyReplacesValue) {
 TEST(StoreObjectMutation, ReplacementCopiesNoKeyBytes) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "k", Value::number(1.0));
+    CS::objectSet(o, "k", Value::number(1.0), store.deferred());
     const std::size_t before = store.bytesUsed();
-    store.objectSet(o, "k", Value::number(2.0));
+    CS::objectSet(o, "k", Value::number(2.0), store.deferred());
     EXPECT_EQ(store.bytesUsed(), before);
 }
 
@@ -539,7 +539,7 @@ TEST(StoreObjectMutation, InsertionKeepsSortedOrder) {
     Store store;
     const Value o = store.makeObject();
     const char *keys[] = {"delta", "alpha", "charlie", "bravo", "echo"};
-    for (const char *key : keys) { store.objectSet(o, key, Value::null()); }
+    for (const char *key : keys) { CS::objectSet(o, key, Value::null(), store.deferred()); }
 
     std::string seen;
     for (std::uint32_t i = 0; i < CS::objectCount(o); ++i) {
@@ -554,7 +554,7 @@ TEST(StoreObjectMutation, EveryKeySurvivesGrowth) {
     const Value o = store.makeObject();
     // Тридцать ключей — рост через 4, 8, 16, 32: пары переезжают четырежды.
     for (int i = 0; i < 30; ++i) {
-        store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.deferred());
     }
     ASSERT_EQ(CS::objectCount(o), 30u);
     for (int i = 0; i < 30; ++i) {
@@ -568,7 +568,7 @@ TEST(StoreObjectMutation, AliasSeesNewKey) {
     const Value o = store.makeObject();
     const Value alias = o;
     for (int i = 0; i < 30; ++i) {
-        store.objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)));
+        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.deferred());
     }
     // semantics.md §2.3: изменение через одно имя видно через второе.
     EXPECT_EQ(CS::objectCount(alias), 30u);
@@ -581,14 +581,14 @@ TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
     const Value o = store.makeObject();
     const Value keyValue = store.makeString("динамический");
     // Ключ — срез собственного пула текста: приём, которым пользуется obj[k].
-    store.objectSet(o, store.string(keyValue), Value::number(5.0));
+    CS::objectSet(o, store.string(keyValue), Value::number(5.0), store.deferred());
     EXPECT_EQ(CS::objectGet(o, "динамический").numberValue(), 5.0);
 }
 
 TEST(StoreObjectMutation, ObjectMayContainItself) {
     Store store;
     const Value o = store.makeObject();
-    store.objectSet(o, "self", o);
+    CS::objectSet(o, "self", o, store.deferred());
     // semantics.md §2.3: obj['self'] = obj — корректная программа.
     EXPECT_TRUE(CS::objectGet(o, "self").sameAggregate(o));
     EXPECT_EQ(CS::objectCount(o), 1u);
@@ -598,8 +598,8 @@ TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
     Store store;
     const Value o = store.makeObject();
     const Value a = store.makeArray();
-    store.objectSet(o, "items", a);
-    store.arrayPush(a, o);
+    CS::objectSet(o, "items", a, store.deferred());
+    CS::arrayPush(a, o);
 
     EXPECT_TRUE(CS::objectGet(o, "items").sameAggregate(a));
     EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(o));
@@ -609,10 +609,10 @@ TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
     Store store;
     const Value o = store.makeObject();
     const Value a = store.makeArray();
-    store.objectSet(o, "items", a);
+    CS::objectSet(o, "items", a, store.deferred());
 
     for (int i = 0; i < 20; ++i) {
-        store.arrayPush(CS::objectGet(o, "items"), Value::number(static_cast<double>(i)));
+        CS::arrayPush(CS::objectGet(o, "items"), Value::number(static_cast<double>(i)));
     }
     EXPECT_EQ(CS::arrayCount(a), 20u);
 }
@@ -625,7 +625,7 @@ TEST(StoreObjectMutation, KeyBytesLiveInTheTableNotInTheStore) {
     const Value o = store.makeObject(8);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 8; ++i) {
-        store.objectSet(o, "k" + std::to_string(i), Value::null());
+        CS::objectSet(o, "k" + std::to_string(i), Value::null(), store.deferred());
     }
     EXPECT_EQ(store.bytesUsed(), afterReserve);
     EXPECT_EQ(store.keys()->count(), 8u);
@@ -637,7 +637,7 @@ TEST(StoreObjectMutation, RepeatedKeyIsInternedOnce) {
     Store store;
     for (int i = 0; i < 1000; ++i) {
         const Value o = store.makeObject(1);
-        store.objectSet(o, "name", Value::number(i));
+        CS::objectSet(o, "name", Value::number(i), store.deferred());
     }
     EXPECT_EQ(store.keys()->count(), 1u);
 }
@@ -680,7 +680,7 @@ TEST(StoreGlobals, RepeatedSetReplacesValueWithoutAddingName) {
 TEST(StoreGlobals, GlobalHoldsAggregate) {
     Store store;
     const Value items = store.makeArray();
-    store.arrayPush(items, Value::number(1.0));
+    CS::arrayPush(items, Value::number(1.0));
     store.setGlobal("items", items);
 
     EXPECT_TRUE(store.global("items").sameAggregate(items));
@@ -692,7 +692,7 @@ TEST(StoreGlobals, MutationThroughGlobalIsSeenThroughTheOriginal) {
     const Value items = store.makeArray();
     store.setGlobal("items", items);
     for (int i = 0; i < 30; ++i) {
-        store.arrayPush(store.global("items"), Value::number(static_cast<double>(i)));
+        CS::arrayPush(store.global("items"), Value::number(static_cast<double>(i)));
     }
     // docs/semantics.md §2.3: ссылочность наблюдаема и через глобальную переменную.
     EXPECT_EQ(CS::arrayCount(items), 30u);
@@ -797,15 +797,17 @@ TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
     EXPECT_EQ(scratch.string(v), "a");
 }
 
-TEST(StorePromote, ScratchStringBecomesNodeAndOutlivesTheArena) {
+TEST(StorePromote, ScratchStringBecomesABoxAndOutlivesTheArena) {
     Store persistent;
     Store scratch(Value::Region::Scratch);
     const Value temp = scratch.makeString("привет");
     ASSERT_EQ(temp.region(), Value::Region::Scratch);
 
-    const Value kept = persistent.promote(scratch, temp);
+    // Продвигает та арена, что выдала смещение, — другой прочитать его негде.
+    const Value kept = scratch.promote(temp);
     EXPECT_EQ(kept.region(), Value::Region::Boxed);
     scratch.clear();
+    // А вот прочитать коробку вправе любое хранилище: она самодостаточна.
     EXPECT_EQ(persistent.string(kept), "привет");
 }
 

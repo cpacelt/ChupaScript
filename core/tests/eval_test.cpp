@@ -70,7 +70,7 @@ Diagnostic evalError(CS::Execution &exec, std::string_view text) {
 /// (docs/backlog.md [B57]).
 std::string_view evalText(CS::Execution &exec, std::string_view text) {
     const Value v = evaluate(exec, text);
-    return exec.storeOf(v).string(v);
+    return exec.scratch.string(v);
 }
 
 /// Кладёт глобальную переменную; требует успеха.
@@ -338,7 +338,6 @@ TEST(EvalAggregates, ArrayLiteralKeepsOrder) {
     Store store;
     CS::Execution exec(store);
     const Value a = evaluate(exec, "[1, 2, 3]");
-    const Store &made = exec.storeOf(a);
     ASSERT_EQ(CS::arrayCount(a), 3u);
     EXPECT_EQ(CS::arrayAt(a, 0).numberValue(), 1.0);
     EXPECT_EQ(CS::arrayAt(a, 2).numberValue(), 3.0);
@@ -348,7 +347,6 @@ TEST(EvalAggregates, ObjectLiteralStoresPairs) {
     Store store;
     CS::Execution exec(store);
     const Value o = evaluate(exec, "{'a': 1, 'b': 2}");
-    const Store &made = exec.storeOf(o);
     ASSERT_EQ(CS::objectCount(o), 2u);
     EXPECT_EQ(CS::objectGet(o, "a").numberValue(), 1.0);
     EXPECT_EQ(CS::objectGet(o, "b").numberValue(), 2.0);
@@ -371,13 +369,11 @@ TEST(EvalAggregates, ElementsAreArbitraryExpressions) {
     // Вот чем агрегат в выражении отличается от агрегата в данных: элемент —
     // выражение, а не литерал.
     const Value a = evaluate(exec, "[user.name, items[0], user.missing]");
-    // Массив временный, а первый его элемент — постоянный: строка пришла из
-    // данных хоста и копией не стала. Оба хранилища читаются по одному
-    // значению, и в этом весь смысл owner.
-    const Store &made = exec.storeOf(a);
+    // Массив временный, а первый его элемент пришёл из данных хоста коробкой
+    // и копией не стал.
     ASSERT_EQ(CS::arrayCount(a), 3u);
     const Value first = CS::arrayAt(a, 0);
-    EXPECT_EQ(exec.storeOf(first).string(first), "Вася");
+    EXPECT_EQ(exec.scratch.string(first), "Вася");
     EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), 7.0);
     EXPECT_EQ(CS::arrayAt(a, 2).kind(), Value::Kind::Null);
 }
@@ -388,7 +384,7 @@ TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
     put(store, "user", "{'name': 'Вася'}");
     const Value o = evaluate(exec, "{'who': user.name}");
     const Value who = CS::objectGet(o, "who");
-    EXPECT_EQ(exec.storeOf(who).string(who), "Вася");
+    EXPECT_EQ(exec.scratch.string(who), "Вася");
 }
 
 TEST(EvalAggregates, ErrorInsideAnElementStopsAtTheFirstFailure) {
@@ -1167,14 +1163,13 @@ TEST(EvalCall, KeysReturnsEveryKey) {
     put(store, "o", "{'b': 1, 'a': 2, 'c': 3}");
     const Value keys = evaluate(exec, "keys(o)");
     ASSERT_EQ(keys.kind(), Value::Kind::Array);
-    const Store &made = exec.storeOf(keys);
     ASSERT_EQ(CS::arrayCount(keys), 3u);
     // Порядок docs/semantics.md §8.2 не определяет, поэтому тест собирает
     // множество, а не список: опираться на порядок значило бы обещать его.
     std::set<std::string> got;
     for (std::uint32_t i = 0; i < 3; ++i) {
         const Value key = CS::arrayAt(keys, i);
-        got.insert(std::string(exec.storeOf(key).string(key)));
+        got.insert(std::string(exec.scratch.string(key)));
     }
     EXPECT_EQ(got, (std::set<std::string>{"a", "b", "c"}));
 }
@@ -1523,7 +1518,7 @@ TEST(EvalFormat, LongResultCrossesPoolGrowth) {
         " user.name, user.name)");
     std::string expected;
     for (int i = 0; i < 10; ++i) { expected += "Вася"; }
-    EXPECT_EQ(exec.storeOf(built).string(built), expected);
+    EXPECT_EQ(exec.scratch.string(built), expected);
 }
 
 TEST(EvalFormat, ArgumentThatWritesToThePoolDoesNotLeakIntoTheResult) {

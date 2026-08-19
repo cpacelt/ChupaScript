@@ -6,6 +6,7 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "keytable.hpp"
 #include "store.hpp"
@@ -47,6 +48,7 @@ TEST(Box, ArrayBoxStartsEmpty) {
     CS::detail::release(a);
 }
 
+#ifndef NDEBUG
 TEST(Box, ReleaseOfArrayReleasesElements) {
     const std::size_t before = CS::detail::liveBoxCount();
     StringBox *s = CS::detail::makeStringBox("x");
@@ -59,6 +61,7 @@ TEST(Box, ReleaseOfArrayReleasesElements) {
     CS::detail::release(a);  // массив отпускает элемент вместе с собой
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
+#endif
 
 TEST(Box, ObjectBoxHoldsKeyTable) {
     KeyTable *t = KeyTable::create();
@@ -68,6 +71,7 @@ TEST(Box, ObjectBoxHoldsKeyTable) {
     CS::detail::release(o);
 }
 
+#ifndef NDEBUG
 TEST(Box, ReleaseOfObjectReleasesValues) {
     const std::size_t before = CS::detail::liveBoxCount();
     KeyTable *t = KeyTable::create();
@@ -83,7 +87,9 @@ TEST(Box, ReleaseOfObjectReleasesValues) {
     CS::detail::release(o);
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
+#endif
 
+#ifndef NDEBUG
 TEST(Box, LiveCountReturnsToWhereItStarted) {
     const std::size_t before = CS::detail::liveBoxCount();
     ArrayBox *a = CS::detail::makeArrayBox(0);
@@ -91,6 +97,7 @@ TEST(Box, LiveCountReturnsToWhereItStarted) {
     CS::detail::release(a);
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
+#endif
 
 TEST(Box, RetainKeepsNodeAlivePastFirstRelease) {
     ArrayBox *a = CS::detail::makeArrayBox(0);
@@ -99,6 +106,31 @@ TEST(Box, RetainKeepsNodeAlivePastFirstRelease) {
     EXPECT_EQ(a->rc, 1u);
     CS::detail::release(a);
 }
+
+#ifndef NDEBUG
+/// Two Contexts on two threads: the threading contract allows this, and the
+/// live-box counter is the one piece of box state that is process-wide rather
+/// than per-Context. Without atomicity the two increments race and the final
+/// count comes out lower than the number of boxes actually created.
+TEST(Box, LiveCountSurvivesTwoContextsOnTwoThreads) {
+    constexpr int kPerThread = 2000;
+    const std::size_t before = CS::detail::liveBoxCount();
+
+    auto churn = [] {
+        for (int i = 0; i < kPerThread; ++i) {
+            StringBox *s = CS::detail::makeStringBox("payload");
+            CS::detail::release(s);
+        }
+    };
+
+    std::thread a(churn);
+    std::thread b(churn);
+    a.join();
+    b.join();
+
+    EXPECT_EQ(CS::detail::liveBoxCount(), before);
+}
+#endif
 
 }  // namespace
 

@@ -73,6 +73,7 @@ TEST(StoreMetrics, FreshStoreHoldsNothing) {
     EXPECT_EQ(store.bytesUsed(), 0u);
 }
 
+#ifndef NDEBUG
 TEST(StoreMetrics, MaterializedStringCostsABoxNotPoolBytes) {
     // Метрика хранилища мерит его собственные арены, а байты долгоживущей
     // строки лежат в коробке — памятью коробки хранилище не владеет и видеть её не
@@ -87,6 +88,7 @@ TEST(StoreMetrics, MaterializedStringCostsABoxNotPoolBytes) {
     EXPECT_EQ(store.bytesUsed(), before);
     EXPECT_EQ(CS::detail::liveBoxCount(), boxes + 1);
 }
+#endif
 
 TEST(StoreMetrics, StringOfScratchStoreAddsItsBytes) {
     // А промежуточная строка по-прежнему смещение в арену операции, и байты
@@ -407,6 +409,7 @@ TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
     EXPECT_EQ(store.bytesUsed(), afterReserve);
 }
 
+#ifndef NDEBUG
 TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     // Раньше здесь проверялось обратное: массив лежал в пуле сплошным
     // диапазоном, дописать в хвост было нельзя, и рост до 64 элементов
@@ -427,6 +430,7 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     // Ни одного лишнего коробки: рост вектора внутри коробки коробок не заводит.
     EXPECT_EQ(CS::detail::liveBoxCount(), nodes);
 }
+#endif
 
 TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
     Store store;
@@ -876,6 +880,7 @@ TEST(StorePromote, ScratchStringBecomesABoxAndOutlivesTheArena) {
     EXPECT_EQ(persistent.string(kept), "привет");
 }
 
+#ifndef NDEBUG
 TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {
     const std::size_t before = CS::detail::liveBoxCount();
     {
@@ -886,5 +891,6 @@ TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {
     }
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
+#endif
 
 }  // namespace

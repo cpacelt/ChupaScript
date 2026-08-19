@@ -18,8 +18,17 @@ namespace detail {
 /// Коробка — это значение, вынесенное из ячейки Value наружу, потому что в
 /// шестнадцать байт оно не помещается. Термин рантаймовый (boxing), и берётся
 /// он в рантаймовом значении: **владение разделяемое**, а не единоличное, как
-/// у Box<T> в Rust. Счётчик интрузивный и **неатомарный** — контекст
-/// однопоточный. Метаданных, диспетчеризации и боковых таблиц под weak тут
+/// у Box<T> в Rust.
+///
+/// The reference count is intrusive and NOT atomic. A Context is the unit of
+/// single-threadedness (chupascript.h, threading contract): one Context is
+/// touched by at most one thread at a time, and a box is only ever reached
+/// through the Context that created it or through a host handle the host is
+/// responsible for. Making the count atomic would put a locked
+/// read-modify-write on every retain and release along the single-threaded
+/// path — which is every path we have measured.
+///
+/// Метаданных, диспетчеризации и боковых таблиц под weak тут
 /// нет: видов ровно три, список закрыт спецификацией языка, и release
 /// разбирает их switch'ем по kind. Виртуальных функций поэтому нет ни одной —
 /// vtable удвоил бы заголовок с восьми байт до шестнадцати на каждом
@@ -148,11 +157,14 @@ inline void retainValue(Value v) noexcept {
     if (Box *box = boxOf(v)) { retain(box); }
 }
 
-/// Сколько коробок сейчас живо во всём процессе.
+#ifndef NDEBUG
+/// Number of boxes alive in this process right now.
 ///
-/// Метрика для тестов, и другой у нас нет: память коробки хранилищу не
-/// принадлежит, поэтому Store::bytesUsed её не видит и утечку ею не поймать.
-std::size_t liveBoxCount() noexcept;
+/// Debug builds only, and that is the whole point: this is a test metric, not
+/// a runtime one. Release builds carry neither the counter nor the increments.
+/// Every test that reads it must be guarded by #ifndef NDEBUG too.
+[[nodiscard]] std::size_t liveBoxCount() noexcept;
+#endif
 
 }  // namespace detail
 }  // namespace CS

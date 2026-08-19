@@ -39,6 +39,21 @@ extern "C" {
 
 CHUPA_NONNULL_BEGIN
 
+/* ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ THREADING — a ChupaContext is the unit of single-threadedness.       ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * At most one thread may touch a given ChupaContext at a time, including
+ * every value, expression and script that context produced. Two DIFFERENT
+ * contexts may be used from two threads simultaneously; nothing inside the
+ * engine is shared between them.
+ *
+ * Reference counts on values are not atomic, which is why the first rule is a
+ * rule and not advice: two threads retaining the same value race, and the
+ * value is freed while still in use. A host that hands a ChupaValue to
+ * another thread must ensure the handoff is ordered and that only one thread
+ * owns it at a time.
+ */
+
 typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;

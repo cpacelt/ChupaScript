@@ -1,5 +1,6 @@
 #include "box.hpp"
 
+#include <atomic>
 #include <cassert>
 #include <cstring>
 #include <new>
@@ -9,11 +10,32 @@
 namespace CS {
 namespace detail {
 
-/// Живые коробки. Без атомарности: контекст однопоточный, как и счётчик
-/// самой коробки.
-static std::size_t g_liveBoxes = 0;
+#ifndef NDEBUG
+/// Number of live boxes in this process. Debug builds only: a leaked box is
+/// invisible to every other metric, because box memory belongs to no Store and
+/// Store::bytesUsed cannot see it.
+///
+/// Atomic because two Contexts may run on two threads (chupascript.h,
+/// threading contract), and this counter is the one piece of box state that is
+/// process-wide rather than per-Context. Relaxed ordering is enough: the count
+/// is read after all evaluation has stopped, never to synchronise one thread's
+/// writes with another's reads.
+std::atomic<std::size_t> g_liveBoxes{0};
 
-std::size_t liveBoxCount() noexcept { return g_liveBoxes; }
+std::size_t liveBoxCount() noexcept {
+    return g_liveBoxes.load(std::memory_order_relaxed);
+}
+#endif
+
+#ifndef NDEBUG
+#  define CHUPA_COUNT_BOX_BORN() \
+       g_liveBoxes.fetch_add(1, std::memory_order_relaxed)
+#  define CHUPA_COUNT_BOX_DIED() \
+       g_liveBoxes.fetch_sub(1, std::memory_order_relaxed)
+#else
+#  define CHUPA_COUNT_BOX_BORN() ((void)0)
+#  define CHUPA_COUNT_BOX_DIED() ((void)0)
+#endif
 
 std::string_view StringBox::view() const noexcept {
     if (len == 0) { return {}; }
@@ -36,7 +58,7 @@ StringBox *makeStringBox(std::string_view bytes) {
         std::memcpy(reinterpret_cast<char *>(raw) + sizeof(StringBox), bytes.data(),
                     bytes.size());
     }
-    ++g_liveBoxes;
+    CHUPA_COUNT_BOX_BORN();
     return box;
 }
 
@@ -45,7 +67,7 @@ ArrayBox *makeArrayBox(std::uint32_t capacity) {
     box->rc = 1;
     box->kind = Value::Kind::Array;
     if (capacity > 0) { box->items.reserve(capacity); }
-    ++g_liveBoxes;
+    CHUPA_COUNT_BOX_BORN();
     return box;
 }
 
@@ -57,7 +79,7 @@ ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity) {
     box->keys = keys;
     KeyTable::retain(keys);
     if (capacity > 0) { box->entries.reserve(capacity); }
-    ++g_liveBoxes;
+    CHUPA_COUNT_BOX_BORN();
     return box;
 }
 
@@ -112,7 +134,7 @@ std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
 void release(Box *box) noexcept {
     assert(box != nullptr && box->rc > 0);
     if (--box->rc != 0) { return; }
-    --g_liveBoxes;
+    CHUPA_COUNT_BOX_DIED();
 
     switch (box->kind) {
         case Value::Kind::String: {

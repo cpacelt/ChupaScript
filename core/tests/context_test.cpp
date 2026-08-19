@@ -142,6 +142,7 @@ TEST(Context, ScriptAlsoOpensAnOperation) {
     }
 }
 
+#ifndef NDEBUG
 TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
     // Присваивать переменную целиком язык не даёт (check.cpp: «cannot assign
     // to a variable name»), так что переписывает её только хост — и это
@@ -162,7 +163,9 @@ TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
     // держит список отложенного освобождения до ближайшей границы.
     EXPECT_LE(CS::detail::liveBoxCount(), afterFirst + 1);
 }
+#endif
 
+#ifndef NDEBUG
 TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
     CS::Deferred dead;
     // Единственный способ вырастить массив в языке. Раньше каждый push
@@ -186,6 +189,7 @@ TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
     // Двести чисел не завели ни одного коробки: скаляр живёт в самом Value.
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
+#endif
 
 TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
     CS::Deferred dead;

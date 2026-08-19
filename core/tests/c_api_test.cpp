@@ -714,3 +714,206 @@ TEST(CApi, ScriptIsOwnedByHost) {
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
+
+// ─── выдача агрегата ───
+//
+// То, ради чего переделывалась модель памяти. До неё такого API быть не могло:
+// значение было индексом в пулы хранилища, и ни прочитать его без контекста,
+// ни пережить контекст оно не умело.
+
+namespace {
+
+/// Компилирует выражение; требует успеха.
+ChupaExpression* compileIn(ChupaContext* ctx, std::string_view source) {
+    ChupaExpression* e =
+        chupa_compile_expression(ctx, source.data(), source.size());
+    EXPECT_NE(e, nullptr) << chupa_context_error(ctx, nullptr);
+    return e;
+}
+
+std::string_view stringOf(ChupaValue v) {
+    const char* bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string_borrowed(v, &bytes, &len);
+    return std::string_view(bytes, len);
+}
+
+ChupaValue evalValue(ChupaContext* ctx, std::string_view source) {
+    ChupaExpression* e = compileIn(ctx, source);
+    ChupaValue out{};
+    EXPECT_EQ(chupa_eval_value(ctx, e, &out), CHUPA_OK)
+        << chupa_context_error(ctx, nullptr);
+    chupa_expression_destroy(e);
+    return out;
+}
+
+}  // namespace
+
+TEST(CApiValue, ScalarsComeThroughUntouched) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+
+    const ChupaValue n = evalValue(ctx, "42");
+    EXPECT_EQ(chupa_value_kind(n), CHUPA_KIND_NUMBER);
+    EXPECT_DOUBLE_EQ(chupa_value_number(n), 42.0);
+
+    const ChupaValue b = evalValue(ctx, "1 < 2");
+    EXPECT_EQ(chupa_value_kind(b), CHUPA_KIND_BOOL);
+    EXPECT_TRUE(chupa_value_bool(b));
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, NullIsItsOwnOutcome) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_TRUE(setGlobal(ctx, "user", "{'name': 'Вася'}"));
+
+    ChupaExpression* e = compileIn(ctx, "user.missing");
+    ChupaValue out{};
+    // Отдельный исход, как у типизированных вычислений: иначе два пути к
+    // одному выражению отвечали бы на отсутствие по-разному.
+    EXPECT_EQ(chupa_eval_value(ctx, e, &out), CHUPA_NULL);
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, ArrayIsWalkedWithoutTheContext) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_TRUE(setGlobal(ctx, "items", "[10, 'два', 30]"));
+
+    const ChupaValue items = evalValue(ctx, "items");
+    ASSERT_EQ(chupa_value_kind(items), CHUPA_KIND_ARRAY);
+    ASSERT_EQ(chupa_array_count(items), 3u);
+    EXPECT_DOUBLE_EQ(chupa_value_number(chupa_array_at(items, 0)), 10.0);
+    EXPECT_EQ(stringOf(chupa_array_at(items, 1)), "два");
+    // За концом — null, а не отказ: правило docs/semantics.md §6.1 доходит и
+    // до границы.
+    EXPECT_EQ(chupa_value_kind(chupa_array_at(items, 3)), CHUPA_KIND_NULL);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, ObjectIsReadByKeyAndByPosition) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_TRUE(setGlobal(ctx, "user", "{'age': 30, 'name': 'Вася'}"));
+
+    const ChupaValue user = evalValue(ctx, "user");
+    ASSERT_EQ(chupa_value_kind(user), CHUPA_KIND_OBJECT);
+    ASSERT_EQ(chupa_object_count(user), 2u);
+    EXPECT_EQ(stringOf(chupa_object_get(user, "name", 4)), "Вася");
+    EXPECT_DOUBLE_EQ(chupa_value_number(chupa_object_get(user, "age", 3)), 30.0);
+    EXPECT_EQ(chupa_value_kind(chupa_object_get(user, "нет", 6)),
+              CHUPA_KIND_NULL);
+
+    const char* key = nullptr;
+    size_t len = 0;
+    chupa_object_key_at(user, 0, &key, &len);
+    EXPECT_EQ(std::string_view(key, len), "age");
+    chupa_object_key_at(user, 9, &key, &len);
+    EXPECT_EQ(len, 0u);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, ComputedStringIsMaterialisedSoItCanBeRetained) {
+    // format строит строку в арене операции. Не материализуй её выдача — retain
+    // оказался бы молчаливой ложью, и хост прочитал бы освобождённую арену.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+
+    ChupaExpression* e = compileIn(ctx, "format('${}-${}', 1, 2)");
+    ChupaValue text{};
+    ASSERT_EQ(chupa_eval_value(ctx, e, &text), CHUPA_OK);
+    chupa_value_retain(text);
+    chupa_expression_destroy(e);
+
+    // Любая следующая операция сбрасывает арену целиком.
+    ChupaExpression* other = compileIn(ctx, "1 + 1");
+    double ignored = 0.0;
+    ASSERT_EQ(chupa_eval_number(ctx, other, &ignored), CHUPA_OK);
+    chupa_expression_destroy(other);
+
+    EXPECT_EQ(stringOf(text), "1-2");
+    chupa_value_release(text);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, UnretainedValueIsGoneAfterTheNextOperation) {
+    // Обратная сторона того же правила: без retain выдача одалживается, и
+    // ближайшая операция её отпускает. Проверяется счётом живых узлов —
+    // читать освобождённое здесь и было бы той самой ошибкой.
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+
+    ChupaExpression* e = compileIn(ctx, "[1, 2, 3]");
+    ChupaValue kept{};
+    ASSERT_EQ(chupa_eval_value(ctx, e, &kept), CHUPA_OK);
+    chupa_value_retain(kept);
+
+    ChupaValue lent{};
+    ASSERT_EQ(chupa_eval_value(ctx, e, &lent), CHUPA_OK);
+    // Вторая выдача не удержана; третья операция её отпустит, а удержанная
+    // останется.
+    ASSERT_EQ(chupa_eval_value(ctx, e, &lent), CHUPA_OK);
+
+    EXPECT_EQ(chupa_array_count(kept), 3u);
+    chupa_value_release(kept);
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiValue, RetainedObjectOutlivesTheContext) {
+    // Главное обещание модели: удержанный агрегат читается, когда контекста,
+    // хранилища и таблицы имён у него уже нет.
+    ChupaValue user{};
+    {
+        ChupaContext* ctx = chupa_context_create();
+        ASSERT_NE(ctx, nullptr);
+        ASSERT_TRUE(setGlobal(ctx, "user",
+                              "{'name': 'Вася', 'tags': ['a', 'b']}"));
+        user = evalValue(ctx, "user");
+        chupa_value_retain(user);
+        chupa_context_destroy(ctx);
+    }
+
+    ASSERT_EQ(chupa_value_kind(user), CHUPA_KIND_OBJECT);
+    EXPECT_EQ(stringOf(chupa_object_get(user, "name", 4)), "Вася");
+    const ChupaValue tags = chupa_object_get(user, "tags", 4);
+    ASSERT_EQ(chupa_value_kind(tags), CHUPA_KIND_ARRAY);
+    ASSERT_EQ(chupa_array_count(tags), 2u);
+    EXPECT_EQ(stringOf(chupa_array_at(tags, 1)), "b");
+
+    chupa_value_release(user);
+}
+
+TEST(CApiValue, NestedValueCanBeKeptWithoutItsParent) {
+    // Вложенное значение одалживается у родителя, но своя ссылка делает его
+    // самостоятельным — иначе хост не мог бы удержать одну ячейку списка.
+    ChupaValue tags{};
+    {
+        ChupaContext* ctx = chupa_context_create();
+        ASSERT_NE(ctx, nullptr);
+        ASSERT_TRUE(setGlobal(ctx, "user", "{'tags': ['a', 'b']}"));
+        const ChupaValue user = evalValue(ctx, "user");
+        tags = chupa_object_get(user, "tags", 4);
+        chupa_value_retain(tags);
+        chupa_context_destroy(ctx);
+    }
+    ASSERT_EQ(chupa_array_count(tags), 2u);
+    EXPECT_EQ(stringOf(chupa_array_at(tags, 0)), "a");
+    chupa_value_release(tags);
+}
+
+TEST(CApiValue, RetainAndReleaseAreNoOpsOnScalars) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    const ChupaValue n = evalValue(ctx, "42");
+    chupa_value_retain(n);
+    chupa_value_release(n);
+    chupa_value_release(n);   // ссылок нет, отпускать нечего
+    EXPECT_DOUBLE_EQ(chupa_value_number(n), 42.0);
+    chupa_context_destroy(ctx);
+}

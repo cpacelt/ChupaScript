@@ -9,6 +9,21 @@ bool Context::eval(const Expression &expr, Value *out, Diagnostic &diag) {
     return expr.eval(exec_, out, diag);
 }
 
+bool Context::evalValue(const Expression &expr, Value *out, Diagnostic &diag) {
+    beginOperation();
+    Value value = Value::null();
+    if (!expr.eval(exec_, &value, diag)) { return false; }
+
+    // Вычисленная строка (format, str) живёт в арене операции: узла у неё нет,
+    // и удержать её нечем. На этом пути она обязана стать узлом — иначе
+    // chupa_value_retain оказался бы молчаливой ложью, а хост узнал бы об этом
+    // через чтение освобождённой арены.
+    //
+    // Прочее проходит как есть: скаляр самодостаточен, узел уже узел.
+    *out = store_.promote(exec_.storeOf(value), value);
+    return true;
+}
+
 EvalStatus Context::evalNumber(const Expression &expr, double *out,
                                Diagnostic &diag) {
     beginOperation();

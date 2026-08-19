@@ -226,28 +226,6 @@ bool Store::arrayPop(Value a, Value *out) noexcept {
     return true;
 }
 
-std::uint32_t Store::findKey(const detail::ObjectNode &node, std::string_view key,
-                             bool *found) const noexcept {
-    // Пары отсортированы по байтам ключа, поиск двоичный: на типичных 3–20
-    // ключах это дешевле хеш-таблицы и не выделяет ничего сверх самого вектора.
-    std::uint32_t low = 0;
-    std::uint32_t high = static_cast<std::uint32_t>(node.entries.size());
-    while (low < high) {
-        const std::uint32_t mid = low + (high - low) / 2;
-        const std::string_view candidate = node.keys->bytes(node.entries[mid].key);
-        if (candidate < key) {
-            low = mid + 1;
-        } else if (key < candidate) {
-            high = mid;
-        } else {
-            *found = true;
-            return mid;
-        }
-    }
-    *found = false;
-    return low;
-}
-
 Value Store::makeObject(std::uint32_t capacity) {
     detail::ObjectNode *node = detail::makeObjectNode(keys_, capacity);
     pending_.push_back(node);   // ссылка создателя — до ближайшей границы
@@ -264,7 +242,7 @@ Value Store::objectGet(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
     bool found = false;
-    const std::uint32_t at = findKey(node, key, &found);
+    const std::uint32_t at = detail::findEntry(node, key, &found);
     if (!found) { return Value::null(); }
     return node.entries[at].value;
 }
@@ -272,7 +250,7 @@ Value Store::objectGet(Value o, std::string_view key) const noexcept {
 bool Store::objectHas(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     bool found = false;
-    findKey(*static_cast<const detail::ObjectNode *>(o.node()), key, &found);
+    detail::findEntry(*static_cast<const detail::ObjectNode *>(o.node()), key, &found);
     return found;
 }
 
@@ -296,7 +274,7 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
     detail::ObjectNode &node = *static_cast<detail::ObjectNode *>(o.node());
 
     bool found = false;
-    const std::uint32_t at = findKey(node, key, &found);
+    const std::uint32_t at = detail::findEntry(node, key, &found);
     retainValue(v);
     if (found) {
         defer(node.entries[at].value);
@@ -304,7 +282,7 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
         return;
     }
     // Интернируется только тот ключ, который правда заводится: чтение
-    // отсутствующего имени таблицу не засоряет — за этим следит findKey,
+    // отсутствующего имени таблицу не засоряет — за этим следит findEntry,
     // который сравнивает байты и в таблицу не пишет.
     node.entries.insert(node.entries.begin() + at,
                         detail::Entry{node.keys->intern(key), v});
@@ -312,7 +290,7 @@ void Store::objectSet(Value o, std::string_view key, Value v) {
 
 std::uint32_t Store::findGlobal(std::string_view name,
                                 bool *found) const noexcept {
-    // Тот же двоичный поиск, что и findKey, но по своему массиву. Ходят сюда
+    // Тот же двоичный поиск, что и findEntry, но по своему массиву. Ходят сюда
     // только компиляция и запись — на вычислении имя больше не разрешается.
     std::uint32_t low = 0;
     std::uint32_t high = static_cast<std::uint32_t>(globalNames_.size());

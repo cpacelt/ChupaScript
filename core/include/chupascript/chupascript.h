@@ -208,6 +208,89 @@ chupa_eval_string_borrowed(ChupaContext *ctx, ChupaExpression *e,
                            const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
                            size_t *len);
 
+/* ─── Values: aggregates crossing the boundary ───────────────────────────────
+ *
+ * Everything above returns a scalar by copy. This section returns a value of
+ * ANY kind — including an array or an object — and lets the host walk it.
+ *
+ * ChupaValue is a plain 16-byte struct passed BY VALUE. It is not a handle
+ * into a table and it is not an allocation: it is the engine's own value
+ * representation, handed over unchanged. Producing one costs nothing.
+ *
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ None of the walking functions take a ChupaContext *. That is not a   ║
+ * ║ saved parameter, it is the whole point: an aggregate carries its own ║
+ * ║ storage and its own key names, so it can be read when the context    ║
+ * ║ that produced it is already destroyed.                               ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ *
+ * LIFETIME. A value returned by chupa_eval_value is BORROWED, exactly like
+ * the bytes from chupa_eval_string_borrowed: the only reference to it is the
+ * engine's deferred-release list, and the next operation on the context drops
+ * that reference. To keep it longer — across frames, into a host object —
+ * call chupa_value_retain, and chupa_value_release when done. Retain/release
+ * must be balanced; both are no-ops on scalars, which reference nothing.
+ *
+ * Nested values obtained from chupa_array_at, chupa_object_value_at and
+ * chupa_object_get are borrowed from their parent and take no reference of
+ * their own: they live as long as the aggregate holding them. Retain one only
+ * if it must outlive its parent.
+ *
+ * Key and string bytes are borrowed from the value that yielded them and stay
+ * valid as long as that value does — which, for a retained value, is as long
+ * as the host keeps it. They are NOT NUL-terminated. */
+
+typedef struct ChupaValue { uint64_t _bits[2]; } ChupaValue;
+
+/* Evaluates to a value of any kind.
+ *
+ * A computed string — anything format() or str() built — is materialised here
+ * rather than left in the temporary region, because a region offset cannot be
+ * retained and chupa_value_retain would otherwise be a silent lie. That costs
+ * one allocation; the cheap path for strings is still
+ * chupa_eval_string_borrowed, which allocates nothing.
+ *
+ * On CHUPA_NULL and CHUPA_ERROR *out is not touched. */
+CHUPA_API CHUPA_MUST_USE ChupaStatus
+chupa_eval_value(ChupaContext *ctx, ChupaExpression *e, ChupaValue *out);
+
+CHUPA_API ChupaKind chupa_value_kind(ChupaValue v);
+
+/* Precondition: chupa_value_kind(v) == CHUPA_KIND_BOOL / _NUMBER. */
+CHUPA_API bool   chupa_value_bool  (ChupaValue v);
+CHUPA_API double chupa_value_number(ChupaValue v);
+
+/* Precondition: chupa_value_kind(v) == CHUPA_KIND_STRING.
+ * An empty string yields *len == 0 and *bytes possibly NULL. */
+CHUPA_API void chupa_value_string_borrowed(ChupaValue v,
+                                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                                           size_t *len);
+
+/* Precondition: chupa_value_kind(v) == CHUPA_KIND_ARRAY.
+ * chupa_array_at yields a null value past the end. */
+CHUPA_API size_t     chupa_array_count(ChupaValue v);
+CHUPA_API ChupaValue chupa_array_at   (ChupaValue v, size_t i);
+
+/* Precondition: chupa_value_kind(v) == CHUPA_KIND_OBJECT.
+ *
+ * Enumeration order is not promised (docs/semantics.md 2.1). chupa_object_get
+ * yields a null value when the key is absent — which does not distinguish an
+ * absent key from one holding null; that distinction has no C API yet.
+ * chupa_object_key_at yields *len == 0 past the end. */
+CHUPA_API size_t     chupa_object_count   (ChupaValue v);
+CHUPA_API void       chupa_object_key_at  (ChupaValue v, size_t i,
+                                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                                           size_t *len);
+CHUPA_API ChupaValue chupa_object_value_at(ChupaValue v, size_t i);
+CHUPA_API ChupaValue chupa_object_get     (ChupaValue v,
+                                           const char *key, size_t key_len);
+
+/* Reference counting. Both are no-ops on scalars and on values that reference
+ * nothing counted. Releasing more than was retained corrupts the engine's
+ * bookkeeping; debug builds trap on it. */
+CHUPA_API void chupa_value_retain (ChupaValue v);
+CHUPA_API void chupa_value_release(ChupaValue v);
+
 CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
 
 CHUPA_API ChupaErrorCode chupa_context_error_code  (const ChupaContext *ctx);

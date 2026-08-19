@@ -311,21 +311,6 @@ class Store {
     std::uint32_t appendText(std::string_view bytes);
     std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
 
-    /// Номер пары с этим ключом, а если ключа нет — место, куда её вставить,
-    /// чтобы порядок сохранился. found получает признак находки.
-    ///
-    /// Имена берутся из таблицы **узла**, а не из таблицы хранилища: узел
-    /// уезжает к хосту и переживает контекст, значит носит свою таблицу с
-    /// собой, и читать его вправе кто угодно.
-    ///
-    /// Пары упорядочены по **байтам** ключа, а не по его номеру в таблице.
-    /// Порядок перечисления наружу формально не обещан (docs/semantics.md
-    /// §2.1), но фактически он байтовый, и на нём стоит вывод printValue с
-    /// золотыми тестами; менять устойчивый порядок на зависящий от порядка
-    /// интернирования незачем.
-    std::uint32_t findKey(const detail::ObjectNode &node, std::string_view key,
-                          bool *found) const noexcept;
-
     std::uint32_t findGlobal(std::string_view name, bool *found) const noexcept;
 
 

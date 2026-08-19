@@ -14,6 +14,8 @@
 #include "diagnostic.hpp"
 #include "context.hpp"
 #include "expression.hpp"
+#include "node.hpp"
+#include "keytable.hpp"
 #include "script.hpp"
 #include "store.hpp"
 #include "value.hpp"
@@ -313,6 +315,157 @@ ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
     *bytes = text.data();
     *len = text.size();
     return CHUPA_OK;
+}
+
+// ─── Values: aggregates crossing the boundary ───
+//
+// Прокладки здесь нет вовсе: ChupaValue это те же шестнадцать байт, что и
+// CS::Value, и перевод между ними — копия, которую компилятор сводит к
+// пересылке регистров. Ни таблицы дескрипторов, ни аллокации, ни поиска.
+//
+// Ни одна функция обхода не берёт ChupaContext *, и это не экономия: узел
+// самодостаточен, объект носит свою таблицу имён, поэтому читать его можно и
+// тогда, когда контекста уже нет. В прежней модели такой сигнатуры быть не
+// могло — значение там было индексом в пулы конкретного хранилища.
+
+namespace {
+
+static_assert(sizeof(ChupaValue) == sizeof(CS::Value),
+              "ChupaValue обязан совпадать с CS::Value байт в байт");
+static_assert(alignof(ChupaValue) >= alignof(CS::Value),
+              "выравнивание ChupaValue не должно быть слабее");
+
+ChupaValue toC(CS::Value v) {
+    ChupaValue out;
+    std::memcpy(&out, &v, sizeof(out));
+    return out;
+}
+
+CS::Value fromC(ChupaValue v) {
+    CS::Value out = CS::Value::null();
+    std::memcpy(&out, &v, sizeof(out));
+    return out;
+}
+
+ChupaKind toKind(CS::Value::Kind kind) {
+    switch (kind) {
+        case CS::Value::Kind::Null:    return CHUPA_KIND_NULL;
+        case CS::Value::Kind::Boolean: return CHUPA_KIND_BOOL;
+        case CS::Value::Kind::Number:  return CHUPA_KIND_NUMBER;
+        case CS::Value::Kind::String:  return CHUPA_KIND_STRING;
+        case CS::Value::Kind::Array:   return CHUPA_KIND_ARRAY;
+        case CS::Value::Kind::Object:  return CHUPA_KIND_OBJECT;
+    }
+    return CHUPA_KIND_NULL;
+}
+
+const CS::detail::ArrayNode* asArray(CS::Value v) {
+    return static_cast<const CS::detail::ArrayNode*>(v.node());
+}
+
+const CS::detail::ObjectNode* asObject(CS::Value v) {
+    return static_cast<const CS::detail::ObjectNode*>(v.node());
+}
+
+/// Ссылается ли значение счётчиком. Скаляр — нет, промежуточная строка — нет:
+/// у неё узла не существует, и попасть сюда она не может, потому что
+/// chupa_eval_value её материализует.
+bool counted(CS::Value v) {
+    return v.addressesStore() && v.region() == CS::Value::Region::Counted;
+}
+
+}  // namespace
+
+ChupaStatus chupa_eval_value(ChupaContext* ctx, ChupaExpression* e,
+                             ChupaValue* out) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
+
+    CS::Value value = CS::Value::null();
+    if (!c->impl.evalValue(expr->impl, &value, c->lastError)) {
+        return CHUPA_ERROR;
+    }
+    // Отдельный исход у null, как и у типизированных вычислений: там он значит
+    // «значения нет», и здесь обязан значить то же, иначе два пути к одному
+    // выражению отвечали бы по-разному.
+    if (value.kind() == CS::Value::Kind::Null) { return CHUPA_NULL; }
+
+    *out = toC(value);
+    return CHUPA_OK;
+}
+
+ChupaKind chupa_value_kind(ChupaValue v) { return toKind(fromC(v).kind()); }
+
+bool chupa_value_bool(ChupaValue v) { return fromC(v).booleanValue(); }
+
+double chupa_value_number(ChupaValue v) { return fromC(v).numberValue(); }
+
+void chupa_value_string_borrowed(ChupaValue v, const char** bytes,
+                                 size_t* len) {
+    const CS::Value value = fromC(v);
+    // Хранилище не нужно: сюда доходит только узел — арену chupa_eval_value
+    // материализует, а вложенная строка узлом была изначально (её положили в
+    // агрегат, а туда промежуточную не пускают).
+    const std::string_view text =
+        static_cast<const CS::detail::StrNode*>(value.node())->view();
+    *bytes = text.data();
+    *len = text.size();
+}
+
+size_t chupa_array_count(ChupaValue v) {
+    return asArray(fromC(v))->items.size();
+}
+
+ChupaValue chupa_array_at(ChupaValue v, size_t i) {
+    const CS::detail::ArrayNode* node = asArray(fromC(v));
+    if (i >= node->items.size()) { return toC(CS::Value::null()); }
+    // Ссылка не берётся: элемент держит сам массив, а массив держит хост.
+    return toC(node->items[i]);
+}
+
+size_t chupa_object_count(ChupaValue v) {
+    return asObject(fromC(v))->entries.size();
+}
+
+void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
+                         size_t* len) {
+    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    if (i >= node->entries.size()) {
+        *bytes = nullptr;
+        *len = 0;
+        return;
+    }
+    // Имя берётся из таблицы узла, а не из чьего-то хранилища: она и есть то,
+    // что делает объект читаемым после смерти контекста.
+    const std::string_view key = node->keys->bytes(node->entries[i].key);
+    *bytes = key.data();
+    *len = key.size();
+}
+
+ChupaValue chupa_object_value_at(ChupaValue v, size_t i) {
+    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    if (i >= node->entries.size()) { return toC(CS::Value::null()); }
+    return toC(node->entries[i].value);
+}
+
+ChupaValue chupa_object_get(ChupaValue v, const char* key, size_t key_len) {
+    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    bool found = false;
+    const std::uint32_t at =
+        CS::detail::findEntry(*node, std::string_view(key, key_len), &found);
+    if (!found) { return toC(CS::Value::null()); }
+    return toC(node->entries[at].value);
+}
+
+void chupa_value_retain(ChupaValue v) {
+    const CS::Value value = fromC(v);
+    if (counted(value)) { CS::detail::retain(value.node()); }
+}
+
+void chupa_value_release(ChupaValue v) {
+    const CS::Value value = fromC(v);
+    if (counted(value)) { CS::detail::release(value.node()); }
 }
 
 // ─── Run ───

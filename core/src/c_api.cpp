@@ -311,10 +311,10 @@ const CS::detail::ObjectBox* asObject(const CS::Value& v) {
 
 // ─── Eval ───
 //
-// Порядок чистки ошибки во всей секции один: clearError() идёт ДО вызова
-// ядра. На исходе Ok ядро diag не трогает вовсе (докблок Expression::eval,
-// core/src/expression.hpp), так что без предварительной очистки успешное
-// вычисление оставило бы наружу диагностику от прошлого вызова.
+// One clearing order for the whole section: clearError() runs BEFORE the
+// core call. On Ok the core leaves diag untouched entirely (docblock on
+// Expression::eval, core/src/expression.hpp), so without clearing first a
+// successful evaluation would leak the previous call's diagnostic.
 
 bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);

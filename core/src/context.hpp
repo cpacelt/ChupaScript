@@ -31,10 +31,17 @@ namespace CS {
 /// хранилища, и второй экземпляр той же начинки означал бы два владельца
 /// одних данных.
 ///
-/// LAYOUT (Р9) — what this Context owns, beyond store_ and exec_:
-///   lastResult_   ROOT. Holds one reference from keepResult() until the
-///                 next beginOperation(), or forever if the Context is
-///                 destroyed first — the destructor releases it explicitly.
+/// LAYOUT — everything this Context owns:
+///
+///   store_        Store — global variable names/values and the key table
+///                 (store.hpp). Persists across every operation.
+///   exec_         Execution — the format() string builder and the deferred-
+///                 release list (execution.hpp), bound to store_ by
+///                 reference for this Context's whole lifetime.
+///   lastResult_   Value. A ROOT (Р9): holds one reference from
+///                 keepResult() until the next beginOperation(), or forever
+///                 if the Context is destroyed first — the destructor
+///                 releases it explicitly.
 class Context {
    public:
     Context() = default;

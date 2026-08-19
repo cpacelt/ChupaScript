@@ -20,6 +20,12 @@ ChupaErrorCode errorCode(ChupaContext* ctx) {
     return err.code;
 }
 
+size_t errorOffset(ChupaContext* ctx) {
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    return err.offset;
+}
+
 
 TEST(CApiContext, CreateDestroy) {
     ChupaContext* ctx = chupa_context_create();
@@ -453,6 +459,11 @@ TEST(CApi, EvalStringOnNumberIsTypeError) {
     EXPECT_EQ(bytes, reinterpret_cast<const char*>(1));
     EXPECT_EQ(len, 42u);
     EXPECT_EQ(errorCode(ctx), CHUPA_ERR_TYPE);
+    // The kind check runs in c_api.cpp AFTER the core already evaluated
+    // successfully, so there is no source position left to attach — the
+    // wrapper reports offset 0 unconditionally (see the Type diagnostic
+    // built in chupa_eval_string).
+    EXPECT_EQ(errorOffset(ctx), 0u);
 
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -827,9 +838,9 @@ TEST(CApiValue, ObjectIsReadByKeyAndByPosition) {
     ASSERT_TRUE(chupa_object_get(&user, "age", 3, &age));
     EXPECT_DOUBLE_EQ(chupa_value_number(&age), 30.0);
 
-    // Отсутствующий ключ теперь различим: chupa_object_get отдаёт false и
-    // *out не трогает, а не null-значение, как раньше — распаковка выходного
-    // параметра сама по себе дала эту возможность.
+    // A missing key is now distinguishable: chupa_object_get returns false
+    // and leaves *out untouched, instead of a null value as before —
+    // unpacking the output parameter gave this for free.
     ChupaValue missing{};
     EXPECT_FALSE(chupa_object_get(&user, "нет", 6, &missing));
 

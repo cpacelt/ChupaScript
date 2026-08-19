@@ -36,8 +36,11 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
             return true;
 
         case NodeKind::String: {
+            // materialize, а не makeString: данные от хоста целиком ложатся в
+            // глобальную переменную и обязаны пережить операцию, а региона
+            // хранилища этот разбор не спрашивает вовсе.
             std::string scratch;
-            *out = store.makeString(literalText(ast, node, source, scratch));
+            *out = store.materialize(literalText(ast, node, source, scratch));
             return true;
         }
 
@@ -67,7 +70,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                 if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
-                store.arrayPush(array, store.promote(store, element));
+                store.arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -86,7 +89,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                 // Повторный ключ заменяет значение: последний выигрывает.
                 store.objectSet(
                     object, literalText(ast, ast.child(node, i), source, scratch),
-                    store.promote(store, value));
+                    value);
             }
             *out = object;
             return true;

@@ -650,7 +650,11 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 value = combined;
             }
 
-            dest.objectSet(base, key, dest.promote(exec.storeOf(value), value));
+            // Продвигать здесь нечего ни на одном из путей: при Assign
+            // значение уже прошло promote выше, до приведения ключа, а при
+            // составном присваивании оно результат applyBinary, и то, что оно
+            // ничего не адресует, утверждается строкой выше.
+            dest.objectSet(base, key, value);
             return true;
         }
 

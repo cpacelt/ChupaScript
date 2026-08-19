@@ -101,8 +101,8 @@ void chupa_context_destroy(ChupaContext* ctx) {
 
 // ─── Set: text literal ───
 
-bool chupa_context_set(ChupaContext* ctx, const char* name, size_t name_len,
-                       const char* text, size_t text_len) {
+bool chupa_context_set_data(ChupaContext* ctx, const char* name, size_t name_len,
+                            const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     CS::Diagnostic diag;
     bool ok = c->impl.setVariableText(std::string_view(name, name_len),
@@ -170,6 +170,8 @@ bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
 
 // ─── Error reporting ───
 
+namespace {
+
 // CS::ErrorCode values intentionally match ChupaErrorCode (diagnostic.hpp).
 // The static_asserts below guard against accidental drift.
 static_assert(static_cast<int>(CS::ErrorCode::None)   == CHUPA_ERR_NONE,   "ErrorCode::None must match CHUPA_ERR_NONE");
@@ -181,12 +183,11 @@ static_assert(static_cast<int>(CS::ErrorCode::Data)   == CHUPA_ERR_DATA,   "Erro
 static_assert(static_cast<int>(CS::ErrorCode::Usage)  == CHUPA_ERR_USAGE,  "ErrorCode::Usage must match CHUPA_ERR_USAGE");
 static_assert(static_cast<int>(CS::ErrorCode::Memory) == CHUPA_ERR_MEMORY, "ErrorCode::Memory must match CHUPA_ERR_MEMORY");
 
-ChupaErrorCode chupa_context_error_code(const ChupaContext* ctx) {
-    if (!ctx) { return CHUPA_ERR_NONE; }
-    const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
-    // Map explicitly to guard against future enum drift even though the
-    // values currently match (see static_asserts above).
-    switch (c->lastError.code) {
+/// Translates the core's error code to the public one. Mapped explicitly, not
+/// cast, to guard against future enum drift even though the values currently
+/// match (see the static_asserts above).
+ChupaErrorCode toCode(CS::ErrorCode code) {
+    switch (code) {
         case CS::ErrorCode::None:    return CHUPA_ERR_NONE;
         case CS::ErrorCode::Syntax:  return CHUPA_ERR_SYNTAX;
         case CS::ErrorCode::Name:    return CHUPA_ERR_NAME;
@@ -199,21 +200,16 @@ ChupaErrorCode chupa_context_error_code(const ChupaContext* ctx) {
     return CHUPA_ERR_NONE;
 }
 
-size_t chupa_context_error_offset(const ChupaContext* ctx) {
-    if (!ctx) { return 0; }
-    const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
-    return c->lastError.offset;
-}
+}  // namespace
 
-const char* chupa_context_error(const ChupaContext* ctx, size_t* len) {
-    if (!ctx) {
-        if (len) { *len = 0; }
-        return nullptr;
-    }
+void chupa_context_error(const ChupaContext* ctx, ChupaError* out) {
+    if (!ctx || !out) { return; }
     const auto* c = reinterpret_cast<const ::ChupaContext*>(ctx);
-    const char* msg = c->lastError.message ? c->lastError.message : "";
-    if (len) { *len = std::strlen(msg); }
-    return msg;
+    const char* message = c->lastError.message ? c->lastError.message : "";
+    out->code = toCode(c->lastError.code);
+    out->offset = c->lastError.offset;
+    out->message = message;
+    out->message_len = std::strlen(message);
 }
 
 // ─── Compile ───
@@ -260,73 +256,13 @@ void chupa_script_destroy(ChupaScript* s) {
     delete reinterpret_cast<::ChupaScript*>(s);
 }
 
-// ─── Eval ───
+// ─── Values: address in, address out ───
 //
-// Порядок чистки ошибки во всей секции один: clearError() идёт ДО вызова
-// ядра. На исходах Ok и Null ядро diag не трогает вовсе (докблок
-// evalNumber/evalBool/evalString, core/src/expression.hpp), так что без
-// предварительной очистки успешное вычисление оставило бы наружу
-// диагностику от прошлого вызова.
-
-namespace {
-
-/// Перевод исхода ядра в исход C. Единственная работа, которая остаётся
-/// прокладке после переезда: два перечисления об одном и том же.
-ChupaStatus toStatus(CS::EvalStatus status) {
-    switch (status) {
-        case CS::EvalStatus::Ok:    return CHUPA_OK;
-        case CS::EvalStatus::Null:  return CHUPA_NULL;
-        case CS::EvalStatus::Error: return CHUPA_ERROR;
-    }
-    return CHUPA_ERROR;
-}
-
-}  // namespace
-
-ChupaStatus chupa_eval_number(ChupaContext* ctx, ChupaExpression* e,
-                              double* out) {
-    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
-    c->clearError();
-    return toStatus(c->impl.evalNumber(expr->impl, out, c->lastError));
-}
-
-ChupaStatus chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e,
-                            bool* out) {
-    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
-    c->clearError();
-    return toStatus(c->impl.evalBool(expr->impl, out, c->lastError));
-}
-
-ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
-                                       const char** bytes, size_t* len) {
-    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
-    c->clearError();
-
-    std::string_view text;
-    const CS::EvalStatus status =
-        c->impl.evalString(expr->impl, &text, c->lastError);
-    if (status != CS::EvalStatus::Ok) { return toStatus(status); }
-
-    // Срез в текстовый пул движка, без владения и без копии. Окно валидности
-    // и его обоснование — в заголовке, у объявления.
-    *bytes = text.data();
-    *len = text.size();
-    return CHUPA_OK;
-}
-
-// ─── Values: aggregates crossing the boundary ───
-//
-// Прокладки здесь нет вовсе: ChupaValue это те же шестнадцать байт, что и
-// CS::Value, и перевод между ними — копия, которую компилятор сводит к
-// пересылке регистров. Ни таблицы дескрипторов, ни аллокации, ни поиска.
-//
-// Ни одна функция обхода не берёт ChupaContext *, и это не экономия: коробка
-// самодостаточен, объект носит свою таблицу имён, поэтому читать его можно и
-// тогда, когда контекста уже нет. В прежней модели такой сигнатуры быть не
-// могло — значение там было индексом в пулы конкретного хранилища.
+// ChupaValue is the same sixteen bytes as CS::Value, and fromC reinterprets a
+// host pointer as a CS::Value IN PLACE — no copy, no table, no allocation.
+// That is what makes chupa_value_string safe: the slice it hands back points
+// into the host's own ChupaValue variable, not into a CS::Value that lived
+// only inside this translation unit and died on return (defect В3).
 
 namespace {
 
@@ -335,16 +271,20 @@ static_assert(sizeof(ChupaValue) == sizeof(CS::Value),
 static_assert(alignof(ChupaValue) >= alignof(CS::Value),
               "выравнивание ChupaValue не должно быть слабее");
 
-ChupaValue toC(CS::Value v) {
-    ChupaValue out;
-    std::memcpy(&out, &v, sizeof(out));
-    return out;
+/// Reinterprets the host's sixteen bytes as a CS::Value IN PLACE.
+///
+/// A reference, not a copy: a short string's bytes live inside the value, and
+/// every slice handed back to the host points into the host's own variable.
+const CS::Value& fromC(const ChupaValue* v) {
+    return *reinterpret_cast<const CS::Value*>(v);
 }
 
-CS::Value fromC(ChupaValue v) {
-    CS::Value out = CS::Value::null();
-    std::memcpy(&out, &v, sizeof(out));
-    return out;
+/// Copies a CS::Value into a host-owned output slot. The reverse of fromC:
+/// here the host's storage is the destination, so a copy is unavoidable and
+/// harmless — the sixteen bytes just landed in the caller's own variable,
+/// which is exactly where the by-address contract wants them.
+void toC(CS::Value v, ChupaValue* out) {
+    std::memcpy(out, &v, sizeof(*out));
 }
 
 ChupaKind toKind(CS::Value::Kind kind) {
@@ -359,69 +299,116 @@ ChupaKind toKind(CS::Value::Kind kind) {
     return CHUPA_KIND_NULL;
 }
 
-const CS::detail::ArrayBox* asArray(CS::Value v) {
+const CS::detail::ArrayBox* asArray(const CS::Value& v) {
     return static_cast<const CS::detail::ArrayBox*>(v.box());
 }
 
-const CS::detail::ObjectBox* asObject(CS::Value v) {
+const CS::detail::ObjectBox* asObject(const CS::Value& v) {
     return static_cast<const CS::detail::ObjectBox*>(v.box());
 }
 
 }  // namespace
 
-ChupaStatus chupa_eval_value(ChupaContext* ctx, ChupaExpression* e,
-                             ChupaValue* out) {
+// ─── Eval ───
+//
+// Порядок чистки ошибки во всей секции один: clearError() идёт ДО вызова
+// ядра. На исходе Ok ядро diag не трогает вовсе (докблок Expression::eval,
+// core/src/expression.hpp), так что без предварительной очистки успешное
+// вычисление оставило бы наружу диагностику от прошлого вызова.
+
+bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
 
     CS::Value value = CS::Value::null();
-    if (!c->impl.evalValue(expr->impl, &value, c->lastError)) {
-        return CHUPA_ERROR;
-    }
-    // Отдельный исход у null, как и у типизированных вычислений: там он значит
-    // «значения нет», и здесь обязан значить то же, иначе два пути к одному
-    // выражению отвечали бы по-разному.
-    if (value.kind() == CS::Value::Kind::Null) { return CHUPA_NULL; }
-
-    *out = toC(value);
-    return CHUPA_OK;
+    if (!c->impl.eval(expr->impl, &value, c->lastError)) { return false; }
+    // Null is a kind, not an outcome: the value says so itself, and a separate
+    // return code for it existed only because a double * had nowhere to put
+    // "it came out null".
+    toC(value, out);
+    return true;
 }
 
-ChupaKind chupa_value_kind(ChupaValue v) { return toKind(fromC(v).kind()); }
+bool chupa_eval_number(ChupaContext* ctx, ChupaExpression* e, double* out) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
+    // Expression::evalNumber already answers Null with CHUPA_ERR_NONE (diag
+    // untouched) and a wrong kind with CHUPA_ERR_TYPE — exactly the two-way
+    // split the shortcut promises, so there is nothing left to translate but
+    // the outcome itself.
+    return c->impl.evalNumber(expr->impl, out, c->lastError) == CS::EvalStatus::Ok;
+}
 
-bool chupa_value_bool(ChupaValue v) { return fromC(v).booleanValue(); }
+bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
+    return c->impl.evalBool(expr->impl, out, c->lastError) == CS::EvalStatus::Ok;
+}
 
-double chupa_value_number(ChupaValue v) { return fromC(v).numberValue(); }
+bool chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
+                       const char** bytes, size_t* len) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
 
-void chupa_value_string_borrowed(ChupaValue v, const char** bytes,
-                                 size_t* len) {
-    const CS::Value value = fromC(v);
-    // Хранилище не нужно: сюда доходит только коробка — арену chupa_eval_value
-    // материализует, а вложенная строка коробкой была изначально (её положили в
-    // агрегат, а туда промежуточную не пускают).
-    const std::string_view text =
-        static_cast<const CS::detail::StringBox*>(value.box())->view();
+    CS::Value value = CS::Value::null();
+    if (!c->impl.eval(expr->impl, &value, c->lastError)) { return false; }
+    if (value.kind() == CS::Value::Kind::Null) { return false; }  // error stays NONE
+    if (value.kind() != CS::Value::Kind::String) {
+        c->setError({CS::ErrorCode::Type, 0, "expression is not a string"});
+        return false;
+    }
+
+    // Borrowed from the Context's own slot, not from a local: a short string's
+    // bytes live inside the value, and a local would die on return.
+    const CS::Value& kept = c->impl.keepResult(value);
+    const std::string_view text = CS::stringBytes(kept);
+    *bytes = text.data();
+    *len = text.size();
+    return true;
+}
+
+// ─── Values: reading an aggregate crossing the boundary ───
+//
+// Ни одна функция обхода не берёт ChupaContext *, и это не экономия: коробка
+// самодостаточна, объект носит свою таблицу имён, поэтому читать его можно и
+// тогда, когда контекста уже нет. В прежней модели такой сигнатуры быть не
+// могло — значение там было индексом в пулы конкретного хранилища.
+
+ChupaKind chupa_value_kind(const ChupaValue* v) { return toKind(fromC(v).kind()); }
+
+bool chupa_value_bool(const ChupaValue* v) { return fromC(v).booleanValue(); }
+
+double chupa_value_number(const ChupaValue* v) { return fromC(v).numberValue(); }
+
+void chupa_value_string(const ChupaValue* v, const char** bytes, size_t* len) {
+    const std::string_view text = CS::stringBytes(fromC(v));
     *bytes = text.data();
     *len = text.size();
 }
 
-size_t chupa_array_count(ChupaValue v) {
+size_t chupa_array_count(const ChupaValue* v) {
     return asArray(fromC(v))->items.size();
 }
 
-ChupaValue chupa_array_at(ChupaValue v, size_t i) {
+void chupa_array_at(const ChupaValue* v, size_t i, ChupaValue* out) {
     const CS::detail::ArrayBox* box = asArray(fromC(v));
-    if (i >= box->items.size()) { return toC(CS::Value::null()); }
+    if (i >= box->items.size()) {
+        toC(CS::Value::null(), out);
+        return;
+    }
     // Ссылка не берётся: элемент держит сам массив, а массив держит хост.
-    return toC(box->items[i]);
+    toC(box->items[i], out);
 }
 
-size_t chupa_object_count(ChupaValue v) {
+size_t chupa_object_count(const ChupaValue* v) {
     return asObject(fromC(v))->entries.size();
 }
 
-void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
+void chupa_object_key_at(const ChupaValue* v, size_t i, const char** bytes,
                          size_t* len) {
     const CS::detail::ObjectBox* box = asObject(fromC(v));
     if (i >= box->entries.size()) {
@@ -436,29 +423,33 @@ void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
     *len = key.size();
 }
 
-ChupaValue chupa_object_value_at(ChupaValue v, size_t i) {
+void chupa_object_value_at(const ChupaValue* v, size_t i, ChupaValue* out) {
     const CS::detail::ObjectBox* box = asObject(fromC(v));
-    if (i >= box->entries.size()) { return toC(CS::Value::null()); }
-    return toC(box->entries[i].value);
+    if (i >= box->entries.size()) {
+        toC(CS::Value::null(), out);
+        return;
+    }
+    toC(box->entries[i].value, out);
 }
 
-ChupaValue chupa_object_get(ChupaValue v, const char* key, size_t key_len) {
+bool chupa_object_get(const ChupaValue* v, const char* key, size_t key_len,
+                      ChupaValue* out) {
     const CS::detail::ObjectBox* box = asObject(fromC(v));
     bool found = false;
     const std::uint32_t at =
         CS::detail::findEntry(*box, std::string_view(key, key_len), &found);
-    if (!found) { return toC(CS::Value::null()); }
-    return toC(box->entries[at].value);
+    if (!found) { return false; }
+    toC(box->entries[at].value, out);
+    return true;
 }
 
 // Скаляр обе функции пропускают молча, и это не снисхождение: хост не обязан
 // разбирать, что ему вернули, — он держит ChupaValue и отпускает его так же,
-// каким бы тот ни оказался. Промежуточной строки здесь не бывает вовсе:
-// chupa_eval_value её материализует.
+// каким бы тот ни оказался.
 
-void chupa_value_retain(ChupaValue v) { CS::detail::retainValue(fromC(v)); }
+void chupa_value_retain(const ChupaValue* v) { CS::detail::retainValue(fromC(v)); }
 
-void chupa_value_release(ChupaValue v) { CS::detail::releaseValue(fromC(v)); }
+void chupa_value_release(const ChupaValue* v) { CS::detail::releaseValue(fromC(v)); }
 
 // ─── Run ───
 

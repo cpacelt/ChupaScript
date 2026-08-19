@@ -8,8 +8,18 @@
 
 // Helper: set a global from a ChupaScript literal text
 bool setGlobal(ChupaContext* ctx, const std::string& name, const std::string& text) {
-    return chupa_context_set(ctx, name.c_str(), name.size(), text.c_str(), text.size());
+    return chupa_context_set_data(ctx, name.c_str(), name.size(), text.c_str(), text.size());
 }
+
+// Helpers over the single-struct error report: most tests only need the code
+// or the offset, and spelling out the struct at every call site would bury
+// the assertion under boilerplate the struct itself was meant to remove.
+ChupaErrorCode errorCode(ChupaContext* ctx) {
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    return err.code;
+}
+
 
 TEST(CApiContext, CreateDestroy) {
     ChupaContext* ctx = chupa_context_create();
@@ -43,7 +53,7 @@ TEST(CApiContext, SetLiteralFailsOnExpression) {
     ASSERT_NE(ctx, nullptr);
     // "1 + 2" is an expression, not a literal — should fail
     EXPECT_FALSE(setGlobal(ctx, "x", "1 + 2"));
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_DATA);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_DATA);
     chupa_context_destroy(ctx);
 }
 
@@ -70,9 +80,10 @@ TEST(CApiContext, SetString) {
 }
 
 TEST(CApiContext, ScalarSettersRejectNamesTheProgramCannotReference) {
-    // Проверка та же, что у chupa_context_set: имя обязано быть идентификатором
-    // и не быть ключевым словом (docs/grammar.md §4.4, §4.5). Без неё запись
-    // удавалась бы, а обратиться к глобальной переменной было бы нельзя.
+    // Проверка та же, что у chupa_context_set_data: имя обязано быть
+    // идентификатором и не быть ключевым словом (docs/grammar.md §4.4, §4.5).
+    // Без неё запись удавалась бы, а обратиться к глобальной переменной было
+    // бы нельзя.
     struct Case {
         const char* name;
         std::size_t length;
@@ -92,13 +103,13 @@ TEST(CApiContext, ScalarSettersRejectNamesTheProgramCannotReference) {
         ASSERT_NE(ctx, nullptr) << c.why;
 
         EXPECT_FALSE(chupa_context_set_bool(ctx, c.name, c.length, true)) << c.why;
-        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+        EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NAME) << c.why;
 
         EXPECT_FALSE(chupa_context_set_number(ctx, c.name, c.length, 1.0)) << c.why;
-        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+        EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NAME) << c.why;
 
         EXPECT_FALSE(chupa_context_set_string(ctx, c.name, c.length, "v", 1)) << c.why;
-        EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME) << c.why;
+        EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NAME) << c.why;
 
         chupa_context_destroy(ctx);
     }
@@ -118,7 +129,7 @@ TEST(CApiContext, RejectedScalarSetterWritesNothing) {
     ChupaExpression* e = chupa_compile_expression(ctx, "kept", 4);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_DOUBLE_EQ(out, 7.0);
 
     chupa_expression_destroy(e);
@@ -171,7 +182,7 @@ TEST(CApiCompile, CompileExpressionFailsOnSyntaxError) {
     ASSERT_NE(ctx, nullptr);
     ChupaExpression* e = chupa_compile_expression(ctx, "1 +", 3);
     EXPECT_EQ(e, nullptr);
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_SYNTAX);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_SYNTAX);
     chupa_context_destroy(ctx);
 }
 
@@ -180,7 +191,7 @@ TEST(CApiCompile, CompileExpressionFailsOnUnknownGlobal) {
     ASSERT_NE(ctx, nullptr);
     ChupaExpression* e = chupa_compile_expression(ctx, "unknown_var", 11);
     EXPECT_EQ(e, nullptr);
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NAME);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NAME);
     chupa_context_destroy(ctx);
 }
 
@@ -191,7 +202,7 @@ TEST(CApiEval, EvalNumber) {
     ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_EQ(out, 42.0);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -204,7 +215,7 @@ TEST(CApiEval, EvalNumberFromExpression) {
     ChupaExpression* e = chupa_compile_expression(ctx, "x + 5", 5);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_EQ(out, 15.0);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -217,7 +228,7 @@ TEST(CApiEval, EvalBool) {
     ChupaExpression* e = chupa_compile_expression(ctx, "x > 5", 5);
     ASSERT_NE(e, nullptr);
     bool out = false;
-    EXPECT_EQ(chupa_eval_bool(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_bool(ctx, e, &out));
     EXPECT_TRUE(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -231,24 +242,17 @@ TEST(CApiEval, EvalString) {
     ASSERT_NE(e, nullptr);
     const char* bytes = nullptr;
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(len, 5u);
     EXPECT_EQ(std::string(bytes, len), "hello");
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
 
-TEST(CApiEval, EvalNullReturnsChupaNull) {
-    ChupaContext* ctx = chupa_context_create();
-    ASSERT_NE(ctx, nullptr);
-    EXPECT_TRUE(setGlobal(ctx, "x", "null"));
-    ChupaExpression* e = chupa_compile_expression(ctx, "x", 1);
-    ASSERT_NE(e, nullptr);
-    double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_NULL);
-    chupa_expression_destroy(e);
-    chupa_context_destroy(ctx);
-}
+// EvalNullReturnsChupaNull — subject gone: CHUPA_NULL as a three-way outcome
+// no longer exists. Its replacement is CApi.NumberShortcutTellsNullFromWrongKind
+// below, which checks the same case (evaluating a null expression through a
+// typed shortcut) against the new two-valued signature.
 
 TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
     ChupaContext* ctx = chupa_context_create();
@@ -257,8 +261,8 @@ TEST(CApiEval, EvalNumberOnStringExpressionReturnsError) {
     ChupaExpression* e = chupa_compile_expression(ctx, "name", 4);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_ERROR);
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    EXPECT_FALSE(chupa_eval_number(ctx, e, &out));
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_TYPE);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -270,7 +274,7 @@ TEST(CApiEval, EvalMemberAccess) {
     ChupaExpression* e = chupa_compile_expression(ctx, "user.age", 8);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_EQ(out, 30.0);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -284,7 +288,7 @@ TEST(CApiEval, EvalTernary) {
     ASSERT_NE(e, nullptr);
     const char* bytes = nullptr;
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(std::string(bytes, len), "big");
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -297,7 +301,7 @@ TEST(CApiEval, SetBoolThenEval) {
     ChupaExpression* e = chupa_compile_expression(ctx, "flag", 4);
     ASSERT_NE(e, nullptr);
     bool out = false;
-    EXPECT_EQ(chupa_eval_bool(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_bool(ctx, e, &out));
     EXPECT_TRUE(out);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -310,7 +314,7 @@ TEST(CApiEval, SetNumberThenEval) {
     ChupaExpression* e = chupa_compile_expression(ctx, "pi", 2);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_EQ(out, 3.14);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -324,7 +328,7 @@ TEST(CApiEval, SetStringThenEval) {
     ASSERT_NE(e, nullptr);
     const char* bytes = nullptr;
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(std::string(bytes, len), "world");
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -349,7 +353,7 @@ TEST(CApi, EvalStringGivesTheBytesWithoutOwnership) {
 
     const char* bytes = nullptr;
     size_t len = 0;
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     ASSERT_NE(bytes, nullptr);
     EXPECT_EQ(std::string(bytes, len), "привет");
 
@@ -371,12 +375,11 @@ TEST(CApi, EvalStringReturnsTheSameSliceEveryTime) {
 
     const char* first = nullptr;
     size_t firstLen = 0;
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &first, &firstLen), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &first, &firstLen));
 
     const char* second = nullptr;
     size_t secondLen = 0;
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &second, &secondLen),
-              CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &second, &secondLen));
 
     EXPECT_EQ(first, second);
     EXPECT_EQ(firstLen, secondLen);
@@ -398,7 +401,7 @@ TEST(CApi, EvalStringBytesAreCopiedBeforeTheNextCall) {
 
     const char* bytes = nullptr;
     size_t len = 0;
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     const std::string copy(bytes, len);  // копия снята немедленно
 
     // Растим пул текста так, чтобы он заведомо переехал.
@@ -411,7 +414,7 @@ TEST(CApi, EvalStringBytesAreCopiedBeforeTheNextCall) {
     EXPECT_EQ(copy, "привет");  // копия переезд пережила
 
     // А сам срез берётся заново — и он снова годен.
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(std::string(bytes, len), "привет");
 
     chupa_expression_destroy(e);
@@ -424,11 +427,12 @@ TEST(CApi, EvalStringOnNullLeavesOutputsUntouched) {
     ChupaExpression* e = chupa_compile_expression(ctx, "null", 4);
     ASSERT_NE(e, nullptr);
 
-    // Сторожевые значения: если исход Null действительно не трогает выходные
-    // параметры, они переживут вызов неизменными.
+    // Сторожевые значения: если исход "null" действительно не трогает
+    // выходные параметры, они переживут вызов неизменными.
     const char* bytes = reinterpret_cast<const char*>(1);
     size_t len = 42;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_NULL);
+    EXPECT_FALSE(chupa_eval_string(ctx, e, &bytes, &len));
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NONE);
     EXPECT_EQ(bytes, reinterpret_cast<const char*>(1));
     EXPECT_EQ(len, 42u);
 
@@ -439,20 +443,16 @@ TEST(CApi, EvalStringOnNullLeavesOutputsUntouched) {
 TEST(CApi, EvalStringOnNumberIsTypeError) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    // Корень намеренно НЕ в первом байте: раньше прокладка ставила в ошибку
-    // типа хардкод offset = 0 и на выражении вида "42" разницы было бы не
-    // видно. Теперь смещение ставит ядро — и оно настоящее.
     std::string_view src = "1 + 41";
     ChupaExpression* e = chupa_compile_expression(ctx, src.data(), src.size());
     ASSERT_NE(e, nullptr);
 
     const char* bytes = reinterpret_cast<const char*>(1);
     size_t len = 42;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_ERROR);
+    EXPECT_FALSE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(bytes, reinterpret_cast<const char*>(1));
     EXPECT_EQ(len, 42u);
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
-    EXPECT_EQ(chupa_context_error_offset(ctx), 2u);  // '+', корень выражения
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_TYPE);
 
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -468,7 +468,7 @@ TEST(CApi, EvalStringOnEmptyStringIsOkAndNotNull) {
     const char* bytes = nullptr;
     size_t len = 1;
     // не null
-    ASSERT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(len, 0u);
     // Указатель при этом не обещан: у пустой строки в пуле нечего показывать,
     // и раньше непустым он был лишь потому, что std::string::c_str() всегда
@@ -491,7 +491,7 @@ TEST(CApiRun, RunScriptSetsVariable) {
     ChupaExpression* e = chupa_compile_expression(ctx, "state.count", 11);
     ASSERT_NE(e, nullptr);
     double out = 0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_EQ(out, 42.0);
     chupa_expression_destroy(e);
     chupa_script_destroy(s);
@@ -509,7 +509,7 @@ TEST(CApiRun, RunScriptWithMemberAccess) {
     ASSERT_NE(e, nullptr);
     const char* bytes = nullptr;
     size_t len = 0;
-    EXPECT_EQ(chupa_eval_string_borrowed(ctx, e, &bytes, &len), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_string(ctx, e, &bytes, &len));
     EXPECT_EQ(std::string(bytes, len), "new");
     chupa_expression_destroy(e);
     chupa_script_destroy(s);
@@ -524,7 +524,7 @@ TEST(CApiRun, RunScriptFailsOnTypeError) {
     ChupaScript* s = chupa_compile_script(ctx, "x.name = 'bad';", 15);
     ASSERT_NE(s, nullptr);
     EXPECT_FALSE(chupa_run(ctx, s));
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_TYPE);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_TYPE);
     chupa_script_destroy(s);
     chupa_context_destroy(ctx);
 }
@@ -535,7 +535,7 @@ TEST(CApiError, NoErrorAfterSuccess) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     EXPECT_TRUE(setGlobal(ctx, "x", "42"));
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_NONE);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_NONE);
     chupa_context_destroy(ctx);
 }
 
@@ -543,13 +543,13 @@ TEST(CApiError, SyntaxErrorDetails) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     chupa_compile_expression(ctx, "1 +", 3);
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_SYNTAX);
-    size_t len = 0;
-    const char* msg = chupa_context_error(ctx, &len);
-    ASSERT_NE(msg, nullptr);
-    EXPECT_GT(len, 0u);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_SYNTAX);
+    ASSERT_NE(err.message, nullptr);
+    EXPECT_GT(err.message_len, 0u);
     // Offset should point somewhere in the source
-    EXPECT_GE(chupa_context_error_offset(ctx), 0u);
+    EXPECT_GE(err.offset, 0u);
     chupa_context_destroy(ctx);
 }
 
@@ -557,8 +557,8 @@ TEST(CApiError, DataErrorOnExpressionAsData) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     // "1 + 2" is an expression, not a literal — setVariable rejects it
-    EXPECT_FALSE(chupa_context_set(ctx, "x", 1, "1 + 2", 5));
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_DATA);
+    EXPECT_FALSE(chupa_context_set_data(ctx, "x", 1, "1 + 2", 5));
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_DATA);
     chupa_context_destroy(ctx);
 }
 
@@ -632,8 +632,8 @@ TEST(CApi, SecondCompileDoesNotBreakTheFirst) {
     // короче 23 байт, то есть оба попадали в SSO.
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    ASSERT_TRUE(chupa_context_set(ctx, "a", 1, "2", 1));
-    ASSERT_TRUE(chupa_context_set(ctx, "b", 1, "3", 1));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "a", 1, "2", 1));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "b", 1, "3", 1));
 
     ChupaExpression* first = chupa_compile_expression(ctx, "a + b", 5);
     ASSERT_NE(first, nullptr);
@@ -641,7 +641,7 @@ TEST(CApi, SecondCompileDoesNotBreakTheFirst) {
     ASSERT_NE(second, nullptr);
 
     double out = 0.0;
-    EXPECT_EQ(chupa_eval_number(ctx, first, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, first, &out));
     EXPECT_DOUBLE_EQ(out, 5.0);
 
     chupa_expression_destroy(first);
@@ -667,7 +667,7 @@ TEST(CApi, FailedCompileLeavesNothingBehind) {
     for (int i = 0; i < 1000; ++i) {
         EXPECT_EQ(chupa_compile_expression(ctx, "a..b", 4), nullptr);
     }
-    EXPECT_EQ(chupa_context_error_code(ctx), CHUPA_ERR_SYNTAX);
+    EXPECT_EQ(errorCode(ctx), CHUPA_ERR_SYNTAX);
     chupa_context_destroy(ctx);
 }
 
@@ -682,7 +682,7 @@ TEST(CApi, UnitOutlivesTheContextItWasCompiledAgainst) {
     // обратный обычному — сначала умирает контекст.
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    ASSERT_TRUE(chupa_context_set(ctx, "obj", 3, "{ 'n': 1 }", 10));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "obj", 3, "{ 'n': 1 }", 10));
 
     ChupaExpression* e = chupa_compile_expression(ctx, "obj.n + 1", 9);
     ASSERT_NE(e, nullptr);
@@ -699,7 +699,7 @@ TEST(CApi, ScriptIsOwnedByHost) {
     ASSERT_NE(ctx, nullptr);
     // Цель присваивания обязана быть Member или Index (docs/semantics.md
     // §7.2), голый идентификатор язык отвергает — отсюда объект.
-    ASSERT_TRUE(chupa_context_set(ctx, "obj", 3, "{ 'n': 1 }", 10));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "obj", 3, "{ 'n': 1 }", 10));
 
     ChupaScript* s = chupa_compile_script(ctx, "obj.n = obj.n + 1;", 18);
     ASSERT_NE(s, nullptr);
@@ -709,7 +709,7 @@ TEST(CApi, ScriptIsOwnedByHost) {
     ChupaExpression* e = chupa_compile_expression(ctx, "obj.n", 5);
     ASSERT_NE(e, nullptr);
     double out = 0.0;
-    EXPECT_EQ(chupa_eval_number(ctx, e, &out), CHUPA_OK);
+    EXPECT_TRUE(chupa_eval_number(ctx, e, &out));
     EXPECT_DOUBLE_EQ(out, 2.0);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
@@ -727,23 +727,34 @@ namespace {
 ChupaExpression* compileIn(ChupaContext* ctx, std::string_view source) {
     ChupaExpression* e =
         chupa_compile_expression(ctx, source.data(), source.size());
-    EXPECT_NE(e, nullptr) << chupa_context_error(ctx, nullptr);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_NE(e, nullptr) << err.message;
     return e;
 }
 
-std::string_view stringOf(ChupaValue v) {
+std::string_view stringOf(const ChupaValue& v) {
     const char* bytes = nullptr;
     size_t len = 0;
-    chupa_value_string_borrowed(v, &bytes, &len);
+    chupa_value_string(&v, &bytes, &len);
     return std::string_view(bytes, len);
 }
 
 ChupaValue evalValue(ChupaContext* ctx, std::string_view source) {
     ChupaExpression* e = compileIn(ctx, source);
     ChupaValue out{};
-    EXPECT_EQ(chupa_eval_value(ctx, e, &out), CHUPA_OK)
-        << chupa_context_error(ctx, nullptr);
+    ChupaError err;
+    const bool ok = chupa_eval(ctx, e, &out);
+    chupa_context_error(ctx, &err);
+    EXPECT_TRUE(ok) << err.message;
     chupa_expression_destroy(e);
+    return out;
+}
+
+/// Значение элемента массива, снятое через выходной параметр.
+ChupaValue arrayAt(const ChupaValue& v, size_t i) {
+    ChupaValue out{};
+    chupa_array_at(&v, i, &out);
     return out;
 }
 
@@ -754,26 +765,27 @@ TEST(CApiValue, ScalarsComeThroughUntouched) {
     ASSERT_NE(ctx, nullptr);
 
     const ChupaValue n = evalValue(ctx, "42");
-    EXPECT_EQ(chupa_value_kind(n), CHUPA_KIND_NUMBER);
-    EXPECT_DOUBLE_EQ(chupa_value_number(n), 42.0);
+    EXPECT_EQ(chupa_value_kind(&n), CHUPA_KIND_NUMBER);
+    EXPECT_DOUBLE_EQ(chupa_value_number(&n), 42.0);
 
     const ChupaValue b = evalValue(ctx, "1 < 2");
-    EXPECT_EQ(chupa_value_kind(b), CHUPA_KIND_BOOL);
-    EXPECT_TRUE(chupa_value_bool(b));
+    EXPECT_EQ(chupa_value_kind(&b), CHUPA_KIND_BOOL);
+    EXPECT_TRUE(chupa_value_bool(&b));
 
     chupa_context_destroy(ctx);
 }
 
-TEST(CApiValue, NullIsItsOwnOutcome) {
+TEST(CApiValue, NullIsItsOwnKind) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     ASSERT_TRUE(setGlobal(ctx, "user", "{'name': 'Вася'}"));
 
     ChupaExpression* e = compileIn(ctx, "user.missing");
     ChupaValue out{};
-    // Отдельный исход, как у типизированных вычислений: иначе два пути к
-    // одному выражению отвечали бы на отсутствие по-разному.
-    EXPECT_EQ(chupa_eval_value(ctx, e, &out), CHUPA_NULL);
+    // chupa_eval succeeds even here: null is a kind chupa_value_kind reports,
+    // not a separate outcome — the whole point of dropping ChupaStatus.
+    EXPECT_TRUE(chupa_eval(ctx, e, &out));
+    EXPECT_EQ(chupa_value_kind(&out), CHUPA_KIND_NULL);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -784,13 +796,16 @@ TEST(CApiValue, ArrayIsWalkedWithoutTheContext) {
     ASSERT_TRUE(setGlobal(ctx, "items", "[10, 'два', 30]"));
 
     const ChupaValue items = evalValue(ctx, "items");
-    ASSERT_EQ(chupa_value_kind(items), CHUPA_KIND_ARRAY);
-    ASSERT_EQ(chupa_array_count(items), 3u);
-    EXPECT_DOUBLE_EQ(chupa_value_number(chupa_array_at(items, 0)), 10.0);
-    EXPECT_EQ(stringOf(chupa_array_at(items, 1)), "два");
+    ASSERT_EQ(chupa_value_kind(&items), CHUPA_KIND_ARRAY);
+    ASSERT_EQ(chupa_array_count(&items), 3u);
+    const ChupaValue first = arrayAt(items, 0);
+    EXPECT_DOUBLE_EQ(chupa_value_number(&first), 10.0);
+    const ChupaValue second = arrayAt(items, 1);
+    EXPECT_EQ(stringOf(second), "два");
     // За концом — null, а не отказ: правило docs/semantics.md §6.1 доходит и
     // до границы.
-    EXPECT_EQ(chupa_value_kind(chupa_array_at(items, 3)), CHUPA_KIND_NULL);
+    const ChupaValue pastEnd = arrayAt(items, 3);
+    EXPECT_EQ(chupa_value_kind(&pastEnd), CHUPA_KIND_NULL);
 
     chupa_context_destroy(ctx);
 }
@@ -801,18 +816,28 @@ TEST(CApiValue, ObjectIsReadByKeyAndByPosition) {
     ASSERT_TRUE(setGlobal(ctx, "user", "{'age': 30, 'name': 'Вася'}"));
 
     const ChupaValue user = evalValue(ctx, "user");
-    ASSERT_EQ(chupa_value_kind(user), CHUPA_KIND_OBJECT);
-    ASSERT_EQ(chupa_object_count(user), 2u);
-    EXPECT_EQ(stringOf(chupa_object_get(user, "name", 4)), "Вася");
-    EXPECT_DOUBLE_EQ(chupa_value_number(chupa_object_get(user, "age", 3)), 30.0);
-    EXPECT_EQ(chupa_value_kind(chupa_object_get(user, "нет", 6)),
-              CHUPA_KIND_NULL);
+    ASSERT_EQ(chupa_value_kind(&user), CHUPA_KIND_OBJECT);
+    ASSERT_EQ(chupa_object_count(&user), 2u);
+
+    ChupaValue name{};
+    ASSERT_TRUE(chupa_object_get(&user, "name", 4, &name));
+    EXPECT_EQ(stringOf(name), "Вася");
+
+    ChupaValue age{};
+    ASSERT_TRUE(chupa_object_get(&user, "age", 3, &age));
+    EXPECT_DOUBLE_EQ(chupa_value_number(&age), 30.0);
+
+    // Отсутствующий ключ теперь различим: chupa_object_get отдаёт false и
+    // *out не трогает, а не null-значение, как раньше — распаковка выходного
+    // параметра сама по себе дала эту возможность.
+    ChupaValue missing{};
+    EXPECT_FALSE(chupa_object_get(&user, "нет", 6, &missing));
 
     const char* key = nullptr;
     size_t len = 0;
-    chupa_object_key_at(user, 0, &key, &len);
+    chupa_object_key_at(&user, 0, &key, &len);
     EXPECT_EQ(std::string_view(key, len), "age");
-    chupa_object_key_at(user, 9, &key, &len);
+    chupa_object_key_at(&user, 9, &key, &len);
     EXPECT_EQ(len, 0u);
 
     chupa_context_destroy(ctx);
@@ -826,18 +851,18 @@ TEST(CApiValue, ComputedStringIsMaterialisedSoItCanBeRetained) {
 
     ChupaExpression* e = compileIn(ctx, "format('${}-${}', 1, 2)");
     ChupaValue text{};
-    ASSERT_EQ(chupa_eval_value(ctx, e, &text), CHUPA_OK);
-    chupa_value_retain(text);
+    ASSERT_TRUE(chupa_eval(ctx, e, &text));
+    chupa_value_retain(&text);
     chupa_expression_destroy(e);
 
     // Любая следующая операция сбрасывает арену целиком.
     ChupaExpression* other = compileIn(ctx, "1 + 1");
     double ignored = 0.0;
-    ASSERT_EQ(chupa_eval_number(ctx, other, &ignored), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval_number(ctx, other, &ignored));
     chupa_expression_destroy(other);
 
     EXPECT_EQ(stringOf(text), "1-2");
-    chupa_value_release(text);
+    chupa_value_release(&text);
     chupa_context_destroy(ctx);
 }
 
@@ -850,17 +875,17 @@ TEST(CApiValue, UnretainedValueIsGoneAfterTheNextOperation) {
 
     ChupaExpression* e = compileIn(ctx, "[1, 2, 3]");
     ChupaValue kept{};
-    ASSERT_EQ(chupa_eval_value(ctx, e, &kept), CHUPA_OK);
-    chupa_value_retain(kept);
+    ASSERT_TRUE(chupa_eval(ctx, e, &kept));
+    chupa_value_retain(&kept);
 
     ChupaValue lent{};
-    ASSERT_EQ(chupa_eval_value(ctx, e, &lent), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval(ctx, e, &lent));
     // Вторая выдача не удержана; третья операция её отпустит, а удержанная
     // останется.
-    ASSERT_EQ(chupa_eval_value(ctx, e, &lent), CHUPA_OK);
+    ASSERT_TRUE(chupa_eval(ctx, e, &lent));
 
-    EXPECT_EQ(chupa_array_count(kept), 3u);
-    chupa_value_release(kept);
+    EXPECT_EQ(chupa_array_count(&kept), 3u);
+    chupa_value_release(&kept);
     chupa_expression_destroy(e);
     chupa_context_destroy(ctx);
 }
@@ -875,18 +900,23 @@ TEST(CApiValue, RetainedObjectOutlivesTheContext) {
         ASSERT_TRUE(setGlobal(ctx, "user",
                               "{'name': 'Вася', 'tags': ['a', 'b']}"));
         user = evalValue(ctx, "user");
-        chupa_value_retain(user);
+        chupa_value_retain(&user);
         chupa_context_destroy(ctx);
     }
 
-    ASSERT_EQ(chupa_value_kind(user), CHUPA_KIND_OBJECT);
-    EXPECT_EQ(stringOf(chupa_object_get(user, "name", 4)), "Вася");
-    const ChupaValue tags = chupa_object_get(user, "tags", 4);
-    ASSERT_EQ(chupa_value_kind(tags), CHUPA_KIND_ARRAY);
-    ASSERT_EQ(chupa_array_count(tags), 2u);
-    EXPECT_EQ(stringOf(chupa_array_at(tags, 1)), "b");
+    ASSERT_EQ(chupa_value_kind(&user), CHUPA_KIND_OBJECT);
+    ChupaValue name{};
+    ASSERT_TRUE(chupa_object_get(&user, "name", 4, &name));
+    EXPECT_EQ(stringOf(name), "Вася");
 
-    chupa_value_release(user);
+    ChupaValue tags{};
+    ASSERT_TRUE(chupa_object_get(&user, "tags", 4, &tags));
+    ASSERT_EQ(chupa_value_kind(&tags), CHUPA_KIND_ARRAY);
+    ASSERT_EQ(chupa_array_count(&tags), 2u);
+    const ChupaValue second = arrayAt(tags, 1);
+    EXPECT_EQ(stringOf(second), "b");
+
+    chupa_value_release(&user);
 }
 
 TEST(CApiValue, NestedValueCanBeKeptWithoutItsParent) {
@@ -898,22 +928,117 @@ TEST(CApiValue, NestedValueCanBeKeptWithoutItsParent) {
         ASSERT_NE(ctx, nullptr);
         ASSERT_TRUE(setGlobal(ctx, "user", "{'tags': ['a', 'b']}"));
         const ChupaValue user = evalValue(ctx, "user");
-        tags = chupa_object_get(user, "tags", 4);
-        chupa_value_retain(tags);
+        ASSERT_TRUE(chupa_object_get(&user, "tags", 4, &tags));
+        chupa_value_retain(&tags);
         chupa_context_destroy(ctx);
     }
-    ASSERT_EQ(chupa_array_count(tags), 2u);
-    EXPECT_EQ(stringOf(chupa_array_at(tags, 0)), "a");
-    chupa_value_release(tags);
+    ASSERT_EQ(chupa_array_count(&tags), 2u);
+    const ChupaValue first = arrayAt(tags, 0);
+    EXPECT_EQ(stringOf(first), "a");
+    chupa_value_release(&tags);
 }
 
 TEST(CApiValue, RetainAndReleaseAreNoOpsOnScalars) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
     const ChupaValue n = evalValue(ctx, "42");
-    chupa_value_retain(n);
-    chupa_value_release(n);
-    chupa_value_release(n);   // ссылок нет, отпускать нечего
-    EXPECT_DOUBLE_EQ(chupa_value_number(n), 42.0);
+    chupa_value_retain(&n);
+    chupa_value_release(&n);
+    chupa_value_release(&n);   // ссылок нет, отпускать нечего
+    EXPECT_DOUBLE_EQ(chupa_value_number(&n), 42.0);
     chupa_context_destroy(ctx);
+}
+
+// ─── Step 1: new by-address / two-valued / single-error-struct surface ─────
+
+/// Bytes borrowed from a value stay readable after the function that produced
+/// them has returned. Defect В3: while the value was passed by copy, the bytes
+/// of a short string would live inside that copy — a parameter that dies on
+/// return — and the caller would read a dead stack frame.
+///
+/// This test passes today whether or not the by-address fix is right, because
+/// strings are still boxes (task 5) and their bytes never lived inside the
+/// 16-byte value at all. It gets its teeth in task 8, when a short string's
+/// bytes move inside Value itself — do not delete it as pointless before then.
+TEST(CApi, StringBytesOutliveTheCallThatProducedThem) {
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_TRUE(chupa_context_set_data(ctx, "s", 1, "'short'", 7));
+
+    ChupaExpression* e = chupa_compile_expression(ctx, "s", 1);
+    ASSERT_NE(e, nullptr);
+
+    ChupaValue v;
+    ASSERT_TRUE(chupa_eval(ctx, e, &v));
+    ASSERT_EQ(chupa_value_kind(&v), CHUPA_KIND_STRING);
+
+    const char* bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string(&v, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len), "short");
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+/// Null is a kind, not an outcome: chupa_eval succeeds and reports it.
+TEST(CApi, EvalReportsNullAsAKind) {
+    ChupaContext* ctx = chupa_context_create();
+    ChupaExpression* e = chupa_compile_expression(ctx, "null", 4);
+    ASSERT_NE(e, nullptr);
+
+    ChupaValue v;
+    EXPECT_TRUE(chupa_eval(ctx, e, &v));
+    EXPECT_EQ(chupa_value_kind(&v), CHUPA_KIND_NULL);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+/// The shortcuts keep the three-way answer, but in the error rather than in
+/// the return: CHUPA_ERR_NONE means the expression evaluated to null,
+/// CHUPA_ERR_TYPE means it produced another kind.
+TEST(CApi, NumberShortcutTellsNullFromWrongKind) {
+    ChupaContext* ctx = chupa_context_create();
+
+    ChupaExpression* nul = chupa_compile_expression(ctx, "null", 4);
+    ChupaExpression* text = chupa_compile_expression(ctx, "'x'", 3);
+    ASSERT_NE(nul, nullptr);
+    ASSERT_NE(text, nullptr);
+
+    double out = 1.0;
+    ChupaError err;
+
+    EXPECT_FALSE(chupa_eval_number(ctx, nul, &out));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NONE);
+    EXPECT_EQ(out, 1.0);
+
+    EXPECT_FALSE(chupa_eval_number(ctx, text, &out));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_TYPE);
+
+    chupa_expression_destroy(nul);
+    chupa_expression_destroy(text);
+    chupa_context_destroy(ctx);
+}
+
+/// A unit evaluated on a foreign context fails with CHUPA_ERR_USAGE instead of
+/// reading a neighbouring variable's slot (defect В2, task 2, seen from C).
+TEST(CApi, RefusesAUnitFromAnotherContext) {
+    ChupaContext* home = chupa_context_create();
+    ChupaContext* other = chupa_context_create();
+    ASSERT_TRUE(chupa_context_set_number(home, "x", 1, 42.0));
+
+    ChupaExpression* e = chupa_compile_expression(home, "x", 1);
+    ASSERT_NE(e, nullptr);
+
+    double out = 0.0;
+    EXPECT_FALSE(chupa_eval_number(other, e, &out));
+    ChupaError err;
+    chupa_context_error(other, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_USAGE);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(other);
+    chupa_context_destroy(home);
 }

@@ -58,6 +58,32 @@ typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
 
+/* ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ OWNERSHIP — three rules, and this header holds nothing else.         ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ *
+ * 1. A VALUE IS BORROWED UNTIL YOU RETAIN IT.
+ *    chupa_eval yields a value that stays alive until the next call on that
+ *    context. To keep it longer, call chupa_value_retain, and
+ *    chupa_value_release when done.
+ *
+ * 2. BYTES ARE BORROWED FROM THE VALUE WHOSE ADDRESS YOU PASSED.
+ *    A string's bytes and an object's key bytes live exactly as long as YOUR
+ *    ChupaValue variable does — the one whose address went into
+ *    chupa_value_string. They are NOT NUL-terminated; use the length.
+ *
+ * 3. A NESTED VALUE IS BORROWED FROM ITS PARENT.
+ *    chupa_array_at and its neighbours take no reference of their own. A
+ *    nested value that must outlive the aggregate holding it needs an explicit
+ *    chupa_value_retain.
+ *
+ * Every function over a value takes it BY ADDRESS — const ChupaValue * — with
+ * no exceptions. A short string's bytes live inside the value itself, so a
+ * by-copy parameter would hand back a pointer into a copy that dies when the
+ * function returns. One way of passing removes that mistake from the set of
+ * expressible ones rather than from the set of documented ones.
+ */
+
 typedef enum ChupaKind {
     CHUPA_KIND_NULL   = 0,
     CHUPA_KIND_BOOL   = 1,
@@ -66,12 +92,6 @@ typedef enum ChupaKind {
     CHUPA_KIND_ARRAY  = 4,
     CHUPA_KIND_OBJECT = 5
 } ChupaKind;
-
-typedef enum ChupaStatus {
-    CHUPA_OK    = 0,
-    CHUPA_NULL  = 1,
-    CHUPA_ERROR = 2
-} ChupaStatus;
 
 typedef enum ChupaErrorCode {
     CHUPA_ERR_NONE = 0,
@@ -84,15 +104,37 @@ typedef enum ChupaErrorCode {
     CHUPA_ERR_MEMORY
 } ChupaErrorCode;
 
+/* One call, one struct. Three separate accessors used to answer one question
+ * in three round trips, and a caller who read the code but not the offset got
+ * a half-answer. */
+typedef struct ChupaError {
+    ChupaErrorCode code;         /* CHUPA_ERR_NONE when the last call succeeded */
+    size_t         offset;       /* byte offset into the compiled source        */
+    const char    *message;      /* a process-lifetime string literal — never
+                                   * allocated, so it outlives ctx itself, not
+                                   * merely the next call on it              */
+    size_t         message_len;
+} ChupaError;
+
+/* Reports the outcome of the last call made on ctx. code is CHUPA_ERR_NONE
+ * when that call succeeded; offset and message are meaningful only when it
+ * did not. */
+CHUPA_API void chupa_context_error(const ChupaContext *ctx, ChupaError *out);
+
 CHUPA_API const char *chupa_version(void);
 
 CHUPA_API ChupaContext *CHUPA_NULLABLE chupa_context_create(void);
 CHUPA_API void chupa_context_destroy(ChupaContext *CHUPA_NULLABLE ctx);
 
+/* Accepts a literal's SOURCE TEXT, not a value — chupa_context_set_data
+ * parses `text` as a literal expression and rejects anything else with
+ * CHUPA_ERR_DATA. The old name `chupa_context_set` said nothing about that;
+ * the setters below it take an already-parsed value and need no parsing at
+ * all. */
 CHUPA_API CHUPA_MUST_USE bool
-chupa_context_set(ChupaContext *ctx,
-                  const char *name, size_t name_len,
-                  const char *text, size_t text_len);
+chupa_context_set_data(ChupaContext *ctx,
+                       const char *name, size_t name_len,
+                       const char *text, size_t text_len);
 
 /* Typed setters for scalars — no parsing, the value is passed as is.
  *
@@ -164,7 +206,7 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
  * Nothing stops a unit from being destroyed before the context it was
  * compiled against — it holds no reference to it. That is not permission to
  * destroy a unit while a value obtained from evaluating it is still in use
- * unretained: see the LIFETIME note near chupa_eval_value.
+ * unretained: see the LIFETIME note near chupa_eval.
  *
  * A unit MUST be evaluated on the very context it was compiled against.
  * Every evaluation checks this — in release builds too — and a mismatch fails
@@ -175,154 +217,106 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
 CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 
-CHUPA_API CHUPA_MUST_USE ChupaStatus
-chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
-
-CHUPA_API CHUPA_MUST_USE ChupaStatus
-chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
-
-/* Evaluates the expression as a string.
+/* ─── Evaluation ──────────────────────────────────────────────────────────
  *
- * On CHUPA_OK, *bytes points at the string's bytes inside the engine's own
- * text pool and *len is their count. Nothing is allocated and nothing has to
- * be released. On CHUPA_NULL and CHUPA_ERROR neither output is touched.
+ * ChupaValue is a plain 16-byte struct. It is not a handle into a table and
+ * it is not an allocation: it is the engine's own value representation,
+ * handed over unchanged. Producing one costs nothing.
  *
- * ╔══════════════════════════════════════════════════════════════════════╗
- * ║ The bytes are BORROWED. They stay valid until the next call that     ║
- * ║ touches this context, and not one moment longer. Copy them first.    ║
- * ╚══════════════════════════════════════════════════════════════════════╝
- * Any call that writes into the pool — chupa_context_set*, compiling a unit
- * with string literals in it, another evaluation that builds a string — may
- * move the pool and leave the pointer dangling. Destroying the context frees
- * the pool outright.
+ * chupa_eval yields a value of ANY kind — including an array or an object —
+ * and lets the host walk it. None of the walking functions below take a
+ * ChupaContext *. That is not a saved parameter, it is the whole point: an
+ * aggregate carries its own storage and its own key names, so it can be read
+ * when the context that produced it is already destroyed.
  *
- * A computed string — anything format() or str() built — lives in the
- * temporary region, which the next evaluation or chupa_run frees WHOLE before
- * it starts. That is not a pool move that might leave the bytes readable by
- * luck: the region is gone. The window has always been "until the next call";
- * this is what now closes it.
+ * LIFETIME. The value written to *out is BORROWED — rule 1 in the header's
+ * opening block. To keep it longer, chupa_value_retain / _release, which are
+ * no-ops on scalars.
  *
- * This used to hand ownership over instead, through a heap-allocated
- * ChupaString the caller destroyed. It bought exactly one guarantee — free
- * destruction order — and no caller ever wanted it: every one of them copies
- * the bytes into its own string immediately, so the owning string existed
- * only to be duplicated and thrown away. Two allocations, a copy and two
- * frees per string read, for a promise nobody collected.
- *
- * The bytes are NOT NUL-terminated: they are a slice of a packed pool, and
- * what follows them is the next string. Use len.
- *
- * An empty result is CHUPA_OK with *len == 0, and *bytes may be NULL — an
- * empty string has nothing to point at. It is still a string, not a null.
- *
- * The _borrowed suffix is in the name and not only in this comment because
- * const char ** and size_t * say nothing about lifetime, so the one thing a
- * caller can get catastrophically wrong is the one thing the signature keeps
- * quiet about. Its C++ counterpart, Expression::evalString, needs no such
- * suffix: it hands back a std::string_view, and non-ownership is what that
- * type means. */
-CHUPA_API CHUPA_MUST_USE ChupaStatus
-chupa_eval_string_borrowed(ChupaContext *ctx, ChupaExpression *e,
-                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
-                           size_t *len);
-
-/* ─── Values: aggregates crossing the boundary ───────────────────────────────
- *
- * Everything above returns a scalar by copy. This section returns a value of
- * ANY kind — including an array or an object — and lets the host walk it.
- *
- * ChupaValue is a plain 16-byte struct passed BY VALUE. It is not a handle
- * into a table and it is not an allocation: it is the engine's own value
- * representation, handed over unchanged. Producing one costs nothing.
- *
- * ╔══════════════════════════════════════════════════════════════════════╗
- * ║ None of the walking functions take a ChupaContext *. That is not a   ║
- * ║ saved parameter, it is the whole point: an aggregate carries its own ║
- * ║ storage and its own key names, so it can be read when the context    ║
- * ║ that produced it is already destroyed.                               ║
- * ╚══════════════════════════════════════════════════════════════════════╝
- *
- * LIFETIME. A value returned by chupa_eval_value is BORROWED, exactly like
- * the bytes from chupa_eval_string_borrowed: the only reference to it is the
- * engine's deferred-release list, and the next operation on the context drops
- * that reference. To keep it longer — across frames, into a host object —
- * call chupa_value_retain, and chupa_value_release when done. Retain/release
- * must be balanced; both are no-ops on scalars, which reference nothing.
- *
- * Nested values obtained from chupa_array_at, chupa_object_value_at and
- * chupa_object_get are borrowed from their parent and take no reference of
- * their own: they live as long as the aggregate holding them. Retain one only
- * if it must outlive its parent.
- *
- * Key and string bytes are borrowed from the value that yielded them and stay
- * valid as long as that value does — which, for a retained value, is as long
- * as the host keeps it. They are NOT NUL-terminated.
- *
- * A bare string-literal result is a second, narrower case: its bytes belong
- * to the compiled unit, not to the context, so destroying the ChupaExpression
- * or ChupaScript that produced it ends the life of any un-retained value read
- * from it — even though the context the unit was compiled against is still
- * alive. Recompiling into that same unit does the same, because compiling
- * discards what the unit held before. chupa_value_retain covers this case
- * exactly as it covers every other borrowed value. */
-
+ * A bare string-literal result is a narrower case on top of that: its bytes
+ * belong to the compiled unit, not to the context, so destroying the
+ * ChupaExpression or ChupaScript that produced it ends the life of any
+ * un-retained value read from it — even though the context the unit was
+ * compiled against is still alive. Recompiling into that same unit does the
+ * same, because compiling discards what the unit held before.
+ * chupa_value_retain covers this case exactly as it covers every other
+ * borrowed value. */
 typedef struct ChupaValue { uint64_t _bits[2]; } ChupaValue;
 
-/* Evaluates to a value of any kind.
- *
- * A computed string — anything format() or str() built — is materialised here
- * rather than left in the temporary region, because a region offset cannot be
- * retained and chupa_value_retain would otherwise be a silent lie. That costs
- * one allocation; the cheap path for strings is still
- * chupa_eval_string_borrowed, which allocates nothing.
- *
- * On CHUPA_NULL and CHUPA_ERROR *out is not touched. */
-CHUPA_API CHUPA_MUST_USE ChupaStatus
-chupa_eval_value(ChupaContext *ctx, ChupaExpression *e, ChupaValue *out);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_eval(ChupaContext *ctx, ChupaExpression *e, ChupaValue *out);
 
-CHUPA_API ChupaKind chupa_value_kind(ChupaValue v);
+CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
+
+/* Shortcuts. Same semantics as chupa_eval followed by a kind check, in one
+ * crossing of the C boundary. They exist because the constant and variable
+ * cases are the ones a scrolling frame runs thousands of times.
+ *
+ * Return false when no value of that kind was produced. The error tells which:
+ *   CHUPA_ERR_NONE   the expression evaluated to null
+ *   CHUPA_ERR_TYPE   it produced a value of another kind
+ *   anything else    evaluation failed
+ * On false, *out (and, for the string shortcut, *bytes and *len) is left
+ * untouched.
+ *
+ * chupa_eval_string's bytes are borrowed from the Context, not from the
+ * caller's own ChupaValue — there is no host-owned ChupaValue in this call at
+ * all — so they stay valid until the next call on ctx (rule 1, applied to a
+ * value the Context itself is holding on the caller's behalf). They are NOT
+ * NUL-terminated. */
+CHUPA_API CHUPA_MUST_USE bool
+chupa_eval_number(ChupaContext *ctx, ChupaExpression *e, double *out);
+
+CHUPA_API CHUPA_MUST_USE bool
+chupa_eval_bool(ChupaContext *ctx, ChupaExpression *e, bool *out);
+
+CHUPA_API CHUPA_MUST_USE bool
+chupa_eval_string(ChupaContext *ctx, ChupaExpression *e,
+                  const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                  size_t *len);
+
+/* ─── Values: every one of these takes the value BY ADDRESS ─────────────── */
+
+CHUPA_API ChupaKind chupa_value_kind(const ChupaValue *v);
 
 /* Precondition: chupa_value_kind(v) == CHUPA_KIND_BOOL / _NUMBER. */
-CHUPA_API bool   chupa_value_bool  (ChupaValue v);
-CHUPA_API double chupa_value_number(ChupaValue v);
+CHUPA_API bool   chupa_value_bool  (const ChupaValue *v);
+CHUPA_API double chupa_value_number(const ChupaValue *v);
 
 /* Precondition: chupa_value_kind(v) == CHUPA_KIND_STRING.
- * An empty string yields *len == 0 and *bytes possibly NULL. */
-CHUPA_API void chupa_value_string_borrowed(ChupaValue v,
-                                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
-                                           size_t *len);
+ * An empty string yields *len == 0 and *bytes possibly NULL. Bytes are
+ * borrowed from *v — rule 2. */
+CHUPA_API void chupa_value_string(const ChupaValue *v,
+                                  const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                                  size_t *len);
 
 /* Precondition: chupa_value_kind(v) == CHUPA_KIND_ARRAY.
- * chupa_array_at yields a null value past the end. */
-CHUPA_API size_t     chupa_array_count(ChupaValue v);
-CHUPA_API ChupaValue chupa_array_at   (ChupaValue v, size_t i);
+ * Past the end, *out is set to null (docs/semantics.md 6.1) rather than
+ * failing — chupa_array_at never signals a range error. */
+CHUPA_API size_t chupa_array_count(const ChupaValue *v);
+CHUPA_API void   chupa_array_at   (const ChupaValue *v, size_t i, ChupaValue *out);
 
 /* Precondition: chupa_value_kind(v) == CHUPA_KIND_OBJECT.
  *
  * Enumeration order is not promised (docs/semantics.md 2.1). chupa_object_get
- * yields a null value when the key is absent — which does not distinguish an
- * absent key from one holding null; that distinction has no C API yet.
- * chupa_object_key_at yields *len == 0 past the end. */
-CHUPA_API size_t     chupa_object_count   (ChupaValue v);
-CHUPA_API void       chupa_object_key_at  (ChupaValue v, size_t i,
-                                           const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
-                                           size_t *len);
-CHUPA_API ChupaValue chupa_object_value_at(ChupaValue v, size_t i);
-CHUPA_API ChupaValue chupa_object_get     (ChupaValue v,
-                                           const char *key, size_t key_len);
+ * returns false and leaves *out untouched when the key is absent, and true
+ * with *out written when it is present — including a key present with the
+ * value null, which the old by-value signature could not tell apart from
+ * absent. chupa_object_key_at yields *len == 0 past the end. */
+CHUPA_API size_t chupa_object_count   (const ChupaValue *v);
+CHUPA_API void   chupa_object_key_at  (const ChupaValue *v, size_t i,
+                                       const char *CHUPA_NULLABLE *CHUPA_NONNULL bytes,
+                                       size_t *len);
+CHUPA_API void   chupa_object_value_at(const ChupaValue *v, size_t i, ChupaValue *out);
+CHUPA_API CHUPA_MUST_USE bool
+chupa_object_get(const ChupaValue *v, const char *key, size_t key_len,
+                 ChupaValue *out);
 
 /* Reference counting. Both are no-ops on scalars and on values that reference
  * nothing counted. Releasing more than was retained corrupts the engine's
  * bookkeeping; debug builds trap on it. */
-CHUPA_API void chupa_value_retain (ChupaValue v);
-CHUPA_API void chupa_value_release(ChupaValue v);
-
-CHUPA_API CHUPA_MUST_USE bool chupa_run(ChupaContext *ctx, ChupaScript *script);
-
-CHUPA_API ChupaErrorCode chupa_context_error_code  (const ChupaContext *ctx);
-CHUPA_API size_t         chupa_context_error_offset(const ChupaContext *ctx);
-CHUPA_API const char *CHUPA_NULLABLE
-chupa_context_error(const ChupaContext *ctx, size_t *CHUPA_NULLABLE len);
+CHUPA_API void chupa_value_retain (const ChupaValue *v);
+CHUPA_API void chupa_value_release(const ChupaValue *v);
 
 CHUPA_NONNULL_END
 

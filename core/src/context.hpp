@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <cstddef>
 #include <string_view>
 
@@ -29,9 +30,20 @@ namespace CS {
 /// Не копируется и не перемещается: значения адресуют пулы **этого**
 /// хранилища, и второй экземпляр той же начинки означал бы два владельца
 /// одних данных.
+///
+/// LAYOUT (Р9) — what this Context owns, beyond store_ and exec_:
+///   lastResult_   ROOT. Holds one reference from keepResult() until the
+///                 next beginOperation(), or forever if the Context is
+///                 destroyed first — the destructor releases it explicitly.
 class Context {
    public:
     Context() = default;
+
+    /// Releases lastResult_ (Р9): without this, a Context destroyed while its
+    /// result slot holds a reference leaks the box it points at — the same
+    /// leak beginOperation prevents on every ordinary boundary, except there
+    /// is no next boundary to drain it at.
+    ~Context() { detail::releaseValue(lastResult_); }
 
     Context(const Context &) = delete;
     Context &operator=(const Context &) = delete;
@@ -64,6 +76,20 @@ class Context {
     /// Expression::evalString целиком.
     EvalStatus evalString(const Expression &expr, std::string_view *out,
                           Diagnostic &diag);
+
+    /// Keeps a value alive until the next operation boundary and returns a
+    /// reference to the STORED copy — the one whose address the caller may
+    /// borrow bytes out of.
+    ///
+    /// Returns a reference, not a value: bytes borrowed from a returned copy
+    /// would die with that copy at the end of the caller's full expression.
+    const Value &keepResult(Value v) {
+        assert(lastResult_.kind() == Value::Kind::Null &&
+               "the boundary must have cleared the previous result");
+        detail::retainValue(v);
+        lastResult_ = v;
+        return lastResult_;
+    }
 
     /// Запись глобальной переменной от хоста.
     ///
@@ -149,10 +175,24 @@ class Context {
     /// (docs/backlog.md [B57]).
     void beginOperation() noexcept {
         exec_.deferred().drain();
+        detail::releaseValue(lastResult_);
+        lastResult_ = Value::null();
     }
 
     Store store_;
     Execution exec_{store_};
+
+    /// The value the last string shortcut borrowed its bytes from.
+    ///
+    /// A ROOT: it holds one reference, taken in keepResult and dropped at the
+    /// next operation boundary. It exists for chupa_eval_string, which hands
+    /// the host a pointer to the result's bytes: for a short string those
+    /// bytes live inside the value itself, so a local variable inside
+    /// c_api.cpp would die on return and take them with it. The header's
+    /// promise — "the bytes stay valid until the next call that touches this
+    /// context" — is met here literally, and now for one reason instead of
+    /// three.
+    Value lastResult_ = Value::null();
 };
 
 }  // namespace CS

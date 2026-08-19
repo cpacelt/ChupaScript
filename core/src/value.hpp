@@ -1,6 +1,8 @@
 #pragma once
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <string_view>
 #include <type_traits>
 
 namespace CS {
@@ -31,120 +33,204 @@ using GlobalSlot = std::uint32_t;
 /// Имени нет. Значением ячейки быть не может: столько их не бывает.
 inline constexpr GlobalSlot kNoGlobalSlot = 0xffffffffu;
 
-/// A ChupaScript value — one of the six kinds in docs/semantics.md §2.1.
+/// A ChupaScript value: sixteen bytes, trivially copyable, self-contained.
 ///
-/// A String, Object or Array is a pointer to a reference-counted box
-/// (detail::Box and its subtypes in box.hpp): such a value is self-contained
-/// and reads without any Store at all. There is no other way to address a
-/// string, object or array any more — the arena-offset encoding this class
-/// used to carry for temporary strings is gone; every string is a box from
-/// the moment it exists.
+///         0        1                                              15
+///       ┌────┬────────────────────────────────────────────────────┐
+/// Inline│ tag│ b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14  │  string <= 15
+///       └────┴────────────────────────────────────────────────────┘
+///       ┌────┬───────────────────┬───────────────────────────────┐
+/// Number│ tag│      padding      │            double             │
+///       └────┴───────────────────┴───────────────────────────────┘
+///       ┌────┬───────────────────┬───────────────────────────────┐
+/// Boxed │ tag│      padding      │           Box *               │  long string,
+///       └────┴───────────────────┴───────────────────────────────┘  array, object
+///       ┌────┬─┐
+/// Bool  │ tag│b│                                    Null: the tag alone
+///       └────┴─┘
 ///
-/// Layout and rationale:
-/// docs/superpowers/specs/2026-08-11-chupascript-values-design.md §4.
+/// The tag byte:
+///
+///    bit  7   6 5 4 3   2 1 0
+///         │   └───┬───┘ └─┬─┘
+///         │       │       └── kind: Null 0, Boolean 1, Number 2,
+///         │       │            String 3, Object 4, Array 5
+///         │       └────────── inline string length, 0..15; meaningful only
+///         │                    when the kind is String
+///         └────────────────── string is inline (1) or boxed (0); meaningful
+///                              only when the kind is String
+///
+/// Self-contained is the one rule of the memory model: a value can be read
+/// anywhere, at any time, including after the Context that produced it has
+/// been destroyed. A short string carries its bytes; a long string and an
+/// aggregate carry a pointer to a reference-counted box, and the box carries
+/// its bytes and — for an object — its own field-name table.
+///
+/// INVARIANT: in an inline string, the bytes past the length are zero. That is
+/// what makes comparing two inline strings a comparison of two eight-byte
+/// words, with no length to consult and no memcmp over a variable range.
+///
+/// NaN-boxing was rejected permanently (design document Р2): eight bytes are
+/// spent entirely on the double and the tags, leaving no room for string
+/// bytes, and the BDUI measurements name strings as the only place the engine
+/// loses.
 class Value {
    public:
-    /// Вид значения. Закрытый список из docs/semantics.md §2.1.
-    enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
+    enum class Kind : std::uint8_t {
+        Null = 0, Boolean = 1, Number = 2, String = 3, Object = 4, Array = 5
+    };
 
-    [[nodiscard]] static Value null() noexcept {
-        Value v;
-        v.kind_ = Kind::Null;
-        return v;
-    }
+    /// The longest string that fits inside a value: sixteen bytes minus the
+    /// tag.
+    static constexpr std::size_t kInlineCapacity = 15;
+
+    [[nodiscard]] static Value null() noexcept { return Value{}; }
 
     [[nodiscard]] static Value boolean(bool value) noexcept {
         Value v;
-        v.kind_ = Kind::Boolean;
-        v.boolean_ = value;
+        v.wide_.tag = tagOf(Kind::Boolean);
+        v.wide_.flag = value;
         return v;
     }
 
     [[nodiscard]] static Value number(double value) noexcept {
         Value v;
-        v.kind_ = Kind::Number;
-        v.number_ = value;
+        v.wide_.tag = tagOf(Kind::Number);
+        v.wide_.number = value;
         return v;
     }
 
-    [[nodiscard]] Kind kind() const noexcept { return kind_; }
-
-    /// Коробка, на которую значение ссылается.
-    /// Предусловие: referencesBox().
-    [[nodiscard]] detail::Box *box() const noexcept {
-        assert(referencesBox());
-        return box_;
+    /// A string short enough to live inside the value.
+    /// Precondition: bytes.size() <= kInlineCapacity.
+    [[nodiscard]] static Value inlineString(std::string_view bytes) noexcept {
+        assert(bytes.size() <= kInlineCapacity);
+        // The default constructor value-initialises wide_, which zeroes all
+        // sixteen bytes including the padding — so every byte past the length
+        // is already zero, which is the invariant the equality fast path
+        // stands on.
+        Value v;
+        v.inline_.tag = static_cast<std::uint8_t>(
+            tagOf(Kind::String) |
+            (static_cast<std::uint8_t>(bytes.size()) << kLengthShift) |
+            kInlineFlag);
+        if (!bytes.empty()) {
+            std::memcpy(v.inline_.bytes, bytes.data(), bytes.size());
+        }
+        return v;
     }
 
-    /// Ссылается ли значение на коробку. У скаляров коробки нет: копия числа
-    /// ни с какой коробкой не связана.
-    [[nodiscard]] bool referencesBox() const noexcept {
-        return kind_ == Kind::String || kind_ == Kind::Object || kind_ == Kind::Array;
-    }
-
-    /// Предусловие: kind() == Kind::Boolean.
-    [[nodiscard]] bool booleanValue() const noexcept {
-        assert(kind_ == Kind::Boolean);
-        return boolean_;
-    }
-
-    /// Предусловие: kind() == Kind::Number.
-    [[nodiscard]] double numberValue() const noexcept {
-        assert(kind_ == Kind::Number);
-        return number_;
-    }
-
-    /// Один ли это агрегат — сравнивает вид и адрес коробки.
-    ///
-    /// У скаляров идентичности нет (docs/semantics.md §5.4), для них всегда
-    /// false, в том числе при сравнении значения с самим собой.
-    [[nodiscard]] bool sameAggregate(Value other) const noexcept {
-        if (kind_ != other.kind_) { return false; }
-        if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
-        return box_ == other.box_;
-    }
-
-    // ─── сборка значения из коробки ───
-    //
-    // Открыты: строку, массив и объект собирает только код, у которого уже
-    // есть настоящая коробка нужного типа — а получить такую можно только у
-    // detail::makeStringBox/makeArrayBox/makeObjectBox. Тип аргумента и есть
-    // защита от значения, указывающего в произвольное место.
-
+    /// A string too long to live inside the value. The box carries its own
+    /// length; the tag's length field stays zero and is never read for a boxed
+    /// string.
     [[nodiscard]] static Value string(detail::StringBox *box) noexcept {
         Value v;
-        v.kind_ = Kind::String;
-        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.wide_.tag = tagOf(Kind::String);  // inline flag left clear
+        v.wide_.box = reinterpret_cast<detail::Box *>(box);
         return v;
     }
 
     [[nodiscard]] static Value array(detail::ArrayBox *box) noexcept {
         Value v;
-        v.kind_ = Kind::Array;
-        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.wide_.tag = tagOf(Kind::Array);
+        v.wide_.box = reinterpret_cast<detail::Box *>(box);
         return v;
     }
 
     [[nodiscard]] static Value object(detail::ObjectBox *box) noexcept {
         Value v;
-        v.kind_ = Kind::Object;
-        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.wide_.tag = tagOf(Kind::Object);
+        v.wide_.box = reinterpret_cast<detail::Box *>(box);
         return v;
     }
 
-   private:
-    Value() noexcept : kind_(Kind::Null), number_(0.0) {}
+    /// The box this value references.
+    /// Precondition: referencesBox().
+    [[nodiscard]] detail::Box *box() const noexcept {
+        assert(referencesBox());
+        return wide_.box;
+    }
 
-    Kind kind_;  // смещение 0
-    union {  // смещение 8: выравнивание double требует зазора после kind_
-        bool boolean_;
-        double number_;
-        detail::Box *box_;  // коробка со счётчиком ссылок
+    /// Precondition: kind() == Kind::Boolean.
+    [[nodiscard]] bool booleanValue() const noexcept {
+        assert(kind() == Kind::Boolean);
+        return wide_.flag;
+    }
+
+    /// Precondition: kind() == Kind::Number.
+    [[nodiscard]] double numberValue() const noexcept {
+        assert(kind() == Kind::Number);
+        return wide_.number;
+    }
+
+    /// Are these two the same aggregate — same kind, same box.
+    ///
+    /// Scalars have no identity (docs/semantics.md §5.4), so this is false for
+    /// them even when a value is compared with itself.
+    [[nodiscard]] bool sameAggregate(const Value &other) const noexcept {
+        const Kind k = kind();
+        if (k != other.kind()) { return false; }
+        if (k != Kind::Array && k != Kind::Object) { return false; }
+        return wide_.box == other.wide_.box;
+    }
+
+    [[nodiscard]] Kind kind() const noexcept {
+        return static_cast<Kind>(wide_.tag & kKindMask);
+    }
+
+    /// Precondition: kind() == Kind::String.
+    [[nodiscard]] bool isInlineString() const noexcept {
+        assert(kind() == Kind::String);
+        return (wide_.tag & kInlineFlag) != 0;
+    }
+
+    /// The bytes of an inline string. Points INTO this value, so it lives
+    /// exactly as long as this value does — read it through stringBytes,
+    /// which says so at every call site.
+    /// Precondition: kind() == Kind::String && isInlineString().
+    [[nodiscard]] std::string_view inlineBytes() const noexcept {
+        assert(kind() == Kind::String && isInlineString());
+        return std::string_view(inline_.bytes, inlineLength());
+    }
+
+    /// Does this value own a reference to a box.
+    [[nodiscard]] bool referencesBox() const noexcept {
+        const Kind k = kind();
+        if (k == Kind::Object || k == Kind::Array) { return true; }
+        return k == Kind::String && (wide_.tag & kInlineFlag) == 0;
+    }
+
+   private:
+    static constexpr std::uint8_t kKindMask = 0x07;    // bits 0-2
+    static constexpr std::uint8_t kLengthShift = 3;    // bits 3-6
+    static constexpr std::uint8_t kLengthMask = 0x78;
+    static constexpr std::uint8_t kInlineFlag = 0x80;  // bit 7
+
+    static constexpr std::uint8_t tagOf(Kind kind) noexcept {
+        return static_cast<std::uint8_t>(kind);
+    }
+
+    [[nodiscard]] std::size_t inlineLength() const noexcept {
+        return static_cast<std::size_t>((wide_.tag & kLengthMask) >> kLengthShift);
+    }
+
+    /// Both layouts are standard-layout and share the tag as their common
+    /// initial sequence, so the tag may be read through either member whichever
+    /// one is active ([class.mem]). Nothing else may.
+    struct Inline { std::uint8_t tag; char bytes[15]; };
+    struct Wide {
+        std::uint8_t tag;
+        std::uint8_t pad[7];
+        union { double number; bool flag; detail::Box *box; };
     };
+
+    Value() noexcept : wide_{} {}  // tag 0 == Kind::Null
+
+    union { Inline inline_; Wide wide_; };
 };
 
-static_assert(sizeof(Value) == 16, "Value должен оставаться в 16 байтах");
+static_assert(sizeof(Value) == 16, "Value must stay sixteen bytes");
+static_assert(alignof(Value) == 8, "the double in the payload sets the alignment");
 static_assert(std::is_trivially_copyable_v<Value>,
-              "диапазоны значений копируются в пулах целиком");
+              "values are copied in bulk inside aggregates");
 
 }  // namespace CS

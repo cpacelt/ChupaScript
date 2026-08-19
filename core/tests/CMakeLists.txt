@@ -16,6 +16,7 @@ add_executable(chupascript_tests
     script_test.cpp
     smoke_test.cpp
     text_test.cpp
+    value_layout_test.cpp
     value_test.cpp
 )
 

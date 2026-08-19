@@ -58,12 +58,18 @@ bool readKey(const Ast &ast, NodeId node, Value base, std::string_view key,
 /// — правило §4 записано один раз, в builtin.cpp, и обслуживает и ключ
 /// объекта, и has, и str с format.
 ///
-/// A string value is a box (box.hpp) read through CS::stringBytes: no Store
-/// is involved any more, so the slice this returns is valid until the box's
-/// reference count reaches zero, not until some pool is next written.
+/// A string value reads through CS::stringBytes without consulting a Store:
+/// a long string is a box (box.hpp) and the slice is valid until the box's
+/// reference count reaches zero; a short string carries its bytes inside the
+/// value itself, and the slice is valid exactly as long as that value is.
+///
+/// value is taken by const reference, not by value: an inline string's bytes
+/// live inside the value itself, and a by-value copy here would die on
+/// return while *out still pointed into it (defect uncovered by task 8, ASan
+/// catches it). The caller's own named Value must outlive this call.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
-bool coerceToString(const Ast &ast, NodeId node, Value value,
+bool coerceToString(const Ast &ast, NodeId node, const Value &value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
     return coerceScalarToString(value, numberBuffer, out, ast.offset(node), diag);
@@ -84,10 +90,11 @@ bool coerceToString(const Ast &ast, NodeId node, Value value,
 ///
 /// The template is read where it lies and the result is assembled in
 /// Execution's builder; the two are different buffers, and that is what makes
-/// evaluating an argument in the middle of a build safe. Both the template and
-/// every piece produced by an argument are boxes now, so nothing an argument
-/// does can move the bytes this loop is reading — the concern that made the
-/// old code re-slice the template on every iteration is gone with the arena.
+/// evaluating an argument in the middle of a build safe. tmpl is a value the
+/// caller of evalFormat still holds a reference to for the whole loop below,
+/// so nothing an argument does can move or free the bytes this loop is
+/// reading — the concern that made the old code re-slice the template on
+/// every iteration is gone with the arena.
 bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
                 Execution &exec, Value *out, Diagnostic &diag) {
     const std::uint32_t argCount = ast.childCount(node);

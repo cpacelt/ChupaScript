@@ -175,8 +175,9 @@ double chooseOrNaN(double a, double b, bool takeSmaller) noexcept {
 
 }  // namespace
 
-bool coerceScalarToString(Value v, char *numberBuffer, std::string_view *out,
-                          std::uint32_t offset, Diagnostic &diag) {
+bool coerceScalarToString(const Value &v, char *numberBuffer,
+                          std::string_view *out, std::uint32_t offset,
+                          Diagnostic &diag) {
     switch (v.kind()) {
         case Value::Kind::String: *out = stringBytes(v); return true;
         case Value::Kind::Number:

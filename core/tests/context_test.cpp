@@ -312,7 +312,8 @@ TEST(Execution, AbortedBuildLeavesNoTail) {
 
     const std::uint32_t second = exec.beginString();
     exec.appendToString("kept");
-    EXPECT_EQ(CS::stringBytes(exec.endString(second)), "kept");
+    const CS::Value keptResult = exec.endString(second);
+    EXPECT_EQ(CS::stringBytes(keptResult), "kept");
 }
 
 /// Aborting an inner build must not disturb bytes an outer, still-open build
@@ -328,7 +329,8 @@ TEST(Execution, NestedAbortLeavesTheOuterAssemblyIntact) {
     exec.appendToString("выброшенное");
     exec.abortString(inner);
     exec.appendToString("продолжение");
-    EXPECT_EQ(CS::stringBytes(exec.endString(outer)), "внешнее продолжение");
+    const CS::Value outerResult = exec.endString(outer);
+    EXPECT_EQ(CS::stringBytes(outerResult), "внешнее продолжение");
 }
 
 /// The mark is a POSITION, not a pointer: growing builder_ well past its
@@ -343,7 +345,8 @@ TEST(Execution, SurvivesBufferGrowth) {
         exec.appendToString("кусок");
         expected += "кусок";
     }
-    EXPECT_EQ(CS::stringBytes(exec.endString(mark)), expected);
+    const CS::Value markResult = exec.endString(mark);
+    EXPECT_EQ(CS::stringBytes(markResult), expected);
 }
 
 }  // namespace

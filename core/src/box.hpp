@@ -159,18 +159,27 @@ inline void retainValue(Value v) noexcept {
 
 /// Bytes of a string value.
 ///
-/// The sole reading door for a string: no Store is consulted, because a
-/// string is a box (detail::StringBox) from the moment it exists and reads
-/// itself without asking anyone where it lives. Takes the value by const
-/// reference, not by copy — a later change moves a short string's bytes
-/// inside the Value itself, and a by-value parameter would then hand back a
-/// pointer into a temporary that is already gone.
+/// The sole reading door for a string: no Store is consulted. A short string
+/// carries its bytes inside the value itself; a long string is a box
+/// (detail::StringBox) that reads itself without asking anyone where it
+/// lives. Takes the value by const reference, not by copy — an inline
+/// string's bytes live inside the Value, and a by-value parameter would hand
+/// back a pointer into a temporary that is already gone.
 ///
 /// Precondition: v.kind() == Value::Kind::String.
-/// The returned view is valid until the box's reference count reaches zero.
+/// The returned view is valid exactly as long as v is: until the end of v's
+/// scope for an inline string, or until the box's reference count reaches
+/// zero for a boxed one.
 [[nodiscard]] inline std::string_view stringBytes(const Value &v) noexcept {
     assert(v.kind() == Value::Kind::String);
+    if (v.isInlineString()) { return v.inlineBytes(); }
     return static_cast<const detail::StringBox *>(v.box())->view();
 }
+
+/// A temporary is not a valid source of bytes: an inline string's bytes live
+/// inside the value, and the value would die at the end of the full
+/// expression while the slice was still being read. Bind it to a named
+/// const Value & instead.
+std::string_view stringBytes(Value &&) = delete;
 
 }  // namespace CS

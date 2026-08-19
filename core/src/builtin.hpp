@@ -99,7 +99,13 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
 /// numberBuffer вызывающего (обязан быть размером не меньше
 /// kNumberBufferSize, core/src/text.hpp), у остальных — статическая строка.
 /// offset — место, куда указывает диагностика при отказе.
-bool coerceScalarToString(Value v, char *numberBuffer, std::string_view *out,
-                          std::uint32_t offset, Diagnostic &diag);
+///
+/// Takes v by const reference, not by value: a short string's bytes live
+/// inside the value itself (value.hpp), so a by-value copy here would die on
+/// return while *out still pointed into it. Bind the caller's own named
+/// Value and pass that.
+bool coerceScalarToString(const Value &v, char *numberBuffer,
+                          std::string_view *out, std::uint32_t offset,
+                          Diagnostic &diag);
 
 }  // namespace CS

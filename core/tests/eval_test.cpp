@@ -75,11 +75,13 @@ Diagnostic evalError(CS::Execution &exec, std::string_view text) {
 
 /// Вычисляет и читает результат как строку — самая частая пара в этом файле.
 ///
-/// Every String value is a self-contained box, so it reads itself: no store
-/// argument is needed to find its bytes.
-std::string_view evalText(CS::Execution &exec, std::string_view text) {
+/// Returns an owned std::string, not a string_view: a short string's bytes
+/// live inside the Value itself, and the Value evaluate() returns is a local
+/// that dies at the end of this function, so a view into it would dangle at
+/// the caller. Copying out before that local dies keeps the comparison safe.
+std::string evalText(CS::Execution &exec, std::string_view text) {
     const Value v = evaluate(exec, text);
-    return CS::stringBytes(v);
+    return std::string(CS::stringBytes(v));
 }
 
 /// Кладёт глобальную переменную; требует успеха.

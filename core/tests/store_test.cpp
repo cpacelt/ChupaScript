@@ -30,11 +30,15 @@ TEST(StoreMetrics, MaterializedStringCostsABoxNotPoolBytes) {
     // может. Раньше здесь стояло before + 5, и звался makeString: тот на
     // постоянном хранилище давал коробку. Больше не даёт — арена умеет одни
     // смещения, и коробку теперь просят у materialize прямо.
+    //
+    // The string must be longer than Value::kInlineCapacity (task 8): a
+    // string that fits inline costs no box at all, which is a different
+    // fact, checked by ValueLayout.ShortStringAllocatesNothing instead.
     Store store;
     Deferred dead;
     const std::size_t before = store.bytesUsed();
     const std::size_t boxes = CS::detail::liveBoxCount();
-    CS::materialize("12345", dead);
+    static_cast<void>(CS::materialize("this string is longer than fifteen bytes", dead));
     EXPECT_EQ(store.bytesUsed(), before);
     EXPECT_EQ(CS::detail::liveBoxCount(), boxes + 1);
 }

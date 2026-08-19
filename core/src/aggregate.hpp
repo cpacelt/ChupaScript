@@ -105,17 +105,20 @@ namespace CS {
 // Таблица теперь приходит параметром от того, кто её и так держит, а ссылка
 // создателя — в список, которому она с самого начала и предназначалась.
 
-/// Кладёт байты в коробку со счётчиком.
+/// Turns bytes into a string value.
 ///
-/// Нужна там, где строке предстоит пережить операцию: лечь в агрегат, в ячейку
-/// глобальной переменной либо уехать к хосту. Смещение в арену туда не годится
-/// — арену граница сбрасывает.
+///   <= Value::kInlineCapacity  ->  the bytes go inside the value; no box,
+///                                  no reference count, no allocation
+///   longer                     ->  a box, whose creator reference goes to
+///                                  dead and is dropped at the next boundary
 ///
-/// Свободная по той же причине, что и всё вокруг: ни одного члена хранилища
-/// она не читала и раньше. Методом Store она оставалась ровно затем, чтобы
-/// достать список отложенного освобождения, — а тот теперь приходит
-/// параметром от выполнения, которому и принадлежит.
+/// dead is untouched on the inline path, and that is the point: the hot BDUI
+/// cases — a colour, a key, an identifier, str() over a number — stop
+/// allocating entirely.
 [[nodiscard]] inline Value materialize(std::string_view bytes, Deferred &dead) {
+    if (bytes.size() <= Value::kInlineCapacity) {
+        return Value::inlineString(bytes);
+    }
     detail::StringBox *box = detail::makeStringBox(bytes);
     dead.take(box);  // ссылка создателя — до ближайшей границы
     return Value::string(box);

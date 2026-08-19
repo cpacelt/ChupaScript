@@ -50,4 +50,17 @@ TEST(ValueIdentity, DifferentKindsAreNotSame) {
     EXPECT_FALSE(Value::null().sameAggregate(Value::number(0.0)));
 }
 
+TEST(ValueLayout, StaysSixteenBytesWithNodePayload) {
+    // Указатель — восемь байт и ложится в то же объединение, где double.
+    EXPECT_EQ(sizeof(CS::Value), 16u);
+    EXPECT_TRUE(std::is_trivially_copyable<CS::Value>::value);
+}
+
+TEST(ValueRegion, CountedIsTheDefaultForScalars) {
+    // У скаляра региона нет, но поле читается — оно обязано быть Counted:
+    // Scratch означал бы смещение в арену, которого у скаляра не бывает.
+    EXPECT_EQ(CS::Value::number(1.0).region(), CS::Value::Region::Counted);
+    EXPECT_EQ(CS::Value::null().region(), CS::Value::Region::Counted);
+}
+
 }  // namespace

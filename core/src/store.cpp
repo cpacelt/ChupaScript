@@ -133,7 +133,7 @@ void Store::abortString(std::uint32_t mark) noexcept {
 }
 
 void Store::clear() noexcept {
-    assert(region_ != Value::Region::Persistent &&
+    assert(region_ != Value::Region::Counted &&
            "постоянный регион не сбрасывается: на его значения ссылается хост");
 
     // Ёмкость при этом остаётся: std::vector::clear её не отдаёт, а

@@ -33,7 +33,7 @@ class Store {
    public:
     /// region — чем помечаются значения, созданные этим хранилищем. За жизнь
     /// хранилища не меняется: иначе уже выданные значения начали бы врать.
-    explicit Store(Value::Region region = Value::Region::Persistent);
+    explicit Store(Value::Region region = Value::Region::Counted);
 
     /// Определён в store.cpp: в заголовке типы пулов ещё неполны.
     ~Store();

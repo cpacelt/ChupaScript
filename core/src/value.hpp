@@ -7,6 +7,15 @@ namespace CS {
 
 class Store;
 
+namespace detail {
+/// Узлы со счётчиком ссылок (core/src/node.hpp). Здесь только объявления:
+/// значение держит указатель, а раскладку узла ему знать незачем.
+struct Node;
+struct StrNode;
+struct ArrayNode;
+struct ObjectNode;
+}  // namespace detail
+
 /// Номер ячейки значения глобальной переменной в хранилище.
 ///
 /// Живёт здесь, а не в store.hpp, потому что нужен обеим сторонам: хранилище
@@ -36,16 +45,21 @@ class Value {
     /// Вид значения. Закрытый список из docs/semantics.md §2.1.
     enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
 
-    /// Где живёт то, на что значение ссылается: постоянные данные хоста или
-    /// временные значения текущей операции. Разбор — docs/backlog.md [B57].
+    /// Как адресуется нагрузка значения.
     ///
-    /// Порядок значений не произволен: перечисление идёт от долгоживущего к
-    /// короткоживущему, и на этом порядке стоит барьер записи
-    /// (Store::writable). Шкала линейна ровно пока регионов два; литералы,
-    /// которые [B57] держит про запас третьим значением, живут в единице и
-    /// ни постоянное, ни временное не переживают по определению — с их
-    /// приходом сравнение придётся пересмотреть.
-    enum class Region : std::uint8_t { Persistent, Scratch };
+    /// Раньше здесь стояла шкала времени жизни — постоянное против
+    /// временного, — и на её порядке держался барьер записи. Барьера больше
+    /// нет: узел не может оказаться короткоживущее контейнера, за это отвечает
+    /// счётчик ссылок. Осталось различение способа адресации, и оно
+    /// двузначно.
+    ///
+    /// Counted — в объединении указатель на узел; значение самодостаточно и
+    /// читается без всякого хранилища, потому и уезжает к хосту ссылкой.
+    /// Scratch — в объединении смещение в байтовую арену операции; так
+    /// адресуются только строки, и только промежуточные.
+    ///
+    /// Разбор: docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md Р2.
+    enum class Region : std::uint8_t { Counted, Scratch };
 
     [[nodiscard]] static Value null() noexcept {
         Value v;
@@ -71,6 +85,13 @@ class Value {
 
     /// Осмыслен только у String, Object и Array — см. addressesStore.
     [[nodiscard]] Region region() const noexcept { return region_; }
+
+    /// Узел, на который значение ссылается.
+    /// Предусловие: addressesStore() и region() == Region::Counted.
+    [[nodiscard]] detail::Node *node() const noexcept {
+        assert(addressesStore() && region_ == Region::Counted);
+        return node_;
+    }
 
     /// Адресует ли значение пулы хранилища — то есть осмыслен ли у него
     /// регион. У скаляров нет ни того, ни другого: копия числа ни с каким
@@ -98,8 +119,45 @@ class Value {
     [[nodiscard]] bool sameAggregate(Value other) const noexcept {
         if (kind_ != other.kind_) { return false; }
         if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
+        // TODO: сравнение переедет на node_, когда агрегаты станут узлами
+        // (Task 4, Task 5). Сейчас хранилище всё ещё выдаёт индексы, и по
+        // указателю два хранилища не различить — оба начинают с нуля.
         if (region_ != other.region_) { return false; }
         return index_ == other.index_;
+    }
+
+    // ─── сборка значения из узла ───
+    //
+    // Открыты, в отличие от индексных фабрик ниже: там довод был в том, что
+    // индекс полон как тип и любой код собрал бы значение с произвольным
+    // номером заголовка. С указателем этот довод не работает наоборот —
+    // указатель числом не подделаешь, а взять настоящий ArrayNode * можно
+    // только у detail::makeArrayNode. Тип аргумента и есть защита.
+
+    [[nodiscard]] static Value string(detail::StrNode *node,
+                                      std::uint32_t length) noexcept {
+        Value v;
+        v.kind_ = Kind::String;
+        v.length_ = length;
+        v.node_ = reinterpret_cast<detail::Node *>(node);
+        v.region_ = Region::Counted;
+        return v;
+    }
+
+    [[nodiscard]] static Value array(detail::ArrayNode *node) noexcept {
+        Value v;
+        v.kind_ = Kind::Array;
+        v.node_ = reinterpret_cast<detail::Node *>(node);
+        v.region_ = Region::Counted;
+        return v;
+    }
+
+    [[nodiscard]] static Value object(detail::ObjectNode *node) noexcept {
+        Value v;
+        v.kind_ = Kind::Object;
+        v.node_ = reinterpret_cast<detail::Node *>(node);
+        v.region_ = Region::Counted;
+        return v;
     }
 
    private:
@@ -152,14 +210,15 @@ class Value {
     // Смещение 1: байт был набивкой перед length_, поэтому регион достался
     // даром. У скаляров региона нет — они ничего не адресуют; поле у них не
     // читается, проверки региона касаются только String, Object и Array.
-    Region region_ = Region::Persistent;
+    Region region_ = Region::Counted;
     std::uint32_t length_;  // смещение 4 — длина строки в байтах
     // TODO(B2): восемь байт вместо шестнадцати достижимы только через
     // NaN-boxing: double в объединении задаёт и размер, и выравнивание.
     union {  // смещение 8
         bool boolean_;
         double number_;
-        std::uint32_t index_;
+        std::uint32_t index_;   // Scratch: смещение в арену операции
+        detail::Node *node_;    // Counted: узел со счётчиком ссылок
     };
 };
 

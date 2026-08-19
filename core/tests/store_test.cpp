@@ -120,7 +120,7 @@ TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
     // Индекс уникален внутри пула, а не между хранилищами: первый массив есть
     // и там, и там, но это разная память. Двух временных хранилищ проверка не
     // различит — регион категория, а не личность (docs/backlog.md [B57]).
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
     Store scratch(Value::Region::Scratch);
     EXPECT_FALSE(persistent.makeArray().sameAggregate(scratch.makeArray()));
 }
@@ -130,7 +130,7 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
     // обязано сделать одну копию, а не две: иначе разойдутся и равенство по
     // идентичности (semantics.md §5.4), и видимость записи (§2.3).
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
 
     const Value inner = scratch.makeArray(1);
     scratch.arrayPush(inner, Value::number(1.0));
@@ -144,7 +144,7 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
 
 TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
 
     const Value inner = scratch.makeArray(1);
     scratch.arrayPush(inner, Value::number(1.0));
@@ -158,7 +158,7 @@ TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
 }
 
 TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
     Store scratch(Value::Region::Scratch);
     const Value a = persistent.makeArray();
     // Копии не случилось: тот же агрегат, а не равный ему по содержимому.
@@ -187,7 +187,7 @@ TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
     // Барьер направленный: долгоживущее внутри короткоживущего безопасно —
     // ссылка умрёт раньше того, на что указывает. Это `[state.header]`, и
     // симметричная проверка регионов запрещала бы его на ровном месте.
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
     Store scratch(Value::Region::Scratch);
 
     const Value header = persistent.makeString("шапка");
@@ -203,7 +203,7 @@ TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
     // Та же направленность со стороны продвижения: во временное хранилище
     // постоянный агрегат обязан пройти как есть. Копия сделала бы его другим
     // объектом, и state.header перестал бы быть тем же, что state.rows[0].
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
     Store scratch(Value::Region::Scratch);
 
     const Value header = persistent.makeArray();
@@ -215,13 +215,13 @@ TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
     // Продвижение во временное хранилище не должно принимать это за чужой
     // регион и пытаться скопировать то, чего нет.
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
     EXPECT_EQ(scratch.promote(persistent, Value::number(7.0)).numberValue(), 7.0);
 }
 
 TEST(StorePromote, CopiesNestedStringsAndKeys) {
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Persistent);
+    Store persistent(Value::Region::Counted);
 
     const Value o = scratch.makeObject(1);
     scratch.objectSet(o, "имя", scratch.makeString("Вася"));

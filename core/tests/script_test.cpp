@@ -6,6 +6,7 @@
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "script.hpp"
+#include "box.hpp"
 #include "store.hpp"
 #include "aggregate.hpp"
 
@@ -28,7 +29,7 @@ TEST(Script, CompilesAndRuns) {
     // выходной параметр (core/src/store.hpp:107,152).
     const CS::Value user = store.global("user");
     const CS::Value name = CS::objectGet(user, "name");
-    EXPECT_EQ(store.string(name), "Петя");
+    EXPECT_EQ(CS::stringBytes(name), "Петя");
 }
 
 TEST(Script, OwnsItsSource) {

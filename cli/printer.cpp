@@ -4,6 +4,7 @@
 
 #include "text.hpp"
 #include "aggregate.hpp"
+#include "box.hpp"
 
 namespace chupa {
 namespace {
@@ -55,8 +56,8 @@ constexpr std::uint32_t kMaxPrintDepth = 64;
 /// поэтому растёт между строками сессии и с высотой дерева разбора одной
 /// строки не связана (docs/backlog.md B5). Печатник поэтому ограничивает
 /// глубину сам — `kMaxPrintDepth` выше.
-/// ctx, а не Store: строку контекст читает сам, а агрегат себя описывает
-/// целиком и хранилища не спрашивает вовсе.
+/// ctx, а не Store: агрегат себя описывает целиком и хранилища не спрашивает
+/// вовсе; строка описывает себя сама через stringBytes, ctx ей тоже не нужен.
 void append(std::string &out, const CS::Context &ctx, CS::Value value,
             std::vector<CS::Value> &path, std::uint32_t depth) {
     switch (value.kind()) {
@@ -70,7 +71,7 @@ void append(std::string &out, const CS::Context &ctx, CS::Value value,
             return;
         }
         case CS::Value::Kind::String:
-            appendQuoted(out, ctx.string(value));
+            appendQuoted(out, CS::stringBytes(value));
             return;
         default: break;
     }

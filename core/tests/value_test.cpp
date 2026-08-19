@@ -56,11 +56,4 @@ TEST(ValueLayout, StaysSixteenBytesWithNodePayload) {
     EXPECT_TRUE(std::is_trivially_copyable<CS::Value>::value);
 }
 
-TEST(ValueRegion, CountedIsTheDefaultForScalars) {
-    // У скаляра региона нет, но поле читается — оно обязано быть Counted:
-    // Scratch означал бы смещение в арену, которого у скаляра не бывает.
-    EXPECT_EQ(CS::Value::number(1.0).region(), CS::Value::Region::Boxed);
-    EXPECT_EQ(CS::Value::null().region(), CS::Value::Region::Boxed);
-}
-
 }  // namespace

@@ -82,10 +82,9 @@ std::uint32_t countPlaceholders(std::string_view fmt) noexcept;
 ///
 /// offset — смещение узла вызова, для диагностики.
 ///
-/// exec, а не хранилище: результат создаётся в арене операции, push
-/// продвигает записываемое значение (Execution::promote) и отдаёт вытесненную
-/// ссылку в список отложенного освобождения. Выбора хранилища здесь больше нет
-/// — арена одна, а агрегат себя описывает сам.
+/// exec, а не хранилище: результат создаётся коробкой, а Execution нужен
+/// лишь затем, что makeObject и format берут у него таблицу имён и список
+/// отложенного освобождения.
 bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                   std::uint32_t count, std::uint32_t offset, Value *out,
                   Diagnostic &diag);
@@ -96,12 +95,11 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
 /// объекта), str и format (задачи 5 и 6), приведение в обходе (eval.cpp).
 /// Правило §4 записано один раз.
 ///
-/// Возвращает срез: у строки — её собственные байты в хранилище, у числа —
+/// Возвращает срез: у строки — её собственные байты (CS::stringBytes), у числа —
 /// numberBuffer вызывающего (обязан быть размером не меньше
 /// kNumberBufferSize, core/src/text.hpp), у остальных — статическая строка.
 /// offset — место, куда указывает диагностика при отказе.
-bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
-                          std::string_view *out, std::uint32_t offset,
-                          Diagnostic &diag);
+bool coerceScalarToString(Value v, char *numberBuffer, std::string_view *out,
+                          std::uint32_t offset, Diagnostic &diag);
 
 }  // namespace CS

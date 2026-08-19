@@ -9,6 +9,7 @@
 #include <string>
 
 #include "ast.hpp"
+#include "box.hpp"
 #include "compile.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
@@ -39,7 +40,7 @@ Value evaluate(CS::Execution &exec, std::string_view text) {
     const std::uint32_t errors =
         CS::compileExpression(text.data(),
                               static_cast<std::uint32_t>(text.size()), ast,
-                              exec.persistent(), &diag, 1);
+                              exec.store(), &diag, 1);
     if (errors != 0) {
         // Дерево не прошло check и не помечено проверенным: звать
         // evalExpression на нём — либо assert в отладочной сборке, либо
@@ -62,7 +63,7 @@ Diagnostic evalError(CS::Execution &exec, std::string_view text) {
     const std::uint32_t errors =
         CS::compileExpression(text.data(),
                               static_cast<std::uint32_t>(text.size()), ast,
-                              exec.persistent(), &diag, 1);
+                              exec.store(), &diag, 1);
     if (errors != 0) {
         ADD_FAILURE() << diag.message;
         return diag;
@@ -74,13 +75,11 @@ Diagnostic evalError(CS::Execution &exec, std::string_view text) {
 
 /// Вычисляет и читает результат как строку — самая частая пара в этом файле.
 ///
-/// Читается тем хранилищем, которое значение выдало: результат живёт во
-/// временном регионе, данные хоста — в постоянном, и агрегат вправе смешивать
-/// оба — `[user.name]` это временный массив с постоянной строкой внутри
-/// (docs/backlog.md [B57]).
+/// Every String value is a self-contained box, so it reads itself: no store
+/// argument is needed to find its bytes.
 std::string_view evalText(CS::Execution &exec, std::string_view text) {
     const Value v = evaluate(exec, text);
-    return exec.scratch.string(v);
+    return CS::stringBytes(v);
 }
 
 /// Кладёт глобальную переменную; требует успеха.
@@ -384,7 +383,7 @@ TEST(EvalAggregates, ElementsAreArbitraryExpressions) {
     // и копией не стал.
     ASSERT_EQ(CS::arrayCount(a), 3u);
     const Value first = CS::arrayAt(a, 0);
-    EXPECT_EQ(exec.scratch.string(first), "Вася");
+    EXPECT_EQ(CS::stringBytes(first), "Вася");
     EXPECT_EQ(CS::arrayAt(a, 1).numberValue(), 7.0);
     EXPECT_EQ(CS::arrayAt(a, 2).kind(), Value::Kind::Null);
 }
@@ -395,7 +394,7 @@ TEST(EvalAggregates, ObjectValuesAreExpressionsAndKeysAreLiterals) {
     put(store, "user", "{'name': 'Вася'}");
     const Value o = evaluate(exec, "{'who': user.name}");
     const Value who = CS::objectGet(o, "who");
-    EXPECT_EQ(exec.scratch.string(who), "Вася");
+    EXPECT_EQ(CS::stringBytes(who), "Вася");
 }
 
 TEST(EvalAggregates, ErrorInsideAnElementStopsAtTheFirstFailure) {
@@ -727,7 +726,7 @@ void run(CS::Execution &exec, std::string_view text) {
     Diagnostic diag;
     const std::uint32_t errors =
         CS::compileScript(text.data(), static_cast<std::uint32_t>(text.size()),
-                          ast, exec.persistent(), &diag, 1);
+                          ast, exec.store(), &diag, 1);
     ASSERT_EQ(errors, 0u) << diag.message;
     ASSERT_TRUE(CS::runScript(ast, text, exec, diag)) << diag.message;
 }
@@ -738,7 +737,7 @@ Diagnostic runError(CS::Execution &exec, std::string_view text) {
     Diagnostic diag;
     const std::uint32_t errors =
         CS::compileScript(text.data(), static_cast<std::uint32_t>(text.size()),
-                          ast, exec.persistent(), &diag, 1);
+                          ast, exec.store(), &diag, 1);
     if (errors != 0) {
         ADD_FAILURE() << diag.message;
         return diag;
@@ -1180,7 +1179,7 @@ TEST(EvalCall, KeysReturnsEveryKey) {
     std::set<std::string> got;
     for (std::uint32_t i = 0; i < 3; ++i) {
         const Value key = CS::arrayAt(keys, i);
-        got.insert(std::string(exec.scratch.string(key)));
+        got.insert(std::string(CS::stringBytes(key)));
     }
     EXPECT_EQ(got, (std::set<std::string>{"a", "b", "c"}));
 }
@@ -1529,7 +1528,7 @@ TEST(EvalFormat, LongResultCrossesPoolGrowth) {
         " user.name, user.name)");
     std::string expected;
     for (int i = 0; i < 10; ++i) { expected += "Вася"; }
-    EXPECT_EQ(exec.scratch.string(built), expected);
+    EXPECT_EQ(CS::stringBytes(built), expected);
 }
 
 TEST(EvalFormat, ArgumentThatWritesToThePoolDoesNotLeakIntoTheResult) {

@@ -6,12 +6,10 @@
 
 #include <string>
 #include "aggregate.hpp"
-#include "execution.hpp"
 
 namespace {
 
 using CS::Deferred;
-using CS::Execution;
 using CS::Store;
 using CS::Value;
 
@@ -91,120 +89,6 @@ TEST(StoreArray, TwoEmptyArraysAreDistinct) {
     Store store;
     Deferred dead;
     EXPECT_FALSE(CS::makeArray(0, dead).sameAggregate(CS::makeArray(0, dead)));
-}
-
-TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
-    // Индекс уникален внутри пула, а не между хранилищами: первый массив есть
-    // и там, и там, но это разная память. Двух временных хранилищ проверка не
-    // различит — регион категория, а не личность (docs/backlog.md [B57]).
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    EXPECT_FALSE(CS::makeArray(0, exec.deferred()).sameAggregate(CS::makeArray(0, exec.deferred())));
-}
-
-TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
-    // Один массив, положенный в обе ячейки внешнего. Раньше продвижение
-    // копировало вглубь и обязано было сделать одну копию, а не две; теперь
-    // копии нет вовсе, и разделение сохраняется само собой. Проверка остаётся:
-    // на ней стоят равенство по идентичности (semantics.md §5.4) и видимость
-    // записи (§2.3).
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-
-    const Value inner = CS::makeArray(1, exec.deferred());
-    CS::arrayPush(inner, Value::number(1.0));
-    const Value outer = CS::makeArray(2, exec.deferred());
-    CS::arrayPush(outer, inner);
-    CS::arrayPush(outer, inner);
-
-    const Value moved = exec.promote(outer);
-    EXPECT_TRUE(CS::arrayAt(moved, 0).sameAggregate(CS::arrayAt(moved, 1)));
-}
-
-TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-
-    const Value inner = CS::makeArray(1, exec.deferred());
-    CS::arrayPush(inner, Value::number(1.0));
-    const Value outer = CS::makeArray(2, exec.deferred());
-    CS::arrayPush(outer, inner);
-    CS::arrayPush(outer, inner);
-
-    const Value moved = exec.promote(outer);
-    CS::arraySet(CS::arrayAt(moved, 1), 0, Value::number(3.0), exec.deferred());
-    EXPECT_EQ(CS::arrayAt(CS::arrayAt(moved, 0), 0).numberValue(), 3.0);
-}
-
-TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value a = CS::makeArray(0, exec.deferred());
-    // Копии не случилось: тот же агрегат, а не равный ему по содержимому.
-    EXPECT_TRUE(exec.promote(a).sameAggregate(a));
-}
-
-TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
-    // Раньше это разрешал направленный барьер записи. Барьера больше нет, и
-    // разрешать нечего: коробка живёт по счётчику, а не по региону, и оказаться
-    // короче своего держателя не может. Проверка остаётся — это `[state.header]`.
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-
-    const Value header = CS::materialize("шапка", exec.deferred());
-    const Value temporary = CS::makeArray(1, exec.deferred());
-    CS::arrayPush(temporary, header);
-
-    // Читается тем хранилищем, которое его выдало: значение осталось собой, а
-    // не переехало копией во временный пул.
-    EXPECT_EQ(persistent.string(CS::arrayAt(temporary, 0)), "шапка");
-}
-
-TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
-    // Та же направленность со стороны продвижения: во временное хранилище
-    // постоянный агрегат обязан пройти как есть. Копия сделала бы его другим
-    // объектом, и state.header перестал бы быть тем же, что state.rows[0].
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-
-    const Value header = CS::makeArray(0, exec.deferred());
-    EXPECT_TRUE(exec.promote(header).sameAggregate(header));
-}
-
-TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
-    // У скаляра региона нет, и поле у него равно постоянному по умолчанию.
-    // Продвижение во временное хранилище не должно принимать это за чужой
-    // регион и пытаться скопировать то, чего нет.
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    EXPECT_EQ(exec.promote(Value::number(7.0)).numberValue(), 7.0);
-}
-
-TEST(StorePromote, AggregateCrossesWithoutACopy) {
-    // Раньше здесь проверялось, что продвижение копирует объект вглубь вместе
-    // со строками и ключами. Копии больше нет: объект — коробка, и границу он
-    // проходит ссылкой. Проверяется теперь ровно это.
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-
-    const Value o = CS::makeObject(persistent.keys(), 1, exec.deferred());
-    // Строка кладётся в агрегат, значит обязана быть материализована: смещение
-    // в арену операции коробка не переживёт.
-    CS::objectSet(o, "имя", CS::materialize("Вася", exec.deferred()), exec.deferred());
-    const Value moved = exec.promote(o);
-
-    EXPECT_TRUE(moved.sameAggregate(o));
-    scratch.clear();
-    EXPECT_EQ(CS::objectKeyAt(moved, 0), "имя");
-    EXPECT_EQ(persistent.string(CS::objectValueAt(moved, 0)), "Вася");
 }
 
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
@@ -421,7 +305,8 @@ TEST(StoreObject, NonAsciiKeyIsFound) {
     Deferred dead;
     const Value o = CS::makeObject(store.keys(), 0, dead);
     CS::objectSet(o, "имя", CS::materialize("Вася", dead), dead);
-    EXPECT_EQ(store.string(CS::objectGet(o, "имя")), "Вася");
+    const Value name = CS::objectGet(o, "имя");
+    EXPECT_EQ(CS::stringBytes(name), "Вася");
 }
 
 TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
@@ -552,7 +437,7 @@ TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
     const Value keyValue = CS::materialize("динамический", dead);
     // The key is a string Value, not a literal spelled inline: the same shape
     // obj[k] uses.
-    CS::objectSet(o, store.string(keyValue), Value::number(5.0), dead);
+    CS::objectSet(o, CS::stringBytes(keyValue), Value::number(5.0), dead);
     EXPECT_EQ(CS::objectGet(o, "динамический").numberValue(), 5.0);
 }
 
@@ -695,16 +580,22 @@ TEST(StoreGlobals, EnumerationYieldsEveryName) {
     EXPECT_EQ(seen, "state user ");
 }
 
-TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
-    Store persistent;
-    Execution exec{persistent};
-    Store &scratch = exec.scratch;
-    const Value v = CS::materialize("a", exec.deferred());
-    EXPECT_EQ(v.region(), Value::Region::Boxed);
-    scratch.clear();
-    // Узел арену не заметил. Ссылку держит список отложенного освобождения
-    // хранилища, поэтому отпускать её здесь не надо и нельзя.
-    EXPECT_EQ(scratch.string(v), "a");
+TEST(Store, AcceptsItsOwnNameSliceBack) {
+    // appendName's aliasing branch (core/src/store.cpp): the incoming name
+    // may itself point back into names_, the very pool about to grow to hold
+    // it. Growing the vector can relocate its buffer, so the copy must not
+    // read through a pointer that growth just invalidated.
+    Store store;
+    Deferred dead;
+    store.setGlobal("longer", Value::number(1.0), dead);
+    // A slice of a name already living in the pool, naming something new.
+    const std::string_view sliceBack = store.globalNameAt(0).substr(0, 4);
+    ASSERT_EQ(sliceBack, "long");
+    store.setGlobal(sliceBack, Value::number(2.0), dead);
+    EXPECT_EQ(store.globalCount(), 2u);
+    EXPECT_TRUE(store.hasGlobal("longer"));
+    EXPECT_TRUE(store.hasGlobal("long"));
+    EXPECT_EQ(store.global("long").numberValue(), 2.0);
 }
 
 }  // namespace

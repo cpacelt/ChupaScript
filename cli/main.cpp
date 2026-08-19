@@ -13,7 +13,6 @@
 #include "context.hpp"
 #include "store.hpp"
 
-#include "data.hpp"
 #include "diagnostic.hpp"
 #include "expression.hpp"
 #include "printer.hpp"
@@ -66,7 +65,7 @@ void runExpression(CS::Context &ctx, std::string_view source,
     CS::Diagnostic found[kMaxReported];
     CS::Expression expr;
     const std::uint32_t errors =
-        CS::Expression::compile(source, ctx.store(), &expr, found, kMaxReported);
+        ctx.compileExpression(source, &expr, found, kMaxReported);
     if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
 
     // Сырой путь, а не evalString: оболочка печатает null наравне со всем
@@ -90,7 +89,7 @@ void runScriptSource(CS::Context &ctx, std::string_view source,
     CS::Diagnostic found[kMaxReported];
     CS::Script script;
     const std::uint32_t errors =
-        CS::Script::compile(source, ctx.store(), &script, found, kMaxReported);
+        ctx.compileScript(source, &script, found, kMaxReported);
     if (!reportCompile(errors, source, indent, found, kMaxReported)) { return; }
 
     // Скрипт при успехе молчит: значения у него нет, а результат виден через
@@ -135,11 +134,10 @@ std::string_view trim(std::string_view text) {
 
 /// Кладёт переменную: та же дверь, которой пользуется хост.
 ///
-/// setVariable принимает только литерал — данные не вычисляются
+/// setVariableText принимает только литерал — данные не вычисляются
 /// (docs/superpowers/specs/2026-08-11-chupascript-data-design.md §3). В
 /// оболочке это ограничение встречается первым, поэтому отказ поясняется.
-void runSet(CS::Store &store, std::string_view argument) {
-    CS::Deferred dead;
+void runSet(CS::Context &ctx, std::string_view argument) {
     const std::size_t equals = argument.find('=');
     if (equals == std::string_view::npos) {
         std::cout << "error: usage is :set <name> = <literal>\n";
@@ -153,7 +151,7 @@ void runSet(CS::Store &store, std::string_view argument) {
     }
 
     CS::Diagnostic diag;
-    if (CS::setVariable(store, dead, name, text, diag)) { return; }
+    if (ctx.setVariableText(name, text, diag)) { return; }
 
     std::cout << "error: " << diag.message << "\n";
     if (diag.code == CS::ErrorCode::Data) {
@@ -200,7 +198,7 @@ After handleLine(CS::Context &ctx, std::string_view line) {
             return After::Continue;
         }
         if (name == "set") {
-            runSet(ctx.store(), argument);
+            runSet(ctx, argument);
             return After::Continue;
         }
         if (name == "reset") {

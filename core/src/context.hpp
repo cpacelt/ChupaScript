@@ -16,9 +16,9 @@ namespace CS {
 ///
 /// Пара появилась вместе с состоянием выполнения (docs/backlog.md [B57]). До
 /// него контекст был одним `Store`, и класс вокруг него был бы обёрткой ради
-/// обёртки. Смысл появился, когда у пары завелось правило: временный регион
-/// сбрасывается на границе операции, и у этого правила должно быть ровно одно
-/// место. Оно здесь, поэтому мимо него не пройти.
+/// обёртки. Смысл появился, когда у пары завелось правило: список отложенного
+/// освобождения сливается на границе операции, и у этого правила должно быть
+/// ровно одно место. Оно здесь, поэтому мимо него не пройти.
 ///
 /// Скомпилированных единиц контекст не знает и не удерживает ([B35]): владеет
 /// ими тот, кто их создал, а сюда они приходят на время вызова. Обратное
@@ -82,7 +82,7 @@ class Context {
         detail::retainValue(v);
         beginOperation();
         exec_.deferred().take(v);
-        store_.setGlobal(name, exec_.promote(v), exec_.deferred());
+        store_.setGlobal(name, v, exec_.deferred());
     }
 
     /// Строка от хоста: укладывается коробкой, потому что переживёт операцию.
@@ -100,53 +100,52 @@ class Context {
     /// Выполняет скрипт. Значения у скрипта нет (docs/semantics.md §3.1).
     bool run(const Script &script, Diagnostic &diag);
 
+    /// Compiles an expression against this Context's own Store.
+    ///
+    /// The only door to compilation: Expression::compile needs a mutable
+    /// Store to intern the names check.hpp resolves, and store() below hands
+    /// out a const view on purpose (defect Б2 — a caller that reached in
+    /// through a mutable store() could write a global outside setGlobal's
+    /// operation-boundary discipline, or hand Expression::compile a Store
+    /// this Context does not own).
+    [[nodiscard]] std::uint32_t compileExpression(std::string_view source,
+                                                  Expression *out,
+                                                  Diagnostic *diags,
+                                                  std::uint32_t capacity) {
+        return Expression::compile(source, store_, out, diags, capacity);
+    }
+
+    /// Same door, for a Script.
+    [[nodiscard]] std::uint32_t compileScript(std::string_view source, Script *out,
+                                              Diagnostic *diags,
+                                              std::uint32_t capacity) {
+        return Script::compile(source, store_, out, diags, capacity);
+    }
+
     /// Хранилище наружу: состав имён и обход агрегатов нужны и оболочке
-    /// (`:vars`, printValue), и C API (chupa_context_set*), и компиляции —
-    /// прятать его не за чем. Состояние выполнения, наоборот, наружу не
-    /// отдаётся: трогать его помимо eval и run незачем.
-    [[nodiscard]] Store &store() noexcept { return store_; }
+    /// (`:vars`, printValue), и C API. Только для чтения — defect Б2:
+    /// прежде эта дверь отдавала и мутабельную ссылку, и через неё можно было
+    /// записать глобальную переменную в обход setGlobal, минуя границу
+    /// операции этого Context. Мутация идёт через setGlobal,
+    /// setGlobalString, setVariableText; компиляция — через compileExpression
+    /// и compileScript.
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
-    /// Байты строки.
-    ///
-    /// Коробка самодостаточна, а промежуточная строка (`format(...)`) —
-    /// смещение в арену операции, и такое значение годно до следующей
-    /// операции над контекстом.
-    ///
-    /// Наружу метод остаётся ради того, кто читает сырой результат eval, — это
-    /// оболочка (cli/printer.cpp). Обёртка на Swift сюда не ходит: ей строка
-    /// приходит срезом через evalString, и она копирует её немедленно.
-    [[nodiscard]] std::string_view string(Value v) const noexcept {
-        return exec_.string(v);
-    }
-
-    /// Сколько байт занято временным регионом сейчас.
-    ///
-    /// Метрика, а не окно в состояние выполнения: наружу отдаётся число, а не
-    /// хранилище. Нужна затем, что рост временного региона иначе ничем не
-    /// виден — bytesUsed самого Store не выставлен ни в C API, ни в обёртке
-    /// (docs/backlog.md [B57], «Нерешённое»).
-    [[nodiscard]] std::size_t temporaryBytesUsed() const noexcept {
-        return exec_.scratch.bytesUsed();
-    }
-
    private:
-    /// Граница операции: временный регион освобождается целиком.
+    /// Граница операции: список отложенного освобождения сливается.
     ///
-    /// В начале операции, а не в конце: результат вычисления вправе лежать во
-    /// временном регионе либо быть коробкой, чью единственную ссылку держит
-    /// список отложенного освобождения, — а вызывающий читает результат сразу
-    /// после возврата. Сброс на выходе отнимал бы его ровно в тот момент,
-    /// когда он нужен. Правило для хоста от этого не изменилось: значение
-    /// годно до следующей операции, а чтобы оно жило дольше — надо взять на
-    /// него ссылку.
+    /// В начале операции, а не в конце: результат вычисления вправе быть
+    /// коробкой, чью единственную ссылку держит список отложенного
+    /// освобождения, — а вызывающий читает результат сразу после возврата.
+    /// Слив на выходе отнимал бы его ровно в тот момент, когда он нужен.
+    /// Правило для хоста от этого не изменилось: значение годно до следующей
+    /// операции, а чтобы оно жило дольше — надо взять на него ссылку.
     ///
     /// Раз на операцию, а не на блок или итерацию цикла: `acc = acc + str(x)`
     /// внутри `for` держит временное значение, обязанное пережить итерацию.
     /// Мусор внутри одной операции приходится терпеть — та же сделка, на
     /// которую шла водяная метка [B1] (docs/backlog.md [B57]).
     void beginOperation() noexcept {
-        exec_.scratch.clear();
         exec_.deferred().drain();
     }
 

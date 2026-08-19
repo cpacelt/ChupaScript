@@ -53,7 +53,7 @@ TEST(Box, ReleaseOfArrayReleasesElements) {
     const std::size_t before = CS::detail::liveBoxCount();
     StringBox *s = CS::detail::makeStringBox("x");
     ArrayBox *a = CS::detail::makeArrayBox(1);
-    a->items.push_back(Value::string(s, s->len));
+    a->items.push_back(Value::string(s));
     CS::detail::retain(s);   // ссылка ячейки массива
     CS::detail::release(s);  // ссылка создателя ушла, держит массив
     EXPECT_EQ(s->rc, 1u);

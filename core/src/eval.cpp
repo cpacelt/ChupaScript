@@ -56,39 +56,17 @@ bool readKey(const Ast &ast, NodeId node, Value base, std::string_view key,
 /// Тонкая обёртка над builtin.hpp::coerceScalarToString, которая знает про
 /// узел дерева ровно настолько, чтобы взять из него смещение для диагностики
 /// — правило §4 записано один раз, в builtin.cpp, и обслуживает и ключ
-/// объекта, и has, и (задачами 5 и 6) str с format.
+/// объекта, и has, и str с format.
 ///
-/// Возвращает срез: у строки — её собственные байты в хранилище, у числа —
-/// буфер вызывающего, у остальных — статическая строка. В хранилище ничего не
-/// кладётся: строка нужна на время одного поиска ключа, и класть её в пул
-/// значило бы копить мусор на каждом чтении.
-///
-/// Срез из ветки String действителен лишь до ближайшей мутации хранилища — с
-/// тем же сроком жизни и по той же причине, что и результат Store::string.
-/// У потребителей этой ветки два разных пути с этим сроком: readKey (через
-/// const objectGet) обращается к срезу до всякой мутации, а assignToIndex
-/// передаёт его дальше в мутирующий store.objectSet. Второй путь безопасен по
-/// двум причинам, и обе обязаны выполняться разом:
-///
-/// - Store::appendText (core/src/store.cpp) явно распознаёт срез,
-///   указывающий внутрь пула text_, и после роста пула копирует из нового
-///   расположения по запомненному смещению, а не по повисшему указателю —
-///   это поведение закреплено тестом в core/tests/store_test.cpp;
-/// - между вызовом coerceToString и вызовом objectSet хранилище не мутирует,
-///   потому что applyBinary принимает `const Store &` (core/src/operator.hpp)
-///   и залезть в text_ не может.
-///
-/// Вторая опора хрупкая: если applyBinary когда-нибудь получит изменяемый
-/// хранилище, срез повиснет ещё до вызова objectSet, и защита appendText уже
-/// не поможет — она признаёт срез, указывающий в актуальный пул, а не чинит
-/// произвольно устаревший указатель.
+/// A string value is a box (box.hpp) read through CS::stringBytes: no Store
+/// is involved any more, so the slice this returns is valid until the box's
+/// reference count reaches zero, not until some pool is next written.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
-bool coerceToString(const Ast &ast, NodeId node, const Store &store, Value value,
+bool coerceToString(const Ast &ast, NodeId node, Value value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
-    return coerceScalarToString(store, value, numberBuffer, out,
-                                ast.offset(node), diag);
+    return coerceScalarToString(value, numberBuffer, out, ast.offset(node), diag);
 }
 
 /// Собирает строку по шаблону (docs/semantics.md §8.8).
@@ -128,7 +106,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
     for (;;) {
         FormatPiece kind = FormatPiece::Literal;
         std::string_view chunk;
-        if (!nextFormatPiece(exec.string(tmpl), cursor, &kind, &chunk)) { break; }
+        if (!nextFormatPiece(stringBytes(tmpl), cursor, &kind, &chunk)) { break; }
 
         if (kind == FormatPiece::Literal) {
             exec.appendToString(chunk);
@@ -155,8 +133,7 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
 
         char buffer[kNumberBufferSize];
         std::string_view text;
-        if (!coerceToString(ast, node, exec.scratch, argument,
-                            buffer, &text, diag)) {
+        if (!coerceToString(ast, node, argument, buffer, &text, diag)) {
             exec.abortString(mark);
             return false;
         }
@@ -249,7 +226,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // outlive that Ast unless it is retained first
             // (chupa_value_retain).
             detail::StringBox *literal = ast.stringLiteral(node);
-            *out = Value::string(literal, literal->len);
+            *out = Value::string(literal);
             return true;
         }
 
@@ -262,7 +239,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // доходит вовсе — компиляция отвергает его ошибкой Name. Отметка
             // прохода check утверждается ниже по функции, поэтому номер тут
             // заведомо проставлен.
-            *out = exec.persistent().globalValueAt(ast.globalValuesSlot(node));
+            *out = exec.store().globalValueAt(ast.globalValuesSlot(node));
             return true;
         }
 
@@ -289,9 +266,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 case Value::Kind::Object: {
                     char buffer[kNumberBufferSize];
                     std::string_view key;
-                    if (!coerceToString(ast, node,
-                                        exec.scratch,
-                                        subscript, buffer, &key, diag)) {
+                    if (!coerceToString(ast, node, subscript, buffer, &key,
+                                        diag)) {
                         return false;
                     }
                     return readKey(ast, node, base, key, out, diag);
@@ -307,11 +283,10 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
 
         case NodeKind::Array: {
             const std::uint32_t count = ast.childCount(node);
-            // Литерал создаёт новое значение, а у вычисления нет способа
-            // создать долгоживущее: массив рождается во временном регионе
-            // (docs/backlog.md [B57]). Элемент может прийти из постоянного —
-            // `[state.header]` — и это разрешено: барьер направленный, ссылка
-            // умрёт раньше того, на что указывает.
+            // A literal always builds a new array. An element may come from
+            // an existing aggregate — `[state.header]` — and that is fine:
+            // the new array takes a reference, not a copy, and every value it
+            // can hold is already a self-contained box.
             // Размер известен заранее — точное выделение, без переездов.
             const Value array = CS::makeArray(count, exec.deferred());
             for (std::uint32_t i = 0; i < count; ++i) {
@@ -319,10 +294,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
                     return false;
                 }
-                // Продвижение обязательно и здесь, хотя массив временный:
-                // агрегат — узел и умеет уехать в глобальную переменную, а
-                // смещение в арену операции туда попасть не должно.
-                arrayPush(array, exec.promote(element));
+                arrayPush(array, element);
             }
             *out = array;
             return true;
@@ -343,7 +315,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 // узле литерала, которым владеет хранилище контекста, и живут
                 // дольше всякого объекта, который их примет.
                 objectSet(object, ast.stringLiteral(ast.child(node, i))->view(),
-                          exec.promote(value), exec.deferred());
+                          value, exec.deferred());
             }
             *out = object;
             return true;
@@ -406,9 +378,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             if (!eval(ast, source, ast.child(node, 0), exec, &lhs, diag)) { return false; }
             Value rhs = Value::null();
             if (!eval(ast, source, ast.child(node, 1), exec, &rhs, diag)) { return false; }
-            return applyBinary(op, lhs, rhs, exec.scratch,
-                               exec.scratch, ast.offset(node), out,
-                               diag);
+            return applyBinary(op, lhs, rhs, ast.offset(node), out, diag);
         }
 
         case NodeKind::Conditional: {
@@ -510,9 +480,6 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
     // исходника, а не пула, поэтому запись в хранилище его не задевает.
     const std::string_view key = ast.text(target, source);
 
-    // Писать надо туда, где лежит цель: state.k = ... в постоянное,
-    // [{'k': 1}][0].k = ... во временное (docs/backlog.md [B57]).
-
     const TokenKind op = ast.op(node);
     if (op != TokenKind::Assign) {
         // x op= e есть x = x op e. Чтение идёт по уже вычисленной базе,
@@ -521,17 +488,13 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
         const Value current = CS::objectGet(base, key);
         Value combined = Value::null();
         if (!applyBinary(compoundOperation(op), current, value,
-                         exec.scratch, exec.scratch, ast.offset(node),
-                         &combined, diag)) {
+                         ast.offset(node), &combined, diag)) {
             return false;
         }
         value = combined;
     }
 
-    // Барьер записи: временное значение в постоянном агрегате пережило бы
-    // сброс своего региона, поэтому копируется. Обратное направление promote
-    // пропускает как есть.
-    objectSet(base, key, exec.promote(value), exec.deferred());
+    objectSet(base, key, value, exec.deferred());
     return true;
 }
 
@@ -567,8 +530,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 }
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 exec.scratch, exec.scratch, ast.offset(node),
-                                 &combined, diag)) {
+                                 ast.offset(node), &combined, diag)) {
                     return false;
                 }
                 value = combined;
@@ -582,24 +544,17 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             }
             // Границу проверили выше, поэтому запись не отказывает.
             static_cast<void>(arraySet(base, static_cast<std::uint32_t>(index),
-                                       exec.promote(value), exec.deferred()));
+                                       value, exec.deferred()));
             return true;
         }
 
         case Value::Kind::Object: {
             const TokenKind op = ast.op(node);
 
-            // Продвижение стоит **до** приведения ключа, а не рядом с записью.
-            // Ключ — срез пула текста, возможно того же самого, куда promote
-            // допишет копию; взятый раньше, он повис бы ровно так, как
-            // предупреждает комментарий у coerceToString. Порядок здесь и есть
-            // защита.
-            if (op == TokenKind::Assign) { value = exec.promote(value); }
-
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceToString(ast, target, exec.scratch,
-                                subscript, buffer, &key, diag)) {
+            if (!coerceToString(ast, target, subscript, buffer, &key,
+                                diag)) {
                 return false;
             }
 
@@ -607,24 +562,19 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 const Value current = CS::objectGet(base, key);
                 Value combined = Value::null();
                 if (!applyBinary(compoundOperation(op), current, value,
-                                 exec.scratch, exec.scratch, ast.offset(node),
-                                 &combined, diag)) {
+                                 ast.offset(node), &combined, diag)) {
                     return false;
                 }
-                // Продвигать нечего: applyBinary отдаёт только число и флаг,
-                // а они ничего не адресуют. Утверждение, а не молчаливое
-                // допущение — если у += появится результат-агрегат, вместе с
-                // продвижением придётся заново решать и про ключ выше.
-                assert(!combined.addressesStore() &&
-                       "составное присваивание дало ссылающееся значение: "
-                       "его надо продвигать, а ключ — брать после этого");
+                // applyBinary only ever returns a Number or a Boolean for a
+                // compound assignment (docs/semantics.md §7.2); asserted, not
+                // silently assumed, so a future arithmetic result that
+                // referenced a box would fail loudly here instead of eval.cpp
+                // silently mishandling it.
+                assert(!combined.referencesBox() &&
+                       "compound assignment produced a box-referencing value");
                 value = combined;
             }
 
-            // Продвигать здесь нечего ни на одном из путей: при Assign
-            // значение уже прошло promote выше, до приведения ключа, а при
-            // составном присваивании оно результат applyBinary, и то, что оно
-            // ничего не адресует, утверждается строкой выше.
             objectSet(base, key, value, exec.deferred());
             return true;
         }

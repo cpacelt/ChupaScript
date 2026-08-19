@@ -1,5 +1,6 @@
 #include "expression.hpp"
 
+#include "box.hpp"
 #include "compile.hpp"
 #include "eval.hpp"
 
@@ -73,7 +74,7 @@ EvalStatus Expression::evalString(Execution &exec, std::string_view *out,
     const EvalStatus status = evalOfKind(exec, Value::Kind::String,
                                          "eval_string: value is not a string",
                                          &value, diag);
-    if (status == EvalStatus::Ok) { *out = exec.string(value); }
+    if (status == EvalStatus::Ok) { *out = stringBytes(value); }
     return status;
 }
 

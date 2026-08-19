@@ -118,7 +118,7 @@ namespace CS {
 [[nodiscard]] inline Value materialize(std::string_view bytes, Deferred &dead) {
     detail::StringBox *box = detail::makeStringBox(bytes);
     dead.take(box);  // ссылка создателя — до ближайшей границы
-    return Value::string(box, box->len);
+    return Value::string(box);
 }
 
 /// Создаёт пустой массив. capacity — сколько элементов выделить заранее; на
@@ -156,7 +156,6 @@ namespace CS {
 inline bool arraySet(Value a, std::uint32_t index, Value v,
                      Deferred &dead) noexcept {
     assert(a.kind() == Value::Kind::Array);
-    assert(detail::materialized(v) && "строка временного региона не материализована");
     detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
     if (index >= box->items.size()) { return false; }
     detail::retainValue(v);
@@ -170,7 +169,6 @@ inline bool arraySet(Value a, std::uint32_t index, Value v,
 /// Предусловие: a.kind() == Value::Kind::Array.
 inline void arrayPush(Value a, Value v) {
     assert(a.kind() == Value::Kind::Array);
-    assert(detail::materialized(v) && "строка временного региона не материализована");
     detail::retainValue(v);
     static_cast<detail::ArrayBox *>(a.box())->items.push_back(v);
 }
@@ -197,7 +195,6 @@ inline bool arrayPop(Value a, Value *out, Deferred &dead) noexcept {
 /// Предусловие: o.kind() == Value::Kind::Object.
 inline void objectSet(Value o, std::string_view key, Value v, Deferred &dead) {
     assert(o.kind() == Value::Kind::Object);
-    assert(detail::materialized(v) && "строка временного региона не материализована");
     detail::ObjectBox &box = *static_cast<detail::ObjectBox *>(o.box());
 
     const std::uint32_t prefix = detail::keyPrefix(key);

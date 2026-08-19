@@ -9,6 +9,7 @@
 
 #include "chupascript/chupascript.h"
 #include "ast.hpp"
+#include "box.hpp"
 #include "check.hpp"
 #include "compile.hpp"
 #include "context.hpp"
@@ -40,6 +41,20 @@ bool fill(Store &store) {
            CS::setVariable(store, dead, "map", "{'0': 'zero', '1': 'one'}", diag);
 }
 
+/// Same data, through the Context's own door: compileExpression/compileScript
+/// need store_ to stay under this Context's operation-boundary discipline, so
+/// benchmarks built around a Context fill it with setVariableText rather than
+/// reaching past store() with the raw CS::setVariable used by fill() above.
+bool fillCtx(CS::Context &ctx) {
+    Diagnostic diag;
+    return ctx.setVariableText("user",
+                               "{'name': 'Вася', 'profile': {'city': {'code': "
+                               "{'zip': 101000}}}}",
+                               diag) &&
+           ctx.setVariableText("items", "[10, 20, 30]", diag) &&
+           ctx.setVariableText("map", "{'0': 'zero', '1': 'one'}", diag);
+}
+
 /// Общая часть: наполнить контекст, скомпилировать выражение, мерить вычисление.
 ///
 /// Через Context, а не через Execution напрямую, и это не стилистика.
@@ -50,14 +65,14 @@ bool fill(Store &store) {
 /// бы установившийся режим, в который движок в этой сборке не входит никогда.
 void runEval(benchmark::State &state, std::string_view source) {
     CS::Context ctx;
-    if (!fill(ctx.store())) {
+    if (!fillCtx(ctx)) {
         state.SkipWithError("setVariable failed");
         return;
     }
 
     CS::Expression expr;
     Diagnostic diags[1];
-    if (CS::Expression::compile(source, ctx.store(), &expr, diags, 1) != 0) {
+    if (ctx.compileExpression(source, &expr, diags, 1) != 0) {
         state.SkipWithError("Expression::compile failed");
         return;
     }
@@ -211,22 +226,21 @@ BENCHMARK(BM_Eval_DeepChain);
 /// Общая часть для чувствительности к числу имён: то же выражение, но в
 /// хранилище лежит names глобальных переменных, а нужная — последняя.
 void runEvalWithGlobals(benchmark::State &state, int names) {
-    CS::Deferred dead;
     CS::Context ctx;
     Diagnostic diag;
     for (int i = 0; i < names; ++i) {
-        if (!CS::setVariable(ctx.store(), dead, "var" + std::to_string(i), "1", diag)) {
+        if (!ctx.setVariableText("var" + std::to_string(i), "1", diag)) {
             state.SkipWithError("setVariable failed");
             return;
         }
     }
-    if (!CS::setVariable(ctx.store(), dead, "zzz_user", "{'name': 'Вася'}", diag)) {
+    if (!ctx.setVariableText("zzz_user", "{'name': 'Вася'}", diag)) {
         state.SkipWithError("setVariable failed");
         return;
     }
 
     CS::Expression expr;
-    if (CS::Expression::compile("zzz_user.name", ctx.store(), &expr, &diag, 1) != 0) {
+    if (ctx.compileExpression("zzz_user.name", &expr, &diag, 1) != 0) {
         state.SkipWithError("Expression::compile failed");
         return;
     }
@@ -332,14 +346,14 @@ void runScriptHot(benchmark::State &state, std::string_view source) {
     // Через Context по той же причине, что и runEval: границу операции
     // открывает только он, и без неё мерился бы не тот режим.
     CS::Context ctx;
-    if (!fill(ctx.store())) {
+    if (!fillCtx(ctx)) {
         state.SkipWithError("setVariable failed");
         return;
     }
 
     CS::Script script;
     Diagnostic diags[1];
-    if (CS::Script::compile(source, ctx.store(), &script, diags, 1) != 0) {
+    if (ctx.compileScript(source, &script, diags, 1) != 0) {
         state.SkipWithError("Script::compile failed");
         return;
     }
@@ -641,7 +655,7 @@ BENCHMARK_CAPTURE(BM_Copy_SourceBytes, Handler,
 // ─── Р6: цена границы C на строковом результате ───
 //
 // Пара мерит одно и то же вычисление двумя путями: через C API и напрямую
-// через ядро (CS::Expression::eval плюс Store::string). Раньше между ними
+// через ядро (CS::Expression::eval плюс CS::stringBytes). Раньше между ними
 // стояло владение: chupa_eval_string_borrowed заводил ChupaString — обёртку над
 // std::string, — копировал туда результат, и хост обязан был позвать
 // chupa_string_destroy. Пара malloc/free плюс копия байт на каждое чтение.
@@ -726,7 +740,7 @@ void BM_Eval_String_Old(benchmark::State &state, std::string_view value) {
             state.SkipWithError("eval failed");
             return;
         }
-        std::string_view text = store.string(out);
+        std::string_view text = CS::stringBytes(out);
         benchmark::DoNotOptimize(text);
     }
 }
@@ -736,45 +750,39 @@ BENCHMARK_CAPTURE(BM_Eval_String_Old, Short, kShortStringValue);
 BENCHMARK_CAPTURE(BM_Eval_String_New, Long, kLongStringValue);
 BENCHMARK_CAPTURE(BM_Eval_String_Old, Long, kLongStringValue);
 
-// ─── граница операции ───
+// ─── operation boundary ───
 //
-// Пара про то, ради чего заводился временный регион ([B57]). Все строки выше
-// зовут evalExpression напрямую и границу операции не переходят: временный
-// регион у них не сбрасывается никогда. Значит цену разделения они мерят, а
-// выгоду — нет.
+// This pair used to measure the temporary region ([B57]): the boundary reset
+// a scratch arena, and BM_Eval_ContextAggregate carried a temp_bytes_per_iter
+// counter proving the reset actually fired. Task 5 removed the arena itself
+// (every String/Array/Object value is now a self-contained refcounted box),
+// so there is nothing left to reset and nothing left to count.
 //
-// Выражение одно и то же и обязано что-то создавать, иначе мерить нечего:
-// объектный литерал из трёх ключей, тот же, что в BM_Eval_ObjectLiteral.
-// Разница только в том, кто его вычисляет.
-//
-// Считается не столько время, сколько счётчик temp_bytes_per_iter — сколько
-// байт временного региона осталось на итерацию. У контекста он обязан быть
-// около нуля независимо от числа итераций: регион сбрасывается на входе в
-// каждую операцию. У примитива он равен размеру агрегата и не убывает — там
-// граница не проходит, и каждый литерал остаётся лежать.
-//
-// Отсюда и защита от регресса: если граница операции когда-нибудь перестанет
-// срабатывать, первый счётчик перестанет быть нулевым, и это видно, а не
-// проходит молча.
+// What the operation boundary still does is drain the Deferred list
+// (Context::beginOperation, core/src/context.hpp) — creator references
+// collected since the last operation get released there. The pair is kept
+// for that reason: it is still the only place that shows the cost of going
+// through Context (which drains Deferred on every eval) against calling
+// Expression::eval directly (which never drains). Same aggregate literal as
+// BM_Eval_ObjectLiteral, chosen because building it is what puts something
+// on the Deferred list to drain.
 constexpr std::string_view kAggregateSource =
     "{'id': 1, 'name': 'Вася', 'active': true}";
 
-/// Через контекст: граница операции проходит на каждом eval.
+/// Through Context: the operation boundary runs on every eval.
 void BM_Eval_ContextAggregate(benchmark::State &state) {
     CS::Context ctx;
-    if (!fill(ctx.store())) {
+    if (!fillCtx(ctx)) {
         state.SkipWithError("setVariable failed");
         return;
     }
     CS::Expression expr;
     Diagnostic diag;
-    if (CS::Expression::compile(kAggregateSource, ctx.store(), &expr, &diag,
-                                1) != 0) {
+    if (ctx.compileExpression(kAggregateSource, &expr, &diag, 1) != 0) {
         state.SkipWithError("Expression::compile failed");
         return;
     }
 
-    std::uint64_t iterations = 0;
     for (auto _ : state) {
         Value out = Value::null();
         if (!ctx.eval(expr, &out, diag)) {
@@ -782,17 +790,12 @@ void BM_Eval_ContextAggregate(benchmark::State &state) {
             return;
         }
         benchmark::DoNotOptimize(out);
-        ++iterations;
     }
-    state.counters["temp_bytes_per_iter"] =
-        iterations == 0
-            ? 0.0
-            : static_cast<double>(ctx.temporaryBytesUsed()) /
-                  static_cast<double>(iterations);
 }
 BENCHMARK(BM_Eval_ContextAggregate);
 
-/// Мимо контекста: то же вычисление примитивом, границы операции нет.
+/// Past Context: the same computation through the primitive, no operation
+/// boundary at all.
 void BM_Eval_RawAggregate(benchmark::State &state) {
     Store store;
     if (!fill(store)) {
@@ -808,7 +811,6 @@ void BM_Eval_RawAggregate(benchmark::State &state) {
     }
 
     CS::Execution exec(store);
-    std::uint64_t iterations = 0;
     for (auto _ : state) {
         Value out = Value::null();
         if (!expr.eval(exec, &out, diag)) {
@@ -816,12 +818,7 @@ void BM_Eval_RawAggregate(benchmark::State &state) {
             return;
         }
         benchmark::DoNotOptimize(out);
-        ++iterations;
     }
-    state.counters["temp_bytes_per_iter"] =
-        iterations == 0 ? 0.0
-                        : static_cast<double>(exec.scratch.bytesUsed()) /
-                              static_cast<double>(iterations);
 }
 BENCHMARK(BM_Eval_RawAggregate);
 

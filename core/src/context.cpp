@@ -14,13 +14,11 @@ bool Context::evalValue(const Expression &expr, Value *out, Diagnostic &diag) {
     Value value = Value::null();
     if (!expr.eval(exec_, &value, diag)) { return false; }
 
-    // Вычисленная строка (format, str) живёт в арене операции: коробки у неё нет,
-    // и удержать её нечем. На этом пути она обязана стать коробкой — иначе
-    // chupa_value_retain оказался бы молчаливой ложью, а хост узнал бы об этом
-    // через чтение освобождённой арены.
-    //
-    // Прочее проходит как есть: скаляр самодостаточен, коробка уже коробка.
-    *out = exec_.promote(value);
+    // Every String, Object or Array a compiled expression can produce is
+    // already a self-contained box (there is no other way to address one
+    // any more), so there is nothing left to promote here: this used to be
+    // where a temporary-arena string became a box, and that arena is gone.
+    *out = value;
     return true;
 }
 

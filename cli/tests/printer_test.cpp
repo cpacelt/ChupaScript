@@ -6,23 +6,20 @@
 #include <string_view>
 #include <vector>
 
-#include "data.hpp"
+#include "context.hpp"
 #include "diagnostic.hpp"
-#include "store.hpp"
 #include "aggregate.hpp"
 
 namespace {
 
-using CS::Store;
 using CS::Diagnostic;
 using CS::Value;
 
 /// Кладёт переменную и возвращает её значение.
-Value put(Store &store, std::string_view name, std::string_view text) {
-    CS::Deferred dead;
+Value put(CS::Context &ctx, std::string_view name, std::string_view text) {
     Diagnostic diag;
-    EXPECT_TRUE(CS::setVariable(store, dead, name, text, diag)) << diag.message;
-    return store.global(name);
+    EXPECT_TRUE(ctx.setVariableText(name, text, diag)) << diag.message;
+    return ctx.store().global(name);
 }
 
 TEST(PrintValue, Scalars) {
@@ -37,42 +34,37 @@ TEST(PrintValue, Scalars) {
 
 TEST(PrintValue, StringsAreQuoted) {
     CS::Context ctx;
-    Store &store = ctx.store();
     // Кавычки обязательны: при строгой типизации отличить 1 от '1' глазами —
     // половина отладки выражения.
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "s", "'привет'")), "'привет'");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "e", "''")), "''");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "s", "'привет'")), "'привет'");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "e", "''")), "''");
 }
 
 TEST(PrintValue, StringsAreEscapedBackToSource) {
     CS::Context ctx;
-    Store &store = ctx.store();
     // Напечатанное обязано быть тем, что можно набрать обратно: набор
     // escape-последовательностей из docs/grammar.md §4.7.
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "q", "'it\\'s'")), "'it\\'s'");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "b", "'a\\\\b'")), "'a\\\\b'");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "n", "'a\\nb'")), "'a\\nb'");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "t", "'a\\tb'")), "'a\\tb'");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "q", "'it\\'s'")), "'it\\'s'");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "b", "'a\\\\b'")), "'a\\\\b'");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "n", "'a\\nb'")), "'a\\nb'");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "t", "'a\\tb'")), "'a\\tb'");
 }
 
 TEST(PrintValue, EmptyAggregates) {
     CS::Context ctx;
-    Store &store = ctx.store();
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "a", "[]")), "[]");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "o", "{}")), "{}");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "a", "[]")), "[]");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "o", "{}")), "{}");
 }
 
 TEST(PrintValue, ArraysAndObjects) {
     CS::Context ctx;
-    Store &store = ctx.store();
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "a", "[1, 2, 3]")), "[1, 2, 3]");
-    EXPECT_EQ(chupa::printValue(ctx, put(store, "o", "{'a': 1}")), "{'a': 1}");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "a", "[1, 2, 3]")), "[1, 2, 3]");
+    EXPECT_EQ(chupa::printValue(ctx, put(ctx, "o", "{'a': 1}")), "{'a': 1}");
 }
 
 TEST(PrintValue, NestedAggregates) {
     CS::Context ctx;
-    Store &store = ctx.store();
-    const Value v = put(store, "v", "{'items': [1, {'k': null}], 'ok': true}");
+    const Value v = put(ctx, "v", "{'items': [1, {'k': null}], 'ok': true}");
     // Ключи объекта хранятся отсортированными, поэтому порядок предсказуем.
     EXPECT_EQ(chupa::printValue(ctx, v),
               "{'items': [1, {'k': null}], 'ok': true}");
@@ -81,8 +73,7 @@ TEST(PrintValue, NestedAggregates) {
 TEST(PrintValue, SelfReferencingObjectTerminates) {
     CS::Deferred dead;
     CS::Context ctx;
-    Store &store = ctx.store();
-    const Value o = put(store, "o", "{'n': 1}");
+    const Value o = put(ctx, "o", "{'n': 1}");
     CS::objectSet(o, "self", o, dead);
     // docs/semantics.md §2.3 объявляет такую программу корректной; печатник
     // обязан завершиться, а не зациклиться.
@@ -91,8 +82,7 @@ TEST(PrintValue, SelfReferencingObjectTerminates) {
 
 TEST(PrintValue, SelfReferencingArrayTerminates) {
     CS::Context ctx;
-    Store &store = ctx.store();
-    const Value a = put(store, "a", "[1]");
+    const Value a = put(ctx, "a", "[1]");
     CS::arrayPush(a, a);
     EXPECT_EQ(chupa::printValue(ctx, a), "[1, [...]]");
 }
@@ -100,9 +90,8 @@ TEST(PrintValue, SelfReferencingArrayTerminates) {
 TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
     CS::Deferred dead;
     CS::Context ctx;
-    Store &store = ctx.store();
-    const Value shared = put(store, "shared", "[1, 2]");
-    const Value holder = put(store, "holder", "{}");
+    const Value shared = put(ctx, "shared", "[1, 2]");
+    const Value holder = put(ctx, "holder", "{}");
     CS::objectSet(holder, "a", shared, dead);
     CS::objectSet(holder, "b", shared, dead);
     // Один агрегат под двумя ключами — не цикл. Отслеживается путь печати, а
@@ -112,7 +101,6 @@ TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
 
 TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
     CS::Context ctx;
-    Store &store = ctx.store();
     // Не цикл: каждый массив содержит следующий ровно один раз, ни один
     // агрегат не встречается на собственном пути печати. Путь его не
     // поймает — глубина ловится отдельным счётчиком (cli/printer.cpp,
@@ -121,7 +109,7 @@ TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
     std::vector<Value> arrays;
     arrays.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
-        arrays.push_back(put(store, "r" + std::to_string(i), "[]"));
+        arrays.push_back(put(ctx, "r" + std::to_string(i), "[]"));
     }
     for (int i = 0; i + 1 < kCount; ++i) {
         CS::arrayPush(arrays[static_cast<std::size_t>(i)],
@@ -135,9 +123,8 @@ TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
 TEST(PrintValue, MutualCycleTerminates) {
     CS::Deferred dead;
     CS::Context ctx;
-    Store &store = ctx.store();
-    const Value a = put(store, "a", "{}");
-    const Value b = put(store, "b", "{}");
+    const Value a = put(ctx, "a", "{}");
+    const Value b = put(ctx, "b", "{}");
     CS::objectSet(a, "b", b, dead);
     CS::objectSet(b, "a", a, dead);
     // Цикл длиной два: путь ловит и его.

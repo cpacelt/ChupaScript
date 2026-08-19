@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <type_traits>
 
 #include "data.hpp"
 #include "aggregate.hpp"
@@ -16,16 +17,38 @@ namespace {
 CS::Expression compileIn(CS::Context &ctx, std::string_view source) {
     CS::Expression expr;
     CS::Diagnostic diags[1];
-    EXPECT_EQ(CS::Expression::compile(source, ctx.store(), &expr, diags, 1), 0u)
+    EXPECT_EQ(ctx.compileExpression(source, &expr, diags, 1), 0u)
         << diags[0].message;
     return expr;
 }
 
-TEST(Context, EvaluatesInTheStoreItHandsOut) {
-    CS::Deferred dead;
+// Context::store() must hand out a read-only view: nothing outside the door
+// methods (setVariableText, compileExpression, compileScript) may mutate the
+// Store a Context owns.
+TEST(Context, HandsOutItsStoreForReadingOnly) {
+    static_assert(
+        std::is_const_v<std::remove_reference_t<decltype(std::declval<CS::Context &>().store())>>,
+        "Context::store() must not hand out a mutable Store");
+}
+
+// A Context compiles against its own Store without exposing a mutable
+// reference to it: the door is compileExpression, not store().
+TEST(Context, CompilesAgainstItsOwnStore) {
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "user", "{'name': 'Вася'}", diag));
+    ASSERT_TRUE(ctx.setVariableText("x", "41", diag));
+    CS::Expression expr;
+    CS::Diagnostic diags[1];
+    ASSERT_EQ(ctx.compileExpression("x + 1", &expr, diags, 1), 0u) << diags[0].message;
+    double out = 0.0;
+    ASSERT_EQ(ctx.evalNumber(expr, &out, diag), CS::EvalStatus::Ok);
+    EXPECT_EQ(out, 42.0);
+}
+
+TEST(Context, EvaluatesInTheStoreItHandsOut) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("user", "{'name': 'Вася'}", diag));
 
     const CS::Expression expr = compileIn(ctx, "user.name");
     CS::Value out = CS::Value::null();
@@ -34,20 +57,17 @@ TEST(Context, EvaluatesInTheStoreItHandsOut) {
     // Существенно не «вычислилось», а «вычислилось в том же хранилище, что
     // отдаёт store()»: значение это индекс в пулы, и из чужого хранилища оно
     // указывало бы не туда.
-    EXPECT_EQ(ctx.store().string(out), "Вася");
+    EXPECT_EQ(CS::stringBytes(out), "Вася");
 }
 
 TEST(Context, ScriptChangesAreVisibleThroughTheStore) {
-    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'count': 1}", diag));
+    ASSERT_TRUE(ctx.setVariableText("state", "{'count': 1}", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    ASSERT_EQ(CS::Script::compile("state.count = 2;", ctx.store(), &script,
-                                  diags, 1),
-              0u)
+    ASSERT_EQ(ctx.compileScript("state.count = 2;", &script, diags, 1), 0u)
         << diags[0].message;
     ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
 
@@ -76,10 +96,9 @@ TEST(Context, TypedEvalsReachTheSameExpression) {
 }
 
 TEST(Context, ReportsEvaluationFailure) {
-    CS::Deferred dead;
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'items': [1]}", diag));
+    ASSERT_TRUE(ctx.setVariableText("state", "{'items': [1]}", diag));
 
     // Отрицательный индекс: разбор и проверка проходят, падает вычисление —
     // то есть diag заполняет именно этот путь. Ни отсутствующий ключ, ни
@@ -92,47 +111,6 @@ TEST(Context, ReportsEvaluationFailure) {
     // При отказе выходной параметр не трогается — соглашение Expression::eval
     // проходит через Context насквозь.
     EXPECT_DOUBLE_EQ(out.numberValue(), 42.0);
-}
-
-TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
-    CS::Context ctx;
-    CS::Diagnostic diag;
-
-    // format used to assemble its result in the temporary region, so without a
-    // reset at the operation boundary that region grew linearly with the
-    // number of evaluations — exactly what [B57] closes. Now format builds
-    // through Execution's own buffer and hands back a box, so nothing lands
-    // in the temporary region at all; the invariant this test guards still
-    // holds, just for a stronger reason: there is nothing here to grow.
-    const CS::Expression expr = compileIn(ctx, "format('${}${}', 1, 2)");
-
-    CS::Value out = CS::Value::null();
-    for (int i = 0; i < 16; ++i) {
-        ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
-        EXPECT_EQ(ctx.temporaryBytesUsed(), 0u);
-    }
-}
-
-TEST(Context, ScriptAlsoOpensAnOperation) {
-    CS::Deferred dead;
-    CS::Context ctx;
-    CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "state", "{'n': 0}", diag));
-
-    CS::Script script;
-    CS::Diagnostic diags[1];
-    // A string, not an aggregate: the temporary region now carries only bytes,
-    // and format's result is a box, so nothing lands there at all.
-    ASSERT_EQ(CS::Script::compile("state.n = format('${}${}', 1, 2);", ctx.store(),
-                                  &script, diags, 1),
-              0u)
-        << diags[0].message;
-
-    ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
-    for (int i = 0; i < 16; ++i) {
-        ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
-        EXPECT_EQ(ctx.temporaryBytesUsed(), 0u);
-    }
 }
 
 /// A computed string handed straight back into a global variable keeps its
@@ -152,7 +130,7 @@ TEST(Context, ComputedStringSurvivesBeingStoredInAGlobal) {
     ASSERT_EQ(computed.kind(), CS::Value::Kind::String);
 
     ctx.setGlobal("saved", computed);
-    EXPECT_EQ(ctx.string(ctx.store().global("saved")), "привет, Вася");
+    EXPECT_EQ(CS::stringBytes(ctx.store().global("saved")), "привет, Вася");
 }
 
 /// And it stays readable across any number of later operations: a boxed string
@@ -173,7 +151,7 @@ TEST(Context, StoredComputedStringSurvivesLaterOperations) {
         ASSERT_TRUE(ctx.eval(noise, &ignored, diag)) << diag.message;
     }
 
-    EXPECT_EQ(ctx.string(ctx.store().global("saved")), "привет, Вася");
+    EXPECT_EQ(CS::stringBytes(ctx.store().global("saved")), "привет, Вася");
 }
 
 #ifndef NDEBUG
@@ -201,16 +179,15 @@ TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
 
 #ifndef NDEBUG
 TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
-    CS::Deferred dead;
     // Единственный способ вырастить массив в языке. Раньше каждый push
     // переносил его в хвост пула, бросая прежний диапазон мусором.
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[]", diag)) << diag.message;
+    ASSERT_TRUE(ctx.setVariableText("rows", "[]", diag)) << diag.message;
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    ASSERT_EQ(CS::Script::compile("push(rows, 1);", ctx.store(), &script, diags, 1), 0u)
+    ASSERT_EQ(ctx.compileScript("push(rows, 1);", &script, diags, 1), 0u)
         << diags[0].message;
 
     const std::size_t before = CS::detail::liveBoxCount();
@@ -226,14 +203,13 @@ TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
 #endif
 
 TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
-    CS::Deferred dead;
     // То, ради чего всё это: значение, отданное наружу, не зависит от того,
     // жив контекст или нет. Хост берёт ссылку и отпускает её сам.
     CS::Value escaped = CS::Value::null();
     {
         CS::Context ctx;
         CS::Diagnostic diag;
-        ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[1, 2, 3]", diag))
+        ASSERT_TRUE(ctx.setVariableText("rows", "[1, 2, 3]", diag))
             << diag.message;
 
         const CS::Expression expr = compileIn(ctx, "rows");
@@ -250,12 +226,11 @@ TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
 }
 
 TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
-    CS::Deferred dead;
     CS::Value escaped = CS::Value::null();
     {
         CS::Context ctx;
         CS::Diagnostic diag;
-        ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "user", "{'name': 'Вася'}", diag))
+        ASSERT_TRUE(ctx.setVariableText("user", "{'name': 'Вася'}", diag))
             << diag.message;
         const CS::Expression expr = compileIn(ctx, "user");
         ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
@@ -270,17 +245,17 @@ TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
 }
 
 TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
-    CS::Deferred dead;
-    // Строка собирается в арене операции, а границу переживает коробкой — ровно
-    // то правило, ради которого укладка в агрегат материализует строку.
+    // A computed string is built self-contained and survives the operation
+    // boundary as a box — exactly the rule that lets a value get pushed into
+    // an aggregate straight after being formatted.
     CS::Context ctx;
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(ctx.store(), dead, "rows", "[]", diag)) << diag.message;
+    ASSERT_TRUE(ctx.setVariableText("rows", "[]", diag)) << diag.message;
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    ASSERT_EQ(CS::Script::compile("push(rows, format('${}${}', 1, 2));", ctx.store(),
-                                  &script, diags, 1),
+    ASSERT_EQ(ctx.compileScript("push(rows, format('${}${}', 1, 2));",
+                               &script, diags, 1),
               0u)
         << diags[0].message;
     ASSERT_TRUE(ctx.run(script, diag)) << diag.message;
@@ -303,8 +278,7 @@ TEST(Execution, BuildsAStringIntoABox) {
     const CS::Value built = exec.endString(mark);
 
     EXPECT_EQ(built.kind(), CS::Value::Kind::String);
-    EXPECT_EQ(built.region(), CS::Value::Region::Boxed);
-    EXPECT_EQ(exec.string(built), "привет");
+    EXPECT_EQ(CS::stringBytes(built), "привет");
 }
 
 /// A nested build finishes before the outer one continues, because the inner
@@ -321,8 +295,8 @@ TEST(Execution, NestedBuildTakesOnlyItsOwnTail) {
     exec.appendToString("d");
     const CS::Value outerResult = exec.endString(outer);
 
-    EXPECT_EQ(exec.string(innerResult), "bc");
-    EXPECT_EQ(exec.string(outerResult), "ad");
+    EXPECT_EQ(CS::stringBytes(innerResult), "bc");
+    EXPECT_EQ(CS::stringBytes(outerResult), "ad");
 }
 
 /// An abandoned build leaves nothing behind for the next one to pick up.
@@ -336,7 +310,7 @@ TEST(Execution, AbortedBuildLeavesNoTail) {
 
     const std::uint32_t second = exec.beginString();
     exec.appendToString("kept");
-    EXPECT_EQ(exec.string(exec.endString(second)), "kept");
+    EXPECT_EQ(CS::stringBytes(exec.endString(second)), "kept");
 }
 
 /// Aborting an inner build must not disturb bytes an outer, still-open build
@@ -352,7 +326,7 @@ TEST(Execution, NestedAbortLeavesTheOuterAssemblyIntact) {
     exec.appendToString("выброшенное");
     exec.abortString(inner);
     exec.appendToString("продолжение");
-    EXPECT_EQ(exec.string(exec.endString(outer)), "внешнее продолжение");
+    EXPECT_EQ(CS::stringBytes(exec.endString(outer)), "внешнее продолжение");
 }
 
 /// The mark is a POSITION, not a pointer: growing builder_ well past its
@@ -367,7 +341,7 @@ TEST(Execution, SurvivesBufferGrowth) {
         exec.appendToString("кусок");
         expected += "кусок";
     }
-    EXPECT_EQ(exec.string(exec.endString(mark)), expected);
+    EXPECT_EQ(CS::stringBytes(exec.endString(mark)), expected);
 }
 
 }  // namespace

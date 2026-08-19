@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <string>
 
+#include "box.hpp"
 #include "diagnostic.hpp"
 #include "store.hpp"
 #include "aggregate.hpp"
@@ -100,22 +101,25 @@ TEST(DataFailure, SyntaxErrorLeavesNoGlobal) {
 TEST(DataStrings, BothQuoteFormsAreAccepted) {
     Store store;
     // docs/grammar.md §A: обе формы равноправны и дают одинаковые значения.
-    EXPECT_EQ(store.string(put(store, "a", "'Вася'")), "Вася");
-    EXPECT_EQ(store.string(put(store, "b", "\"Вася\"")), "Вася");
+    const Value a = put(store, "a", "'Вася'");
+    EXPECT_EQ(CS::stringBytes(a), "Вася");
+    const Value b = put(store, "b", "\"Вася\"");
+    EXPECT_EQ(CS::stringBytes(b), "Вася");
 }
 
 TEST(DataStrings, EmptyStringIsAccepted) {
     Store store;
     const Value v = put(store, "empty", "''");
     EXPECT_EQ(v.kind(), Value::Kind::String);
-    EXPECT_TRUE(store.string(v).empty());
+    EXPECT_TRUE(CS::stringBytes(v).empty());
 }
 
 TEST(DataStrings, BytesArriveAlreadyUnescapedByTheHost) {
     Store store;
     // Внешний JSON снимает хост, до нас доезжают настоящие байты UTF-8.
     // Шесть кириллических букв — двенадцать байт.
-    EXPECT_EQ(store.string(put(store, "greet", "'привет'")).size(), 12u);
+    const Value v = put(store, "greet", "'привет'");
+    EXPECT_EQ(CS::stringBytes(v).size(), 12u);
 }
 
 TEST(DataMinus, NegativeNumberIsAccepted) {
@@ -165,34 +169,40 @@ TEST(DataMinus, DoubleMinusIsRejected) {
 
 TEST(DataEscapes, NewlineIsDecoded) {
     Store store;
-    const std::string_view text = store.string(put(store, "s", "'a\\nb'"));
+    const Value v = put(store, "s", "'a\\nb'");
+    const std::string_view text = CS::stringBytes(v);
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\n');
 }
 
 TEST(DataEscapes, TabIsDecoded) {
     Store store;
-    const std::string_view text = store.string(put(store, "s", "'a\\tb'"));
+    const Value v = put(store, "s", "'a\\tb'");
+    const std::string_view text = CS::stringBytes(v);
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\t');
 }
 
 TEST(DataEscapes, BackslashIsDecoded) {
     Store store;
-    const std::string_view text = store.string(put(store, "s", "'a\\\\b'"));
+    const Value v = put(store, "s", "'a\\\\b'");
+    const std::string_view text = CS::stringBytes(v);
     ASSERT_EQ(text.size(), 3u);
     EXPECT_EQ(text[1], '\\');
 }
 
 TEST(DataEscapes, BothQuotesAreDecoded) {
     Store store;
-    EXPECT_EQ(store.string(put(store, "a", "'a\\'b'")), "a'b");
-    EXPECT_EQ(store.string(put(store, "b", "\"a\\\"b\"")), "a\"b");
+    const Value a = put(store, "a", "'a\\'b'");
+    EXPECT_EQ(CS::stringBytes(a), "a'b");
+    const Value b = put(store, "b", "\"a\\\"b\"");
+    EXPECT_EQ(CS::stringBytes(b), "a\"b");
 }
 
 TEST(DataEscapes, EscapeAtBothEndsIsDecoded) {
     Store store;
-    EXPECT_EQ(store.string(put(store, "s", "'\\n\\t'")), "\n\t");
+    const Value v = put(store, "s", "'\\n\\t'");
+    EXPECT_EQ(CS::stringBytes(v), "\n\t");
 }
 
 TEST(DataEscapes, UnicodeEscapeIsRejectedByTheLexer) {
@@ -223,7 +233,8 @@ TEST(DataAggregates, ObjectStoresKeys) {
     Store store;
     const Value o = put(store, "user", "{\"name\": \"Вася\", \"age\": 30}");
     ASSERT_EQ(CS::objectCount(o), 2u);
-    EXPECT_EQ(store.string(CS::objectGet(o, "name")), "Вася");
+    const Value name = CS::objectGet(o, "name");
+    EXPECT_EQ(CS::stringBytes(name), "Вася");
     EXPECT_EQ(CS::objectGet(o, "age").numberValue(), 30.0);
 }
 

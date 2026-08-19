@@ -36,7 +36,7 @@ TEST(Expression, CompilesAndEvaluates) {
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
     ASSERT_TRUE(expr.eval(exec, &out, diag));
-    EXPECT_EQ(store.string(out), "Вася");
+    EXPECT_EQ(CS::stringBytes(out), "Вася");
 }
 
 TEST(Expression, OwnsItsSource) {
@@ -56,7 +56,7 @@ TEST(Expression, OwnsItsSource) {
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
     ASSERT_TRUE(expr.eval(exec, &out, diag));
-    EXPECT_EQ(store.string(out), "Вася");
+    EXPECT_EQ(CS::stringBytes(out), "Вася");
 }
 
 TEST(Expression, SurvivesBeingMoved) {
@@ -75,7 +75,7 @@ TEST(Expression, SurvivesBeingMoved) {
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
     ASSERT_TRUE(units[0].eval(exec, &out, diag));
-    EXPECT_EQ(store.string(out), "Вася");
+    EXPECT_EQ(CS::stringBytes(out), "Вася");
 }
 
 TEST(Expression, ReportsSyntaxError) {
@@ -133,7 +133,7 @@ TEST(Expression, FailedCompileDoesNotTouchOut) {
     CS::Value out = CS::Value::null();
     CS::Diagnostic diag;
     ASSERT_TRUE(expr.eval(exec, &out, diag));
-    EXPECT_EQ(store.string(out), "Вася");
+    EXPECT_EQ(CS::stringBytes(out), "Вася");
 }
 
 TEST(Expression, EvalNumberReturnsOk) {

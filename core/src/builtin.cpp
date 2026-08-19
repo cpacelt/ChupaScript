@@ -175,11 +175,10 @@ double chooseOrNaN(double a, double b, bool takeSmaller) noexcept {
 
 }  // namespace
 
-bool coerceScalarToString(const Store &store, Value v, char *numberBuffer,
-                          std::string_view *out, std::uint32_t offset,
-                          Diagnostic &diag) {
+bool coerceScalarToString(Value v, char *numberBuffer, std::string_view *out,
+                          std::uint32_t offset, Diagnostic &diag) {
     switch (v.kind()) {
-        case Value::Kind::String: *out = store.string(v); return true;
+        case Value::Kind::String: *out = stringBytes(v); return true;
         case Value::Kind::Number:
             *out = formatNumber(v.numberValue(), numberBuffer, kNumberBufferSize);
             return true;
@@ -201,10 +200,6 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                   Diagnostic &diag) {
     (void)count;  // арность гарантирована проходом
 
-    // Арена одна на выполнение, поэтому хранилище под аргумент больше не
-    // выбирается: count(state.items) и count([1, 2]) приходят сюда одинаково
-    // и читаются одинаково.
-    const Store &first = exec.scratch;
     switch (id) {
         case Builtin::Count:
             // Array, Object либо String (§8.1); у строки — байты, не символы.
@@ -217,7 +212,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                     return true;
                 case Value::Kind::String:
                     *out = Value::number(
-                        static_cast<double>(first.string(args[0]).size()));
+                        static_cast<double>(stringBytes(args[0]).size()));
                     return true;
                 default:
                     return failType(offset,
@@ -252,8 +247,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             }
             char buffer[kNumberBufferSize];
             std::string_view key;
-            if (!coerceScalarToString(exec.scratch, args[1],
-                                      buffer, &key, offset, diag)) {
+            if (!coerceScalarToString(args[1], buffer, &key, offset, diag)) {
                 return false;
             }
             *out = Value::boolean(CS::objectHas(args[0], key));
@@ -275,13 +269,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 return failType(offset, "push expects an array", diag);
             }
             // Void: *out не трогается (§2.2).
-            //
-            // Единственная запись среди билтинов, и потому единственное место
-            // здесь, где нужен барьер: push(state.items, [1]) кладёт временный
-            // массив в постоянный, и без продвижения записанный индекс пережил
-            // бы сброс своего региона. promote отдаёт значение как есть, когда
-            // копировать нечего.
-            arrayPush(args[0], exec.promote(args[1]));
+            arrayPush(args[0], args[1]);
             return true;
 
         case Builtin::Pop:
@@ -302,8 +290,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             std::string_view text;
             // Агрегат отвергается тем же правилом §4, что и всюду: сообщение
             // общее, частных формулировок под каждый билтин не заводим.
-            if (!coerceScalarToString(first, args[0], buffer, &text, offset,
-                                      diag)) {
+            if (!coerceScalarToString(args[0], buffer, &text, offset, diag)) {
                 return false;
             }
             // materialize, not an arena offset: the result of str is an

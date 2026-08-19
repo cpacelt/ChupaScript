@@ -126,13 +126,9 @@ ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity);
 /// граница с хостом, — и до этой функции каждый спрашивал своими словами,
 /// повторяя одно и то же условие пятью разными способами.
 ///
-/// Отрицательных ответов два и они разные: у скаляра ссылаться нечему вовсе, у
-/// промежуточной строки коробки не существует — она смещение в арену.
+/// Отрицательный ответ один: у скаляра ссылаться нечему вовсе.
 [[nodiscard]] inline Box *boxOf(Value v) noexcept {
-    if (!v.addressesStore() || v.region() != Value::Region::Boxed) {
-        return nullptr;
-    }
-    return v.box();
+    return v.referencesBox() ? v.box() : nullptr;
 }
 
 inline void retain(Box *box) noexcept { ++box->rc; }
@@ -143,13 +139,6 @@ void release(Box *box) noexcept;
 /// Отпускает ссылку значения, если оно ею владеет.
 inline void releaseValue(Value v) noexcept {
     if (Box *box = boxOf(v)) { release(box); }
-}
-
-/// Годно ли значение к укладке в то, что переживёт операцию. Негодна ровно
-/// одна вещь — промежуточная строка: она смещение в сбрасываемую арену.
-/// Провести её надо через Execution::promote.
-[[nodiscard]] inline bool materialized(Value v) noexcept {
-    return v.kind() != Value::Kind::String || v.region() != Value::Region::Scratch;
 }
 
 /// Берёт ссылку на значение, если оно ею владеет.
@@ -167,4 +156,21 @@ inline void retainValue(Value v) noexcept {
 #endif
 
 }  // namespace detail
+
+/// Bytes of a string value.
+///
+/// The sole reading door for a string: no Store is consulted, because a
+/// string is a box (detail::StringBox) from the moment it exists and reads
+/// itself without asking anyone where it lives. Takes the value by const
+/// reference, not by copy — a later change moves a short string's bytes
+/// inside the Value itself, and a by-value parameter would then hand back a
+/// pointer into a temporary that is already gone.
+///
+/// Precondition: v.kind() == Value::Kind::String.
+/// The returned view is valid until the box's reference count reaches zero.
+[[nodiscard]] inline std::string_view stringBytes(const Value &v) noexcept {
+    assert(v.kind() == Value::Kind::String);
+    return static_cast<const detail::StringBox *>(v.box())->view();
+}
+
 }  // namespace CS

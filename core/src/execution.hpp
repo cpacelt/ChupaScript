@@ -12,8 +12,21 @@
 
 namespace CS {
 
-/// Одно выполнение: его временный регион и постоянное хранилище, над которым
-/// оно идёт.
+/// One evaluation: its string builder and deferred list, plus the Store it
+/// runs over.
+///
+///   Execution::builder_    a plain std::string, scratch space for format
+///   Execution::deferred_   creator references to release at the next
+///                          operation boundary (see deferred.hpp)
+///   Execution::store_      &Store — the global variables this evaluation
+///                          reads and writes; owned by the caller, not by
+///                          this Execution
+///
+/// A String, Object or Array Value is a box (box.hpp) and needs no Store to
+/// be read — CS::stringBytes and the free functions in aggregate.hpp read a
+/// box directly. What the Store still supplies here is the field-name table
+/// (keys()) that a new object interns its keys into, and the global variable
+/// table that identifier lookups and assignments read and write.
 ///
 /// Вынесено из единицы, а не сложено в неё, чтобы одну скомпилированную
 /// единицу можно было разделять между вьюшками ([B4], [B28]): изменяемое
@@ -22,11 +35,11 @@ namespace CS {
 /// локальных и начало активационной записи придут с объявлениями
 /// (docs/backlog.md [B57]).
 ///
-/// Живёт дольше одного вычисления намеренно: временный регион сбрасывается с
+/// Живёт дольше одного вычисления намеренно: builder_ сбрасывается с
 /// сохранением ёмкости, и в установившемся режиме обращений к аллокатору не
 /// остаётся. Экземпляр на вызов эту ёмкость терял бы каждый раз.
 ///
-/// Постоянное хранилище держится ссылкой, а не передаётся рядом параметром.
+/// Store держится ссылкой, а не передаётся рядом параметром.
 /// Сначала было именно рядом, и это оказалось неверно дважды: во-первых, ни
 /// одна функция вычислителя не берёт одно без другого, во-вторых, две половины
 /// можно было передать несовпадающими — и молча прочитать индекс не из того
@@ -36,63 +49,23 @@ namespace CS {
 /// хранилищем на всю жизнь.
 class Execution {
    public:
-    /// Арена не берёт у постоянного хранилища ничего: общего у них не
-    /// осталось ни одного члена.
-    explicit Execution(Store &persistent) noexcept
-        : scratch(Store::Role::Arena), persistent_(persistent) {}
+    explicit Execution(Store &store) noexcept : store_(store) {}
 
     Execution(const Execution &) = delete;
     Execution &operator=(const Execution &) = delete;
     Execution(Execution &&) = delete;
     Execution &operator=(Execution &&) = delete;
 
-    /// Временный регион: байтовая арена операции. Агрегатов в нём не бывает —
-    /// они коробки, и живут по счётчику, а не по региону.
-    Store scratch;
+    /// Хранилище глобальных переменных этого выполнения.
+    [[nodiscard]] Store &store() noexcept { return store_; }
+    [[nodiscard]] const Store &store() const noexcept { return store_; }
 
-    /// Постоянный регион: таблица глобальных переменных и оснастка. Пишется
-    /// только через promote — иначе туда попала бы строка из арены операции.
-    [[nodiscard]] Store &persistent() noexcept { return persistent_; }
-    [[nodiscard]] const Store &persistent() const noexcept { return persistent_; }
-
-    /// Байты строки.
-    ///
-    /// Хранилище в вопросе больше не участвует. Коробка самодостаточна и
-    /// читается без всякого пула, а промежуточная строка — смещение, и арена,
-    /// придающая ему смысл, во всём выполнении ровно одна. Спрашивать «в каком
-    /// хранилище лежит это значение» стало не у кого: раньше на этот вопрос
-    /// отвечал storeOf, и у агрегата ответ был предрешён.
-    ///
-    /// Срез действителен до ближайшей записи в арену либо до смерти коробки.
-    [[nodiscard]] std::string_view string(Value v) const noexcept {
-        return scratch.string(v);
-    }
-
-    /// Принять значение туда, что переживёт текущую операцию: промежуточная
-    /// строка становится коробкой, прочее проходит как есть.
-    ///
-    /// Звать надо перед укладкой в агрегат либо в глобальную переменную.
-    /// Агрегат арены — такая же коробка и умеет уехать, продвигать его незачем.
-    ///
-    /// Живёт здесь, а не у хранилища, потому что берёт по одному от каждой
-    /// половины выполнения: смещение читает та арена, что его выдала, а ссылку
-    /// на новую коробку принимает список этого же выполнения.
-    [[nodiscard]] Value promote(Value v) {
-        if (detail::materialized(v)) { return v; }
-        return CS::materialize(scratch.string(v), deferred_);
-    }
-
-    /// Список отложенного освобождения этого выполнения — один на оба
-    /// хранилища (см. deferred.hpp).
-    ///
-    /// Прямой член, а не указатель в хранилище. Пока список лежал там, арена
-    /// держала на него указатель, и всякое обращение стоило разыменования на
-    /// пути, по которому ходит каждое присваивание.
+    /// Список отложенного освобождения этого выполнения (см. deferred.hpp).
     [[nodiscard]] Deferred &deferred() noexcept { return deferred_; }
 
     /// Таблица имён полей контекста — та единственная, что есть. Нужна тому,
-    /// кто создаёт объект (CS::makeObject); владеет ею постоянное хранилище.
-    [[nodiscard]] KeyTable *keys() const noexcept { return persistent_.keys(); }
+    /// кто создаёт объект (CS::makeObject); владеет ею хранилище.
+    [[nodiscard]] KeyTable *keys() const noexcept { return store_.keys(); }
 
     /// Rejects a compiled unit that belongs to another Store.
     ///
@@ -106,7 +79,7 @@ class Execution {
     /// duplicated into every translation unit that evaluates.
     [[nodiscard]] bool acceptsUnit(std::uint32_t unitStoreId,
                                    Diagnostic &diag) const noexcept {
-        if (unitStoreId == persistent_.id()) { return true; }
+        if (unitStoreId == store_.id()) { return true; }
         diag = Diagnostic{ErrorCode::Usage, 0,
                           "unit was compiled against another context"};
         return false;
@@ -168,10 +141,10 @@ class Execution {
     /// readability; it owns nothing that ordering could affect.
     std::string builder_;
 
-    /// Объявлен после арены и до ссылки на хранилище: разрушается раньше
+    /// Объявлен после сборщика и до ссылки на хранилище: разрушается раньше
     /// обоих, а значит отпускает всё, что накопил, пока живы и та и другое.
     Deferred deferred_;
-    Store &persistent_;
+    Store &store_;
 };
 
 }  // namespace CS

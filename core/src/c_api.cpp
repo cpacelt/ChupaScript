@@ -224,8 +224,8 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
     auto e = std::make_unique<::ChupaExpression>();
 
     CS::Diagnostic diag;
-    const std::uint32_t errors = CS::Expression::compile(
-        std::string_view(source, len), c->impl.store(), &e->impl, &diag, 1);
+    const std::uint32_t errors =
+        c->impl.compileExpression(std::string_view(source, len), &e->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
         return nullptr;   // unique_ptr уносит с собой всё, что успело завестись
@@ -240,8 +240,8 @@ ChupaScript* chupa_compile_script(ChupaContext* ctx,
     auto s = std::make_unique<::ChupaScript>();
 
     CS::Diagnostic diag;
-    const std::uint32_t errors = CS::Script::compile(
-        std::string_view(source, len), c->impl.store(), &s->impl, &diag, 1);
+    const std::uint32_t errors =
+        c->impl.compileScript(std::string_view(source, len), &s->impl, &diag, 1);
     if (errors != 0) {
         c->setError(diag);
         return nullptr;   // unique_ptr уносит с собой всё, что успело завестись

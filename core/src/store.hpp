@@ -19,45 +19,43 @@ namespace detail {
 struct GlobalName;
 }  // namespace detail
 
-/// Хранилище значений ChupaScript.
+/// The Store the host talks to: names and values of global variables.
 ///
-/// Владеет тремя разными вещами по трём разным правилам, и путать их нельзя.
+///   names_   bytes of global variable names, append-only
+///   ┌──────────────────────────────────────┐
+///   │ "width" "alpha" "user" ...            │
+///   └──────────────────────────────────────┘
+///        ▲        ▲
+///        │        │  slots_: name → slot, sorted by name
+///   ┌────┴────┬────┴────┬─────────────┐
+///   │ "alpha" │ "width" │ "user"  ...  │  (each entry: bytes offset+len, slot)
+///   └────┬────┴────┬────┴──────┬──────┘
+///        │         │           │
+///        ▼         ▼           ▼
+///   ┌─────────┬─────────┬──────────────┐
+///   │  values_: slot → Value, append-only, slots never move                │
+///   └─────────────────────────────────────────────────────────────────────┘
 ///
-/// **Оснастка** — имена глобальных переменных.
-/// Границу с хостом не пересекает никогда, без контекста смысла не имеет,
-/// живёт ровно столько же. Учёта внутри неё нет, уходит разом в деструкторе.
+///   keys_  → KeyTable (field-name interning), owned, released in ~Store
+///   id_    → this Store's identity, checked by Execution::acceptsUnit
 ///
-/// **Арена операции** — только байты: агрегатов в ней не бывает. Есть она у
-/// того экземпляра, что заведён ареной выполнения, и сбрасывается целиком на
-/// границе операции.
+/// A String, Object or Array Value is a box (box.hpp) and reads itself
+/// without any Store; the Store never owns one — it only creates them
+/// (through CS::setVariable / CS::materialize) and hands the creator's
+/// reference to the caller's Deferred list. There used to be a second role
+/// here, an "arena" of temporary bytes shared by every string a running
+/// expression produced; that role is gone along with the offset-addressed
+/// strings it served — every string is a self-contained box now, so there is
+/// nothing left for an arena to hold.
 ///
-/// **Коробки со счётчиком** — агрегаты и долгоживущие строки. Хранилище им не
-/// владелец, а повитуха: оно их создаёт и до ближайшей границы операции
-/// держит их ссылку в списке отложенного освобождения, а дальше судьбу коробки
-/// решают те, кто её удержал — ячейка глобальной переменной, другая коробка
-/// либо хост. Читать и менять коробку хранилище не умеет вовсе: это делают
-/// свободные функции core/src/aggregate.hpp.
-///
-/// Срез, который этот класс отдаёт наружу — `string()`, `globalNameAt()` —
-/// переживает лишь до ближайшей мутации того, откуда он взят.
+/// Срез, который этот класс отдаёт наружу (`globalNameAt()`), переживает лишь
+/// до ближайшей мутации того, откуда он взят.
 ///
 /// Обоснование:
 /// docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md
 class Store {
    public:
-    /// Роль экземпляра. Разного между двумя ролями осталось ровно одно —
-    /// таблица имён полей, — и в самом объекте роль не хранится: она нужна
-    /// только конструктору.
-    ///
-    /// То, что общего у ролей больше нет, и есть готовый довод за разделение
-    /// на два типа: у арены остались байтовые пулы и шесть методов сборки,
-    /// у хранилища — глобальные переменные и таблица имён, пересечение пусто.
-    enum class Role : std::uint8_t {
-        Globals,  ///< глобальные переменные, таблица имён полей
-        Arena,    ///< байты промежуточных строк; таблицы имён нет вовсе
-    };
-
-    explicit Store(Role role = Role::Globals);
+    Store();
 
     /// Определён в store.cpp: в заголовке типы пулов ещё неполны.
     ~Store();
@@ -74,46 +72,14 @@ class Store {
     // Создание агрегата сюда не входит: коробке хранилище не нужно ни для
     // чего, кроме списка отложенного освобождения (core/src/aggregate.hpp).
 
-    // Продвижение сюда не входит: оно про выполнение целиком — прочитать
-    // смещение у арены и положить байты в коробку, чью ссылку примет список
-    // операции. Живёт в Execution::promote.
-
     // Building a string piece by piece is not here either: format
     // (docs/semantics.md §8.8) assembles it in its own buffer, owned by the
     // execution — Execution::builder_ (core/src/execution.hpp) — not by the
-    // store. The store used to carry build_ and five methods for this, back
-    // when the assembled result was an offset into its own arena; the result
-    // is a box now, and nothing is shared between the assembly and the store
-    // any more.
-
-    /// Освобождает всё разом: пулы усекаются в ноль, ёмкость остаётся. Это и
-    /// есть освобождение региона — поштучного здесь нет и не будет
-    /// (docs/backlog.md [B57]).
-    ///
-    /// Сохранённая ёмкость — вся суть: в установившемся режиме следующая
-    /// операция укладывается в уже выделенное, и обращений к аллокатору не
-    /// остаётся.
-    ///
-    /// Только для арены операции. Постоянное хранилище сбрасывать нечем и
-    /// незачем.
-    /// Всякая строка, выданная этим хранилищем, после вызова недействительна —
-    /// она смещение в усечённую арену. Коробки, наоборот, переживут сброс, если
-    /// их кто-то удержал: их ссылки уходят через drainPending.
-    void clear() noexcept {
-        // Утверждение стоит до быстрого пути, а не в clearSlow: там ошибочный
-        // вызов на пустом постоянном хранилище прошёл бы молча — сбрасывать
-        // нечего, и до проверки дело не доходило.
-        assert(keys_ == nullptr &&
-               "постоянный регион не сбрасывается: на его значения ссылается хост");
-        if (text_.empty()) { return; }
-        clearSlow();
-    }
+    // store.
 
     // Список отложенного освобождения сюда не входит. Он принадлежит
     // выполнению (Execution::deferred), а не хранилищу: сливает его граница
     // операции, а хранилищ по обе стороны от той было два на один список.
-    // Пока список жил здесь, арена держала на него указатель, и всякое
-    // обращение к нему стоило лишнего разыменования.
 
     /// Таблица имён полей этого хранилища.
     [[nodiscard]] KeyTable *keys() const noexcept { return keys_; }
@@ -135,8 +101,9 @@ class Store {
 
     // ─── чтение ───
 
-    /// Предусловие: v.kind() == Value::Kind::String.
-    std::string_view string(Value v) const noexcept;
+    // Чтение строки сюда не входит и входить не может: строка — box.hpp
+    // StringBox — самодостаточна и читается через свободную функцию
+    // CS::stringBytes, не спрашивая никакое хранилище.
 
     // Чтение агрегата сюда не входит и входить не может: агрегат
     // самодостаточен, и ни один член хранилища при чтении не участвует
@@ -152,13 +119,13 @@ class Store {
     // и все чтения шли тем же двоичным поиском, что у любого объекта языка.
     // Теперь поиск и хранение разделены.
     //
-    // globalNames_ — имя → номер ячейки, отсортирован по имени. Нужен ровно
+    // slots_ — имя → номер ячейки, отсортирован по имени. Нужен ровно
     // там, где снаружи приходит имя: компиляции (имя стоит в тексте выражения)
     // и записи (имя приходит от хоста). Оба случая разовые.
     //
-    // globalValues_ — номер ячейки → значение, только растёт. Ячейки не
+    // values_ — номер ячейки → значение, только растёт. Ячейки не
     // переезжают, поэтому номер, разрешённый на компиляции, годен навсегда;
-    // вставка нового имени двигает записи globalNames_, но номера внутри них
+    // вставка нового имени двигает записи slots_, но номера внутри них
     // едут вместе с именами и не меняются.
     //
     // Ради этого разделения и затевалось: вычисление знает номер из узла дерева
@@ -206,35 +173,28 @@ class Store {
 
     // ─── метрики ───
 
-    /// How many bytes the data handed out so far occupy.
+    /// How many bytes the global variable names occupy.
     std::size_t bytesUsed() const noexcept;
     /// How many bytes the allocator holds, including the pool's spare capacity.
     std::size_t bytesReserved() const noexcept;
 
    private:
-    /// Собственно сброс арены. Отделён от проверки, чтобы та встраивалась.
-    void clearSlow() noexcept;
-
-    std::uint32_t appendText(std::string_view bytes);
-    std::string_view textAt(std::uint32_t offset, std::uint32_t length) const noexcept;
+    std::uint32_t appendName(std::string_view bytes);
+    std::string_view nameAt(std::uint32_t offset, std::uint32_t length) const noexcept;
 
     std::uint32_t findGlobal(std::string_view name, bool *found) const noexcept;
 
-
     // ─── байты ───
     //
-    // text_ is the sole address space for strings: a String-kind Value used
-    // to be an (offset, length) pair into it and nothing else. What lands
-    // here now is only what a GlobalName points at — the bytes of global
-    // variable names — and nothing more: a string literal's bytes live in
-    // the Ast, an object key lives in the KeyTable, and the result of str or
-    // format lives in a box. Append-only, no truncation, so two equal names
-    // occupy two copies (docs/backlog.md B1, B51).
-    std::vector<char> text_;   // bytes of global variable names
+    // names_ is the sole address space for global variable names: a name
+    // handed to setGlobal is copied here and looked up as an (offset,
+    // length) pair. Nothing else lands here — a string literal's bytes live
+    // in the Ast, an object key lives in the KeyTable, and the result of str
+    // or format lives in a box. Append-only, no truncation, so two equal
+    // names occupy two copies (docs/backlog.md B1, B51).
+    std::vector<char> names_;  // bytes of global variable names
 
-    /// Таблица имён полей контекста. Ею владеет постоянное хранилище и только
-    /// оно; у арены операции здесь nullptr, и на этом же признаке стоит
-    /// утверждение в clear().
+    /// Таблица имён полей контекста. Владеет ею это хранилище и только оно.
     ///
     /// Выдаётся наружу через keys() тем, кто создаёт объект: коробка удержит
     /// её сама. Чтение чужого объекта сюда не смотрит — тот носит свою.
@@ -247,24 +207,24 @@ class Store {
 
     // ─── глобальные переменные: поиск отдельно от хранения ───
     //
-    // globalNames_ отсортирован по имени и читается только там, где имя
+    // slots_ отсортирован по имени и читается только там, где имя
     // приходит снаружи: на компиляции (check разрешает имя в номер ячейки и
     // кладёт номер в узел дерева) и на записи от хоста. Вычисление сюда не
-    // ходит вовсе — оно берёт значение индексацией globalValues_ по номеру из
+    // ходит вовсе — оно берёт значение индексацией values_ по номеру из
     // узла.
     //
     // Значение лежит в ячейке, а не в записи имени, именно ради этого: вставка
     // нового имени сдвигает записи, чтобы сохранить сортировку, и значение
     // сдвинулось бы вместе с записью, обесценив номер, разрешённый на
-    // компиляции. globalValues_ только растёт, ячейки не переезжают.
+    // компиляции. values_ только растёт, ячейки не переезжают.
     //
     // Первый setGlobal("width", 320) заводит ячейку 0 со значением 320 и
-    // запись {смещение байт `width` в text_, 5, 0}. Повторный setGlobal того же
-    // имени перезаписывает globalValues_[0] и в globalNames_ не пишет ничего.
+    // запись {смещение байт `width` в names_, 5, 0}. Повторный setGlobal того
+    // же имени перезаписывает values_[0] и в slots_ не пишет ничего.
     // setGlobal("alpha", …) добавляет ячейку 1, но её запись встаёт в таблице
     // имён перед `width`: номер ячейки от места в таблице не зависит.
-    std::vector<detail::GlobalName> globalNames_;  // имя → номер ячейки
-    std::vector<Value> globalValues_;              // номер ячейки → значение
+    std::vector<detail::GlobalName> slots_;  // имя → номер ячейки
+    std::vector<Value> values_;              // номер ячейки → значение
 };
 
 }  // namespace CS

@@ -8,12 +8,12 @@ namespace CS {
 class Store;
 
 namespace detail {
-/// Узлы со счётчиком ссылок (core/src/node.hpp). Здесь только объявления:
-/// значение держит указатель, а раскладку узла ему знать незачем.
-struct Node;
-struct StrNode;
-struct ArrayNode;
-struct ObjectNode;
+/// Коробки со счётчиком ссылок (core/src/box.hpp). Здесь только объявления:
+/// значение держит указатель, а раскладку коробки ему знать незачем.
+struct Box;
+struct StringBox;
+struct ArrayBox;
+struct ObjectBox;
 }  // namespace detail
 
 /// Номер ячейки значения глобальной переменной в хранилище.
@@ -33,10 +33,10 @@ inline constexpr GlobalSlot kNoGlobalSlot = 0xffffffffu;
 
 /// Значение ChupaScript. Шесть типов из docs/semantics.md §2.1.
 ///
-/// Строки и агрегаты адресуются индексами в пулы Store: значение без своего
-/// хранилища бессмысленно, разрешить индекс может только то хранилище, которое
-/// его выдал. Поэтому создать строку, массив или объект способен лишь Store —
-/// соответствующие фабрики закрыты.
+/// Агрегат и долгоживущая строка адресуются указателем на коробку со
+/// счётчиком ссылок: такое значение самодостаточно и читается без хранилища
+/// вовсе. Промежуточная строка адресуется смещением в арену операции, и вот
+/// она без своего хранилища бессмысленна — потому её фабрика и закрыта.
 ///
 /// Раскладка и обоснование:
 /// docs/superpowers/specs/2026-08-11-chupascript-values-design.md §4.
@@ -45,21 +45,26 @@ class Value {
     /// Вид значения. Закрытый список из docs/semantics.md §2.1.
     enum class Kind : std::uint8_t { Null, Boolean, Number, String, Object, Array };
 
-    /// Как адресуется нагрузка значения.
+    /// Где лежит нагрузка значения. Ось одна, и члены обязаны отвечать на этот
+    /// вопрос, а не на вопрос о владении.
     ///
     /// Раньше здесь стояла шкала времени жизни — постоянное против
     /// временного, — и на её порядке держался барьер записи. Барьера больше
-    /// нет: узел не может оказаться короткоживущее контейнера, за это отвечает
-    /// счётчик ссылок. Осталось различение способа адресации, и оно
-    /// двузначно.
+    /// нет: коробка не может оказаться короткоживущей, чем контейнер, за это
+    /// отвечает счётчик ссылок.
     ///
-    /// Counted — в объединении указатель на узел; значение самодостаточно и
+    /// Boxed — в объединении указатель на коробку; значение самодостаточно и
     /// читается без всякого хранилища, потому и уезжает к хосту ссылкой.
     /// Scratch — в объединении смещение в байтовую арену операции; так
     /// адресуются только строки, и только промежуточные.
     ///
+    /// Третьим членом сюда встанет Inline — байты короткой строки в самом
+    /// значении, без коробки и без счётчика. Ось от этого не меняется, и в
+    /// этом весь довод за такие имена: «упаковано» и «в арене» — про место,
+    /// а не про то, как владеем.
+    ///
     /// Разбор: docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md Р2.
-    enum class Region : std::uint8_t { Counted, Scratch };
+    enum class Region : std::uint8_t { Boxed, Scratch };
 
     [[nodiscard]] static Value null() noexcept {
         Value v;
@@ -86,11 +91,11 @@ class Value {
     /// Осмыслен только у String, Object и Array — см. addressesStore.
     [[nodiscard]] Region region() const noexcept { return region_; }
 
-    /// Узел, на который значение ссылается.
-    /// Предусловие: addressesStore() и region() == Region::Counted.
-    [[nodiscard]] detail::Node *node() const noexcept {
-        assert(addressesStore() && region_ == Region::Counted);
-        return node_;
+    /// Коробка, на которую значение ссылается.
+    /// Предусловие: addressesStore() и region() == Region::Boxed.
+    [[nodiscard]] detail::Box *box() const noexcept {
+        assert(addressesStore() && region_ == Region::Boxed);
+        return box_;
     }
 
     /// Адресует ли значение пулы хранилища — то есть осмыслен ли у него
@@ -119,53 +124,55 @@ class Value {
     [[nodiscard]] bool sameAggregate(Value other) const noexcept {
         if (kind_ != other.kind_) { return false; }
         if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
-        // Сравнение региона отсюда ушло: у агрегата он всегда Counted, а
-        // личность агрегата — адрес его узла, а не номер в чьих-то пулах.
-        return node_ == other.node_;
+        // Сравнение региона отсюда ушло: у агрегата он всегда Boxed, а
+        // личность агрегата — адрес его коробки, а не номер в чьих-то пулах.
+        return box_ == other.box_;
     }
 
-    // ─── сборка значения из узла ───
+    // ─── сборка значения из коробки ───
     //
-    // Открыты, в отличие от индексных фабрик ниже: там довод был в том, что
-    // индекс полон как тип и любой код собрал бы значение с произвольным
-    // номером заголовка. С указателем этот довод не работает наоборот —
-    // указатель числом не подделаешь, а взять настоящий ArrayNode * можно
-    // только у detail::makeArrayNode. Тип аргумента и есть защита.
+    // Открыты, в отличие от закрытой строковой фабрики ниже: там довод в том,
+    // что смещение полно как тип и любой код собрал бы значение с
+    // произвольным числом. С указателем этот довод не работает наоборот —
+    // указатель числом не подделаешь, а взять настоящий ArrayBox * можно
+    // только у detail::makeArrayBox. Тип аргумента и есть защита.
 
-    [[nodiscard]] static Value string(detail::StrNode *node,
+    [[nodiscard]] static Value string(detail::StringBox *box,
                                       std::uint32_t length) noexcept {
         Value v;
         v.kind_ = Kind::String;
         v.length_ = length;
-        v.node_ = reinterpret_cast<detail::Node *>(node);
-        v.region_ = Region::Counted;
+        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.region_ = Region::Boxed;
         return v;
     }
 
-    [[nodiscard]] static Value array(detail::ArrayNode *node) noexcept {
+    [[nodiscard]] static Value array(detail::ArrayBox *box) noexcept {
         Value v;
         v.kind_ = Kind::Array;
-        v.node_ = reinterpret_cast<detail::Node *>(node);
-        v.region_ = Region::Counted;
+        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.region_ = Region::Boxed;
         return v;
     }
 
-    [[nodiscard]] static Value object(detail::ObjectNode *node) noexcept {
+    [[nodiscard]] static Value object(detail::ObjectBox *box) noexcept {
         Value v;
         v.kind_ = Kind::Object;
-        v.node_ = reinterpret_cast<detail::Node *>(node);
-        v.region_ = Region::Counted;
+        v.box_ = reinterpret_cast<detail::Box *>(box);
+        v.region_ = Region::Boxed;
         return v;
     }
 
    private:
     friend class Store;
 
-    /// Индексы полны как тип, поэтому без закрытых фабрик любой код собрал бы
-    /// значение-агрегат с произвольным номером заголовка. Закрываем доступом.
+    /// Промежуточная строка: смещение в арену операции и длина.
     ///
-    /// Регион обязателен и без значения по умолчанию: значения, ссылающегося
-    /// в никуда, не бывает, и забыть его проставить не должно компилироваться.
+    /// Закрыта, потому что смещение полно как тип: без ограничения доступа
+    /// любой код собрал бы строку, указывающую в произвольное место арены.
+    ///
+    /// Индексных фабрик для массива и объекта здесь больше нет — агрегат
+    /// теперь всегда коробка, и звать их было неоткуда.
     [[nodiscard]] static Value string(std::uint32_t offset, std::uint32_t length,
                                       Region region) noexcept {
         Value v;
@@ -176,24 +183,8 @@ class Value {
         return v;
     }
 
-    [[nodiscard]] static Value array(std::uint32_t index, Region region) noexcept {
-        Value v;
-        v.kind_ = Kind::Array;
-        v.index_ = index;
-        v.region_ = region;
-        return v;
-    }
-
-    [[nodiscard]] static Value object(std::uint32_t index, Region region) noexcept {
-        Value v;
-        v.kind_ = Kind::Object;
-        v.index_ = index;
-        v.region_ = region;
-        return v;
-    }
-
     [[nodiscard]] std::uint32_t index() const noexcept {
-        assert(kind_ == Kind::String || kind_ == Kind::Array || kind_ == Kind::Object);
+        assert(kind_ == Kind::String);
         return index_;
     }
 
@@ -208,15 +199,15 @@ class Value {
     // Смещение 1: байт был набивкой перед length_, поэтому регион достался
     // даром. У скаляров региона нет — они ничего не адресуют; поле у них не
     // читается, проверки региона касаются только String, Object и Array.
-    Region region_ = Region::Counted;
+    Region region_ = Region::Boxed;
     std::uint32_t length_;  // смещение 4 — длина строки в байтах
     // TODO(B2): восемь байт вместо шестнадцати достижимы только через
     // NaN-boxing: double в объединении задаёт и размер, и выравнивание.
     union {  // смещение 8
         bool boolean_;
         double number_;
-        std::uint32_t index_;   // Scratch: смещение в арену операции
-        detail::Node *node_;    // Counted: узел со счётчиком ссылок
+        std::uint32_t index_;  // Scratch: смещение в арену операции
+        detail::Box *box_;     // Boxed: коробка со счётчиком ссылок
     };
 };
 

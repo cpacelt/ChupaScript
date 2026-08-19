@@ -7,7 +7,7 @@
 #include <string_view>
 
 #include "builtin.hpp"
-#include "node.hpp"
+#include "box.hpp"
 #include "operator.hpp"
 #include "text.hpp"
 
@@ -261,7 +261,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // создаваемое значение. Узлом владеет хранилище контекста и
             // отпускает его только вместе с собой, поэтому ссылки здесь никто
             // не берёт — брать её было бы не у кого и не для кого.
-            detail::StrNode *literal = ast.stringLiteral(node);
+            detail::StringBox *literal = ast.stringLiteral(node);
             *out = Value::string(literal, literal->len);
             return true;
         }

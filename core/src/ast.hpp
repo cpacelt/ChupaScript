@@ -182,10 +182,10 @@ class Ast {
     /// На дереве, собранном в обход компиляции — разбор данных хоста
     /// (core/src/data.hpp) идёт именно так, — литералы не уложены, и брать
     /// узел отсюда нельзя.
-    [[nodiscard]] detail::StrNode *stringLiteral(NodeId node) const noexcept;
+    [[nodiscard]] detail::StringBox *stringLiteral(NodeId node) const noexcept;
 
     /// Записывает уложенный литерал. Зовёт только укладка.
-    void setStringLiteral(NodeId node, detail::StrNode *literal) noexcept;
+    void setStringLiteral(NodeId node, detail::StringBox *literal) noexcept;
 
     /// Уложен ли литерал этого узла. Пустая строка от неуложенной иначе не
     /// отличается: и та и другая — нули.
@@ -250,7 +250,7 @@ class Ast {
             /// String, после укладки: узел строки, которым владеет хранилище
             /// контекста. Восемь байт — ровно столько же, сколько занимала
             /// пара «смещение, длина».
-            detail::StrNode *literal;
+            detail::StringBox *literal;
             GlobalSlot globalValuesSlot;  ///< Identifier, после прохода
         } payload = {{0, 0}};
 

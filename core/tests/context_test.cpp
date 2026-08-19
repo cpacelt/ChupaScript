@@ -1,6 +1,6 @@
 #include "context.hpp"
 
-#include "node.hpp"
+#include "box.hpp"
 
 #include <gtest/gtest.h>
 
@@ -98,7 +98,7 @@ TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
     // ровно то, что [B57] и убирает.
     //
     // Раньше здесь стоял литерал массива. Он больше не годится: агрегат теперь
-    // узел со счётчиком, во временном регионе его не бывает, и байт он туда не
+    // коробка со счётчиком, во временном регионе её не бывает, и байт она туда не
     // кладёт. Мерить рост арены надо тем, что в ней правда живёт, — строкой.
     const CS::Expression expr = compileIn(ctx, "format('${}${}', 1, 2)");
 
@@ -143,19 +143,19 @@ TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
     // основной случай: бэкенд шлёт новые данные на каждое обновление экрана.
     //
     // Раньше прежний массив оставался в пуле навсегда, и двести обновлений
-    // держали двести массивов. Меряется счётчиком живых узлов: память узла
+    // держали двести массивов. Меряется счётчиком живых коробок: память коробки
     // хранилищу не принадлежит, и его метрика байт её не видит.
     CS::Context ctx;
     CS::Diagnostic diag;
     ASSERT_TRUE(ctx.setVariableText("rows", "[1, 2, 3]", diag)) << diag.message;
 
-    const std::size_t afterFirst = CS::detail::liveNodeCount();
+    const std::size_t afterFirst = CS::detail::liveBoxCount();
     for (int i = 0; i < 200; ++i) {
         ASSERT_TRUE(ctx.setVariableText("rows", "[1, 2, 3]", diag)) << diag.message;
     }
     // Живым остаётся ровно последний массив; допуск — на тот, чью ссылку ещё
     // держит список отложенного освобождения до ближайшей границы.
-    EXPECT_LE(CS::detail::liveNodeCount(), afterFirst + 1);
+    EXPECT_LE(CS::detail::liveBoxCount(), afterFirst + 1);
 }
 
 TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
@@ -170,15 +170,15 @@ TEST(ContextMemory, PushInALoopDoesNotLeaveGarbage) {
     ASSERT_EQ(CS::Script::compile("push(rows, 1);", ctx.store(), &script, diags, 1), 0u)
         << diags[0].message;
 
-    const std::size_t before = CS::detail::liveNodeCount();
+    const std::size_t before = CS::detail::liveBoxCount();
     for (int i = 0; i < 200; ++i) { ASSERT_TRUE(ctx.run(script, diag)) << diag.message; }
 
     const CS::Expression expr = compileIn(ctx, "count(rows)");
     double got = 0.0;
     ASSERT_EQ(ctx.evalNumber(expr, &got, diag), CS::EvalStatus::Ok) << diag.message;
     EXPECT_EQ(got, 200.0);
-    // Двести чисел не завели ни одного узла: скаляр живёт в самом Value.
-    EXPECT_EQ(CS::detail::liveNodeCount(), before);
+    // Двести чисел не завели ни одного коробки: скаляр живёт в самом Value.
+    EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
 
 TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
@@ -194,14 +194,14 @@ TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
         const CS::Expression expr = compileIn(ctx, "rows");
         ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
         ASSERT_EQ(escaped.kind(), CS::Value::Kind::Array);
-        CS::detail::retain(escaped.node());   // так делает обёртка хоста
+        CS::detail::retain(escaped.box());   // так делает обёртка хоста
     }
     // Контекста нет, хранилища нет, таблицы имён у него нет. Массив есть.
-    const CS::detail::ArrayNode *node =
-        static_cast<const CS::detail::ArrayNode *>(escaped.node());
+    const CS::detail::ArrayBox *node =
+        static_cast<const CS::detail::ArrayBox *>(escaped.box());
     ASSERT_EQ(node->items.size(), 3u);
     EXPECT_EQ(node->items[2].numberValue(), 3.0);
-    CS::detail::release(escaped.node());
+    CS::detail::release(escaped.box());
 }
 
 TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
@@ -213,18 +213,18 @@ TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
             << diag.message;
         const CS::Expression expr = compileIn(ctx, "user");
         ASSERT_TRUE(ctx.eval(expr, &escaped, diag)) << diag.message;
-        CS::detail::retain(escaped.node());
+        CS::detail::retain(escaped.box());
     }
-    const CS::detail::ObjectNode *node =
-        static_cast<const CS::detail::ObjectNode *>(escaped.node());
+    const CS::detail::ObjectBox *node =
+        static_cast<const CS::detail::ObjectBox *>(escaped.box());
     ASSERT_EQ(node->entries.size(), 1u);
-    // Таблица имён пережила своё хранилище, потому что её держит узел.
+    // Таблица имён пережила своё хранилище, потому что её держит коробка.
     EXPECT_EQ(node->keys->bytes(node->entries[0].key), "name");
-    CS::detail::release(escaped.node());
+    CS::detail::release(escaped.box());
 }
 
 TEST(ContextMemory, StringPushedIntoGlobalArraySurvivesTheOperation) {
-    // Строка собирается в арене операции, а границу переживает узлом — ровно
+    // Строка собирается в арене операции, а границу переживает коробкой — ровно
     // то правило, ради которого укладка в агрегат материализует строку.
     CS::Context ctx;
     CS::Diagnostic diag;

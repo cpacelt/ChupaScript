@@ -50,7 +50,7 @@ std::uint32_t KeyTable::intern(std::string_view key) {
     assert(text_.size() + key.size() <= 0xffffffffu && "арена имён переросла uint32");
     const std::uint32_t offset = static_cast<std::uint32_t>(text_.size());
     // Срез key внутрь text_ сюда не приходит: имена берутся из исходника, из
-    // узла литерала либо от хоста, но не из самой таблицы — читать её наружу
+    // коробки литерала либо от хоста, но не из самой таблицы — читать её наружу
     // умеет только bytes(), а его результат в intern не возвращается никогда.
     text_.insert(text_.end(), key.begin(), key.end());
 

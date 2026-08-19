@@ -14,7 +14,7 @@
 #include "diagnostic.hpp"
 #include "context.hpp"
 #include "expression.hpp"
-#include "node.hpp"
+#include "box.hpp"
 #include "keytable.hpp"
 #include "script.hpp"
 #include "store.hpp"
@@ -323,7 +323,7 @@ ChupaStatus chupa_eval_string_borrowed(ChupaContext* ctx, ChupaExpression* e,
 // CS::Value, и перевод между ними — копия, которую компилятор сводит к
 // пересылке регистров. Ни таблицы дескрипторов, ни аллокации, ни поиска.
 //
-// Ни одна функция обхода не берёт ChupaContext *, и это не экономия: узел
+// Ни одна функция обхода не берёт ChupaContext *, и это не экономия: коробка
 // самодостаточен, объект носит свою таблицу имён, поэтому читать его можно и
 // тогда, когда контекста уже нет. В прежней модели такой сигнатуры быть не
 // могло — значение там было индексом в пулы конкретного хранилища.
@@ -359,19 +359,19 @@ ChupaKind toKind(CS::Value::Kind kind) {
     return CHUPA_KIND_NULL;
 }
 
-const CS::detail::ArrayNode* asArray(CS::Value v) {
-    return static_cast<const CS::detail::ArrayNode*>(v.node());
+const CS::detail::ArrayBox* asArray(CS::Value v) {
+    return static_cast<const CS::detail::ArrayBox*>(v.box());
 }
 
-const CS::detail::ObjectNode* asObject(CS::Value v) {
-    return static_cast<const CS::detail::ObjectNode*>(v.node());
+const CS::detail::ObjectBox* asObject(CS::Value v) {
+    return static_cast<const CS::detail::ObjectBox*>(v.box());
 }
 
 /// Ссылается ли значение счётчиком. Скаляр — нет, промежуточная строка — нет:
-/// у неё узла не существует, и попасть сюда она не может, потому что
+/// у неё коробки не существует, и попасть сюда она не может, потому что
 /// chupa_eval_value её материализует.
 bool counted(CS::Value v) {
-    return v.addressesStore() && v.region() == CS::Value::Region::Counted;
+    return v.addressesStore() && v.region() == CS::Value::Region::Boxed;
 }
 
 }  // namespace
@@ -404,11 +404,11 @@ double chupa_value_number(ChupaValue v) { return fromC(v).numberValue(); }
 void chupa_value_string_borrowed(ChupaValue v, const char** bytes,
                                  size_t* len) {
     const CS::Value value = fromC(v);
-    // Хранилище не нужно: сюда доходит только узел — арену chupa_eval_value
-    // материализует, а вложенная строка узлом была изначально (её положили в
+    // Хранилище не нужно: сюда доходит только коробка — арену chupa_eval_value
+    // материализует, а вложенная строка коробкой была изначально (её положили в
     // агрегат, а туда промежуточную не пускают).
     const std::string_view text =
-        static_cast<const CS::detail::StrNode*>(value.node())->view();
+        static_cast<const CS::detail::StringBox*>(value.box())->view();
     *bytes = text.data();
     *len = text.size();
 }
@@ -418,7 +418,7 @@ size_t chupa_array_count(ChupaValue v) {
 }
 
 ChupaValue chupa_array_at(ChupaValue v, size_t i) {
-    const CS::detail::ArrayNode* node = asArray(fromC(v));
+    const CS::detail::ArrayBox* node = asArray(fromC(v));
     if (i >= node->items.size()) { return toC(CS::Value::null()); }
     // Ссылка не берётся: элемент держит сам массив, а массив держит хост.
     return toC(node->items[i]);
@@ -430,13 +430,13 @@ size_t chupa_object_count(ChupaValue v) {
 
 void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
                          size_t* len) {
-    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    const CS::detail::ObjectBox* node = asObject(fromC(v));
     if (i >= node->entries.size()) {
         *bytes = nullptr;
         *len = 0;
         return;
     }
-    // Имя берётся из таблицы узла, а не из чьего-то хранилища: она и есть то,
+    // Имя берётся из таблицы коробки, а не из чьего-то хранилища: она и есть то,
     // что делает объект читаемым после смерти контекста.
     const std::string_view key = node->keys->bytes(node->entries[i].key);
     *bytes = key.data();
@@ -444,13 +444,13 @@ void chupa_object_key_at(ChupaValue v, size_t i, const char** bytes,
 }
 
 ChupaValue chupa_object_value_at(ChupaValue v, size_t i) {
-    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    const CS::detail::ObjectBox* node = asObject(fromC(v));
     if (i >= node->entries.size()) { return toC(CS::Value::null()); }
     return toC(node->entries[i].value);
 }
 
 ChupaValue chupa_object_get(ChupaValue v, const char* key, size_t key_len) {
-    const CS::detail::ObjectNode* node = asObject(fromC(v));
+    const CS::detail::ObjectBox* node = asObject(fromC(v));
     bool found = false;
     const std::uint32_t at =
         CS::detail::findEntry(*node, std::string_view(key, key_len), &found);
@@ -460,12 +460,12 @@ ChupaValue chupa_object_get(ChupaValue v, const char* key, size_t key_len) {
 
 void chupa_value_retain(ChupaValue v) {
     const CS::Value value = fromC(v);
-    if (counted(value)) { CS::detail::retain(value.node()); }
+    if (counted(value)) { CS::detail::retain(value.box()); }
 }
 
 void chupa_value_release(ChupaValue v) {
     const CS::Value value = fromC(v);
-    if (counted(value)) { CS::detail::release(value.node()); }
+    if (counted(value)) { CS::detail::release(value.box()); }
 }
 
 // ─── Run ───

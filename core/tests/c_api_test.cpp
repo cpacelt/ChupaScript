@@ -843,7 +843,7 @@ TEST(CApiValue, ComputedStringIsMaterialisedSoItCanBeRetained) {
 
 TEST(CApiValue, UnretainedValueIsGoneAfterTheNextOperation) {
     // Обратная сторона того же правила: без retain выдача одалживается, и
-    // ближайшая операция её отпускает. Проверяется счётом живых узлов —
+    // ближайшая операция её отпускает. Проверяется счётом живых коробок —
     // читать освобождённое здесь и было бы той самой ошибкой.
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);

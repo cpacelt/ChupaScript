@@ -1,6 +1,6 @@
 #include "store.hpp"
 
-#include "node.hpp"
+#include "box.hpp"
 
 #include <cassert>
 #include <cstdint>
@@ -26,8 +26,8 @@ struct GlobalName {
 /// Отпустить значение на месте. Только для деструктора: там границы операции
 /// уже не будет, и откладывать некуда.
 static void releaseValueNow(Value v) noexcept {
-    if (v.addressesStore() && v.region() == Value::Region::Counted) {
-        detail::release(v.node());
+    if (v.addressesStore() && v.region() == Value::Region::Boxed) {
+        detail::release(v.box());
     }
 }
 
@@ -41,24 +41,24 @@ Store::~Store() {
     // таблицу имён сам, и делать это надо, пока она ещё жива.
     drainPending();
     for (Value v : globalValues_) { releaseValueNow(v); }
-    for (detail::StrNode *literal : literals_) { detail::release(literal); }
+    for (detail::StringBox *literal : literals_) { detail::release(literal); }
     KeyTable::release(keys_);
 }
 
 void Store::retainValue(Value v) noexcept {
-    if (v.addressesStore() && v.region() == Value::Region::Counted) {
-        detail::retain(v.node());
+    if (v.addressesStore() && v.region() == Value::Region::Boxed) {
+        detail::retain(v.box());
     }
 }
 
 void Store::defer(Value v) {
-    if (v.addressesStore() && v.region() == Value::Region::Counted) {
-        pending_.push_back(v.node());
+    if (v.addressesStore() && v.region() == Value::Region::Boxed) {
+        pending_.push_back(v.box());
     }
 }
 
 void Store::drainPendingSlow() noexcept {
-    // Обход по индексу, а не range-for: освобождение узла в принципе может
+    // Обход по индексу, а не range-for: освобождение коробки в принципе может
     // дописать в pending_, и итератор вектора этого не переживёт.
     for (std::size_t i = 0; i < pending_.size(); ++i) {
         detail::release(pending_[i]);
@@ -110,13 +110,13 @@ Value Store::makeString(std::string_view bytes) {
 }
 
 Value Store::materialize(std::string_view bytes) {
-    detail::StrNode *node = detail::makeStrNode(bytes);
+    detail::StringBox *node = detail::makeStringBox(bytes);
     pending_.push_back(node);   // ссылка создателя — до ближайшей границы
     return Value::string(node, node->len);
 }
 
-detail::StrNode *Store::internLiteral(std::string_view bytes) {
-    detail::StrNode *node = detail::makeStrNode(bytes);
+detail::StringBox *Store::internLiteral(std::string_view bytes) {
+    detail::StringBox *node = detail::makeStringBox(bytes);
     literals_.push_back(node);
     return node;
 }
@@ -127,7 +127,7 @@ std::string_view Store::string(Value v) const noexcept {
     // без хранилища вовсе — метод остаётся методом только ради единообразия
     // вызова.
     if (v.region() == Value::Region::Scratch) { return textAt(v.index(), v.length()); }
-    return static_cast<const detail::StrNode *>(v.node())->view();
+    return static_cast<const detail::StringBox *>(v.box())->view();
 }
 
 std::uint32_t Store::beginString() noexcept {
@@ -153,13 +153,13 @@ void Store::abortString(std::uint32_t mark) noexcept {
 }
 
 void Store::clearSlow() noexcept {
-    assert(region_ != Value::Region::Counted &&
+    assert(region_ != Value::Region::Boxed &&
            "постоянный регион не сбрасывается: на его значения ссылается хост");
 
     // Ёмкость при этом остаётся: std::vector::clear её не отдаёт, а
     // shrink_to_fit здесь не зовётся нигде — в этом весь смысл сброса.
     //
-    // Агрегатов здесь нет и быть не может: они узлы, и живут они по счётчику,
+    // Агрегатов здесь нет и быть не может: они коробки, и живут они по счётчику,
     // а не по региону. Сбрасывать остаётся только байты.
     text_.clear();
 
@@ -173,7 +173,7 @@ void Store::clearSlow() noexcept {
 }
 
 Value Store::makeArray(std::uint32_t capacity) {
-    detail::ArrayNode *node = detail::makeArrayNode(capacity);
+    detail::ArrayBox *node = detail::makeArrayBox(capacity);
     pending_.push_back(node);   // ссылка создателя — до ближайшей границы
     return Value::array(node);
 }
@@ -181,12 +181,12 @@ Value Store::makeArray(std::uint32_t capacity) {
 std::uint32_t Store::arrayCount(Value a) const noexcept {
     assert(a.kind() == Value::Kind::Array);
     return static_cast<std::uint32_t>(
-        static_cast<const detail::ArrayNode *>(a.node())->items.size());
+        static_cast<const detail::ArrayBox *>(a.box())->items.size());
 }
 
 Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
     assert(a.kind() == Value::Kind::Array);
-    const detail::ArrayNode *node = static_cast<const detail::ArrayNode *>(a.node());
+    const detail::ArrayBox *node = static_cast<const detail::ArrayBox *>(a.box());
     if (index >= node->items.size()) { return Value::null(); }
     // Ссылка не берётся: значение живо, пока его держит сам массив, а массив
     // держит тот, кто его читает. Кадр скролла к счётчику не обращается.
@@ -196,7 +196,7 @@ Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
 bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
     assert(a.kind() == Value::Kind::Array);
     assert(materialized(v) && "строка временного региона не материализована");
-    detail::ArrayNode *node = static_cast<detail::ArrayNode *>(a.node());
+    detail::ArrayBox *node = static_cast<detail::ArrayBox *>(a.box());
     if (index >= node->items.size()) { return false; }
     retainValue(v);
     defer(node->items[index]);
@@ -210,12 +210,12 @@ void Store::arrayPush(Value a, Value v) {
     // Дописывание в хвост, а не переезд диапазона в конец пула: массив теперь
     // владеет своими элементами сам.
     retainValue(v);
-    static_cast<detail::ArrayNode *>(a.node())->items.push_back(v);
+    static_cast<detail::ArrayBox *>(a.box())->items.push_back(v);
 }
 
 bool Store::arrayPop(Value a, Value *out) noexcept {
     assert(a.kind() == Value::Kind::Array);
-    detail::ArrayNode *node = static_cast<detail::ArrayNode *>(a.node());
+    detail::ArrayBox *node = static_cast<detail::ArrayBox *>(a.box());
     if (node->items.empty()) { return false; }
     const Value last = node->items.back();
     node->items.pop_back();
@@ -227,7 +227,7 @@ bool Store::arrayPop(Value a, Value *out) noexcept {
 }
 
 Value Store::makeObject(std::uint32_t capacity) {
-    detail::ObjectNode *node = detail::makeObjectNode(keys_, capacity);
+    detail::ObjectBox *node = detail::makeObjectBox(keys_, capacity);
     pending_.push_back(node);   // ссылка создателя — до ближайшей границы
     return Value::object(node);
 }
@@ -235,12 +235,12 @@ Value Store::makeObject(std::uint32_t capacity) {
 std::uint32_t Store::objectCount(Value o) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     return static_cast<std::uint32_t>(
-        static_cast<const detail::ObjectNode *>(o.node())->entries.size());
+        static_cast<const detail::ObjectBox *>(o.box())->entries.size());
 }
 
 Value Store::objectGet(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
+    const detail::ObjectBox &node = *static_cast<const detail::ObjectBox *>(o.box());
     bool found = false;
     const std::uint32_t at = detail::findEntry(node, key, &found);
     if (!found) { return Value::null(); }
@@ -250,20 +250,20 @@ Value Store::objectGet(Value o, std::string_view key) const noexcept {
 bool Store::objectHas(Value o, std::string_view key) const noexcept {
     assert(o.kind() == Value::Kind::Object);
     bool found = false;
-    detail::findEntry(*static_cast<const detail::ObjectNode *>(o.node()), key, &found);
+    detail::findEntry(*static_cast<const detail::ObjectBox *>(o.box()), key, &found);
     return found;
 }
 
 std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
     assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
+    const detail::ObjectBox &node = *static_cast<const detail::ObjectBox *>(o.box());
     if (i >= node.entries.size()) { return {}; }
     return node.keys->bytes(node.entries[i].key);
 }
 
 Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
     assert(o.kind() == Value::Kind::Object);
-    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
+    const detail::ObjectBox &node = *static_cast<const detail::ObjectBox *>(o.box());
     if (i >= node.entries.size()) { return Value::null(); }
     return node.entries[i].value;
 }
@@ -271,7 +271,7 @@ Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
 void Store::objectSet(Value o, std::string_view key, Value v) {
     assert(o.kind() == Value::Kind::Object);
     assert(materialized(v) && "строка временного региона не материализована");
-    detail::ObjectNode &node = *static_cast<detail::ObjectNode *>(o.node());
+    detail::ObjectBox &node = *static_cast<detail::ObjectBox *>(o.box());
 
     bool found = false;
     const std::uint32_t at = detail::findEntry(node, key, &found);
@@ -379,8 +379,8 @@ std::string_view Store::globalNameAt(std::uint32_t i) const noexcept {
 }
 
 std::size_t Store::bytesUsed() const noexcept {
-    // Память узлов сюда не входит и войти не может: хранилище ею не владеет.
-    // Считать живые узлы умеет detail::liveNodeCount (core/src/node.hpp).
+    // Память коробок сюда не входит и войти не может: хранилище ею не владеет.
+    // Считать живые коробки умеет detail::liveBoxCount (core/src/box.hpp).
     return text_.size() + globalNames_.size() * sizeof(detail::GlobalName) +
            globalValues_.size() * sizeof(Value);
 }

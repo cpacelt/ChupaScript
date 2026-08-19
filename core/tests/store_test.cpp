@@ -1,6 +1,6 @@
 #include "store.hpp"
 
-#include "node.hpp"
+#include "box.hpp"
 
 #include <gtest/gtest.h>
 
@@ -71,14 +71,14 @@ TEST(StoreMetrics, FreshStoreHoldsNothing) {
 
 TEST(StoreMetrics, StringOfCountedStoreCostsANodeNotPoolBytes) {
     // Метрика хранилища мерит его собственные арены, а байты долгоживущей
-    // строки лежат в узле — памятью узла хранилище не владеет и видеть её не
+    // строки лежат в коробке — памятью коробки хранилище не владеет и видеть её не
     // может. Раньше здесь стояло before + 5.
     Store store;
     const std::size_t before = store.bytesUsed();
-    const std::size_t nodes = CS::detail::liveNodeCount();
+    const std::size_t nodes = CS::detail::liveBoxCount();
     store.makeString("12345");
     EXPECT_EQ(store.bytesUsed(), before);
-    EXPECT_EQ(CS::detail::liveNodeCount(), nodes + 1);
+    EXPECT_EQ(CS::detail::liveBoxCount(), nodes + 1);
 }
 
 TEST(StoreMetrics, StringOfScratchStoreAddsItsBytes) {
@@ -136,7 +136,7 @@ TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
     // Индекс уникален внутри пула, а не между хранилищами: первый массив есть
     // и там, и там, но это разная память. Двух временных хранилищ проверка не
     // различит — регион категория, а не личность (docs/backlog.md [B57]).
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     Store scratch(Value::Region::Scratch);
     EXPECT_FALSE(persistent.makeArray().sameAggregate(scratch.makeArray()));
 }
@@ -148,7 +148,7 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
     // на ней стоят равенство по идентичности (semantics.md §5.4) и видимость
     // записи (§2.3).
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
 
     const Value inner = scratch.makeArray(1);
     scratch.arrayPush(inner, Value::number(1.0));
@@ -162,7 +162,7 @@ TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
 
 TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
 
     const Value inner = scratch.makeArray(1);
     scratch.arrayPush(inner, Value::number(1.0));
@@ -176,7 +176,7 @@ TEST(StorePromote, WriteThroughOneReferenceIsSeenThroughTheOther) {
 }
 
 TEST(StorePromote, ValueOfOwnRegionIsReturnedAsIs) {
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     Store scratch(Value::Region::Scratch);
     const Value a = persistent.makeArray();
     // Копии не случилось: тот же агрегат, а не равный ему по содержимому.
@@ -203,9 +203,9 @@ TEST(StoreClear, EmptiesTheRegionButKeepsItsCapacity) {
 
 TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
     // Раньше это разрешал направленный барьер записи. Барьера больше нет, и
-    // разрешать нечего: узел живёт по счётчику, а не по региону, и оказаться
+    // разрешать нечего: коробка живёт по счётчику, а не по региону, и оказаться
     // короче своего держателя не может. Проверка остаётся — это `[state.header]`.
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     Store scratch(Value::Region::Scratch);
 
     const Value header = persistent.makeString("шапка");
@@ -221,7 +221,7 @@ TEST(StorePromote, LongerLivingValueIsNotCopiedIntoScratch) {
     // Та же направленность со стороны продвижения: во временное хранилище
     // постоянный агрегат обязан пройти как есть. Копия сделала бы его другим
     // объектом, и state.header перестал бы быть тем же, что state.rows[0].
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     Store scratch(Value::Region::Scratch);
 
     const Value header = persistent.makeArray();
@@ -233,20 +233,20 @@ TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
     // Продвижение во временное хранилище не должно принимать это за чужой
     // регион и пытаться скопировать то, чего нет.
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     EXPECT_EQ(scratch.promote(persistent, Value::number(7.0)).numberValue(), 7.0);
 }
 
 TEST(StorePromote, AggregateCrossesWithoutACopy) {
     // Раньше здесь проверялось, что продвижение копирует объект вглубь вместе
-    // со строками и ключами. Копии больше нет: объект — узел, и границу он
+    // со строками и ключами. Копии больше нет: объект — коробка, и границу он
     // проходит ссылкой. Проверяется теперь ровно это.
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
 
     const Value o = scratch.makeObject(1);
     // Строка кладётся в агрегат, значит обязана быть материализована: смещение
-    // в арену операции узел не переживёт.
+    // в арену операции коробка не переживёт.
     scratch.objectSet(o, "имя", scratch.materialize("Вася"));
     const Value moved = persistent.promote(scratch, o);
 
@@ -258,7 +258,7 @@ TEST(StorePromote, AggregateCrossesWithoutACopy) {
 
 TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
     Store scratch(Value::Region::Scratch);
-    Store persistent(Value::Region::Counted);
+    Store persistent(Value::Region::Boxed);
     const Value temp = scratch.makeString("Вася");
     ASSERT_EQ(temp.region(), Value::Region::Scratch);
 
@@ -381,14 +381,14 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     Store store;
     const Value a = store.makeArray();
     const std::size_t before = store.bytesUsed();
-    const std::size_t nodes = CS::detail::liveNodeCount();
+    const std::size_t nodes = CS::detail::liveBoxCount();
     for (int i = 0; i < 64; ++i) {
         store.arrayPush(a, Value::number(static_cast<double>(i)));
     }
     EXPECT_EQ(store.arrayCount(a), 64u);
     EXPECT_EQ(store.bytesUsed(), before);
-    // Ни одного лишнего узла: рост вектора внутри узла узлов не заводит.
-    EXPECT_EQ(CS::detail::liveNodeCount(), nodes);
+    // Ни одного лишнего коробки: рост вектора внутри коробки коробок не заводит.
+    EXPECT_EQ(CS::detail::liveBoxCount(), nodes);
 }
 
 TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
@@ -775,7 +775,7 @@ TEST(StoreStringBuilder, NestedAbortLeavesTheOuterAssemblyIntact) {
 
 TEST(StoreString, CountedStoreMakesNodes) {
     Store store;
-    EXPECT_EQ(store.makeString("a").region(), Value::Region::Counted);
+    EXPECT_EQ(store.makeString("a").region(), Value::Region::Boxed);
     EXPECT_EQ(store.string(store.makeString("привет")), "привет");
 }
 
@@ -789,7 +789,7 @@ TEST(StoreString, ScratchStoreMakesOffsets) {
 TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
     Store scratch(Value::Region::Scratch);
     const Value v = scratch.materialize("a");
-    EXPECT_EQ(v.region(), Value::Region::Counted);
+    EXPECT_EQ(v.region(), Value::Region::Boxed);
     scratch.clear();
     // Узел арену не заметил. Ссылку держит список отложенного освобождения
     // хранилища, поэтому отпускать её здесь не надо и нельзя.
@@ -803,20 +803,20 @@ TEST(StorePromote, ScratchStringBecomesNodeAndOutlivesTheArena) {
     ASSERT_EQ(temp.region(), Value::Region::Scratch);
 
     const Value kept = persistent.promote(scratch, temp);
-    EXPECT_EQ(kept.region(), Value::Region::Counted);
+    EXPECT_EQ(kept.region(), Value::Region::Boxed);
     scratch.clear();
     EXPECT_EQ(persistent.string(kept), "привет");
 }
 
 TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {
-    const std::size_t before = CS::detail::liveNodeCount();
+    const std::size_t before = CS::detail::liveBoxCount();
     {
         Store store;
-        CS::detail::StrNode *literal = store.internLiteral("abc");
+        CS::detail::StringBox *literal = store.internLiteral("abc");
         EXPECT_EQ(literal->view(), "abc");
-        EXPECT_EQ(CS::detail::liveNodeCount(), before + 1);
+        EXPECT_EQ(CS::detail::liveBoxCount(), before + 1);
     }
-    EXPECT_EQ(CS::detail::liveNodeCount(), before);
+    EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
 
 }  // namespace

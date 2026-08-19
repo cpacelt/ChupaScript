@@ -1,4 +1,4 @@
-#include "node.hpp"
+#include "box.hpp"
 
 #include <cassert>
 #include <cstring>
@@ -9,54 +9,54 @@
 namespace CS {
 namespace detail {
 
-/// Живые узлы. Без атомарности: контекст однопоточный, как и счётчик самого
-/// узла.
-static std::size_t g_liveNodes = 0;
+/// Живые коробки. Без атомарности: контекст однопоточный, как и счётчик
+/// самой коробки.
+static std::size_t g_liveBoxes = 0;
 
-std::size_t liveNodeCount() noexcept { return g_liveNodes; }
+std::size_t liveBoxCount() noexcept { return g_liveBoxes; }
 
-std::string_view StrNode::view() const noexcept {
+std::string_view StringBox::view() const noexcept {
     if (len == 0) { return {}; }
-    return std::string_view(reinterpret_cast<const char *>(this) + sizeof(StrNode),
+    return std::string_view(reinterpret_cast<const char *>(this) + sizeof(StringBox),
                             len);
 }
 
-StrNode *makeStrNode(std::string_view bytes) {
+StringBox *makeStringBox(std::string_view bytes) {
     assert(bytes.size() <= 0xffffffffu && "строка переросла uint32");
     // Одна аллокация на заголовок и байты: у строки нет ни роста, ни
     // перезаписи, поэтому отдельный буфер ей был бы только лишней косвенностью.
-    void *raw = ::operator new(sizeof(StrNode) + bytes.size());
-    StrNode *node = new (raw) StrNode();
-    node->rc = 1;
-    node->kind = Value::Kind::String;
-    node->len = static_cast<std::uint32_t>(bytes.size());
+    void *raw = ::operator new(sizeof(StringBox) + bytes.size());
+    StringBox *box = new (raw) StringBox();
+    box->rc = 1;
+    box->kind = Value::Kind::String;
+    box->len = static_cast<std::uint32_t>(bytes.size());
     if (!bytes.empty()) {
-        std::memcpy(reinterpret_cast<char *>(raw) + sizeof(StrNode), bytes.data(),
+        std::memcpy(reinterpret_cast<char *>(raw) + sizeof(StringBox), bytes.data(),
                     bytes.size());
     }
-    ++g_liveNodes;
-    return node;
+    ++g_liveBoxes;
+    return box;
 }
 
-ArrayNode *makeArrayNode(std::uint32_t capacity) {
-    ArrayNode *node = new ArrayNode();
-    node->rc = 1;
-    node->kind = Value::Kind::Array;
-    if (capacity > 0) { node->items.reserve(capacity); }
-    ++g_liveNodes;
-    return node;
+ArrayBox *makeArrayBox(std::uint32_t capacity) {
+    ArrayBox *box = new ArrayBox();
+    box->rc = 1;
+    box->kind = Value::Kind::Array;
+    if (capacity > 0) { box->items.reserve(capacity); }
+    ++g_liveBoxes;
+    return box;
 }
 
-ObjectNode *makeObjectNode(KeyTable *keys, std::uint32_t capacity) {
+ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity) {
     assert(keys != nullptr);
-    ObjectNode *node = new ObjectNode();
-    node->rc = 1;
-    node->kind = Value::Kind::Object;
-    node->keys = keys;
+    ObjectBox *box = new ObjectBox();
+    box->rc = 1;
+    box->kind = Value::Kind::Object;
+    box->keys = keys;
     KeyTable::retain(keys);
-    if (capacity > 0) { node->entries.reserve(capacity); }
-    ++g_liveNodes;
-    return node;
+    if (capacity > 0) { box->entries.reserve(capacity); }
+    ++g_liveBoxes;
+    return box;
 }
 
 std::uint32_t keyPrefix(std::string_view key) noexcept {
@@ -69,7 +69,7 @@ std::uint32_t keyPrefix(std::string_view key) noexcept {
     return out;
 }
 
-std::uint32_t findEntry(const ObjectNode &node, std::string_view key,
+std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
                         bool *found) noexcept {
     // Пары отсортированы по байтам ключа, поиск двоичный: на типичных 3–20
     // ключах это дешевле хеш-таблицы и не выделяет ничего сверх самого вектора.
@@ -80,15 +80,15 @@ std::uint32_t findEntry(const ObjectNode &node, std::string_view key,
     // читается. До байт дело доходит лишь когда первые четыре совпали.
     const std::uint32_t want = keyPrefix(key);
     std::uint32_t low = 0;
-    std::uint32_t high = static_cast<std::uint32_t>(node.entries.size());
+    std::uint32_t high = static_cast<std::uint32_t>(box.entries.size());
     while (low < high) {
         const std::uint32_t mid = low + (high - low) / 2;
-        const Entry &entry = node.entries[mid];
+        const Entry &entry = box.entries[mid];
         if (entry.prefix != want) {
             if (entry.prefix < want) { low = mid + 1; } else { high = mid; }
             continue;
         }
-        const std::string_view candidate = node.keys->bytes(entry.key);
+        const std::string_view candidate = box.keys->bytes(entry.key);
         if (candidate < key) {
             low = mid + 1;
         } else if (key < candidate) {
@@ -104,40 +104,40 @@ std::uint32_t findEntry(const ObjectNode &node, std::string_view key,
 
 /// Отпустить значение, если оно вообще на что-то ссылается счётчиком.
 static void releaseValue(Value v) noexcept {
-    if (v.addressesStore() && v.region() == Value::Region::Counted) {
-        release(v.node());
+    if (v.addressesStore() && v.region() == Value::Region::Boxed) {
+        release(v.box());
     }
 }
 
-void release(Node *node) noexcept {
-    assert(node != nullptr && node->rc > 0);
-    if (--node->rc != 0) { return; }
-    --g_liveNodes;
+void release(Box *box) noexcept {
+    assert(box != nullptr && box->rc > 0);
+    if (--box->rc != 0) { return; }
+    --g_liveBoxes;
 
-    switch (node->kind) {
+    switch (box->kind) {
         case Value::Kind::String: {
-            // Симметрично makeStrNode: место взято у operator new руками,
+            // Симметрично makeStringBox: место взято у operator new руками,
             // значит и вернуть его надо руками, а деструктор позвать отдельно.
-            StrNode *s = static_cast<StrNode *>(node);
-            s->~StrNode();
+            StringBox *s = static_cast<StringBox *>(box);
+            s->~StringBox();
             ::operator delete(static_cast<void *>(s));
             return;
         }
         case Value::Kind::Array: {
-            ArrayNode *a = static_cast<ArrayNode *>(node);
+            ArrayBox *a = static_cast<ArrayBox *>(box);
             for (Value v : a->items) { releaseValue(v); }
             delete a;
             return;
         }
         case Value::Kind::Object: {
-            ObjectNode *o = static_cast<ObjectNode *>(node);
+            ObjectBox *o = static_cast<ObjectBox *>(box);
             for (const Entry &e : o->entries) { releaseValue(e.value); }
             KeyTable::release(o->keys);
             delete o;
             return;
         }
         default:
-            assert(false && "узла такого вида не бывает");
+            assert(false && "коробки такого вида не бывает");
             return;
     }
 }

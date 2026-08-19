@@ -10,24 +10,6 @@ namespace CS {
 
 namespace detail {
 
-struct ArrayRep {
-    std::uint32_t start;     // индекс первого элемента в pool_
-    std::uint32_t count;
-    std::uint32_t capacity;
-};
-
-struct PairRep {
-    std::uint32_t keyOffset;  // индекс первого байта ключа в text_
-    std::uint32_t keyLength;
-    Value value;
-};
-
-struct ObjectRep {
-    std::uint32_t start;     // индекс первой пары в entries_
-    std::uint32_t count;
-    std::uint32_t capacity;
-};
-
 /// Запись таблицы имён: имя и номер его ячейки в globalValues_.
 ///
 /// Значения здесь нет намеренно — оно живёт в ячейке. Вставка нового имени
@@ -39,19 +21,49 @@ struct GlobalName {
     GlobalSlot slot;
 };
 
-/// Запись таблицы пересылки: продвинутый агрегат и сделанная копия.
-struct Promoted {
-    Value from;
-    Value to;
-};
-
 }  // namespace detail
 
-Store::Store(Value::Region region) : region_(region) {}
+/// Отпустить значение на месте. Только для деструктора: там границы операции
+/// уже не будет, и откладывать некуда.
+static void releaseValueNow(Value v) noexcept {
+    if (v.addressesStore() && v.region() == Value::Region::Counted) {
+        detail::release(v.node());
+    }
+}
+
+Store::Store(Value::Region region, KeyTable *keys)
+    : region_(region), keys_(keys != nullptr ? keys : KeyTable::create()) {
+    if (keys != nullptr) { KeyTable::retain(keys_); }
+}
 
 Store::~Store() {
-    // Литералы — единственное, чем хранилище владеет напрямую и до конца.
+    // Порядок важен: сначала ссылки, потом оснастка. Узел объекта отпускает
+    // таблицу имён сам, и делать это надо, пока она ещё жива.
+    drainPending();
+    for (Value v : globalValues_) { releaseValueNow(v); }
     for (detail::StrNode *literal : literals_) { detail::release(literal); }
+    KeyTable::release(keys_);
+}
+
+void Store::retainValue(Value v) noexcept {
+    if (v.addressesStore() && v.region() == Value::Region::Counted) {
+        detail::retain(v.node());
+    }
+}
+
+void Store::defer(Value v) {
+    if (v.addressesStore() && v.region() == Value::Region::Counted) {
+        pending_.push_back(v.node());
+    }
+}
+
+void Store::drainPending() noexcept {
+    // Обход по индексу, а не range-for: освобождение узла в принципе может
+    // дописать в pending_, и итератор вектора этого не переживёт.
+    for (std::size_t i = 0; i < pending_.size(); ++i) {
+        detail::release(pending_[i]);
+    }
+    pending_.clear();
 }
 
 std::uint32_t Store::appendText(std::string_view bytes) {
@@ -99,6 +111,7 @@ Value Store::makeString(std::string_view bytes) {
 
 Value Store::materialize(std::string_view bytes) {
     detail::StrNode *node = detail::makeStrNode(bytes);
+    pending_.push_back(node);   // ссылка создателя — до ближайшей границы
     return Value::string(node, node->len);
 }
 
@@ -145,10 +158,9 @@ void Store::clear() noexcept {
 
     // Ёмкость при этом остаётся: std::vector::clear её не отдаёт, а
     // shrink_to_fit здесь не зовётся нигде — в этом весь смысл сброса.
-    pool_.clear();
-    arrays_.clear();
-    objects_.clear();
-    entries_.clear();
+    //
+    // Агрегатов здесь нет и быть не может: они узлы, и живут они по счётчику,
+    // а не по региону. Сбрасывать остаётся только байты.
     text_.clear();
 
     // Черновик сборки в норме уже пуст: format снимает за собой и на успехе
@@ -160,173 +172,69 @@ void Store::clear() noexcept {
     // глобальные заводит только хост, а он пишет в постоянный.
 }
 
-// Парная функция — growObject: правку в одной надо повторять в другой.
-void Store::growArray(detail::ArrayRep &rep, std::uint32_t needed, bool exact) {
-    if (needed <= rep.capacity) { return; }
-
-    // Точный размер — для вызывающего, который знает длину заранее: удвоение
-    // ему только тратит память. Рост от push, наоборот, удваивает, чтобы не
-    // переезжать на каждом элементе.
-    std::uint32_t capacity = needed;
-    if (!exact) {
-        capacity = rep.capacity == 0 ? 4 : rep.capacity;
-        while (capacity < needed) {
-            assert(capacity <= 0x7fffffffu && "массив перерос uint32");
-            capacity *= 2;
-        }
-    }
-
-    // Новый диапазон дописывается в хвост, старый бросается мусором:
-    // освобождения по одному нет (спека §5). Индекс заголовка при этом не
-    // меняется — на нём стоит идентичность и все алиасы.
-    assert(pool_.size() + capacity <= 0xffffffffu && "пул массивов перерос uint32");
-    const std::uint32_t start = static_cast<std::uint32_t>(pool_.size());
-    pool_.insert(pool_.end(), capacity, Value::null());
-    for (std::uint32_t i = 0; i < rep.count; ++i) {
-        pool_[start + i] = pool_[rep.start + i];
-    }
-
-    rep.start = start;
-    rep.capacity = capacity;
-}
-
 Value Store::makeArray(std::uint32_t capacity) {
-    const std::uint32_t index = static_cast<std::uint32_t>(arrays_.size());
-    arrays_.push_back(detail::ArrayRep{0, 0, 0});
-    if (capacity > 0) { growArray(arrays_[index], capacity, /*exact=*/true); }
-    return Value::array(index, region_);
-}
-
-Value Store::promoteDeep(const Store &from, Value v) {
-    std::vector<detail::Promoted> promoted;
-    return promoteInto(from, v, promoted);
-}
-
-Value Store::promoteInto(const Store &from, Value v,
-                         std::vector<detail::Promoted> &promoted) {
-    // Копировать нечего: значение и так годно к записи сюда — скаляр, свой
-    // регион либо более долгоживущий. Последнее не оптимизация, а
-    // обязанность: скопируй мы state.header, он перестал бы быть тем же
-    // объектом, что и state.rows[0].
-    if (writable(v)) { return v; }
-
-    // Строки в таблицу не попадают: идентичности у них нет, равенство строк
-    // сравнивает содержимое (operator.cpp), поэтому вторая копия тех же байтов
-    // наблюдаемо неотличима от первой. Цена — лишние байты в пуле, B55.
-    if (v.kind() == Value::Kind::String) { return makeString(from.string(v)); }
-
-    for (const detail::Promoted &done : promoted) {
-        if (done.from.sameAggregate(v)) { return done.to; }
-    }
-
-    if (v.kind() == Value::Kind::Array) {
-        const std::uint32_t count = from.arrayCount(v);
-        const Value copy = makeArray(count);
-        // Запись до заполнения, а не после: иначе вторая ссылка на этот же
-        // агрегат породила бы вторую копию, а ссылка на самого себя — ещё и
-        // бесконечную рекурсию.
-        promoted.push_back(detail::Promoted{v, copy});
-        for (std::uint32_t i = 0; i < count; ++i) {
-            arrayPush(copy, promoteInto(from, from.arrayAt(v, i), promoted));
-        }
-        return copy;
-    }
-
-    assert(v.kind() == Value::Kind::Object);
-    const std::uint32_t count = from.objectCount(v);
-    const Value copy = makeObject(count);
-    promoted.push_back(detail::Promoted{v, copy});
-    for (std::uint32_t i = 0; i < count; ++i) {
-        // objectKeyAt отдаёт срез пула источника, а objectSet дописывает в пул
-        // приёмника: пулы разные, поэтому переезд среза не портит. В одном
-        // хранилище это был бы висячий срез, но туда мы не доходим — значение
-        // своего региона вернулось первой строкой.
-        objectSet(copy, from.objectKeyAt(v, i),
-                  promoteInto(from, from.objectValueAt(v, i), promoted));
-    }
-    return copy;
+    detail::ArrayNode *node = detail::makeArrayNode(capacity);
+    pending_.push_back(node);   // ссылка создателя — до ближайшей границы
+    return Value::array(node);
 }
 
 std::uint32_t Store::arrayCount(Value a) const noexcept {
-    assert(a.kind() == Value::Kind::Array && sameRegion(a));
-    return arrays_[a.index()].count;
+    assert(a.kind() == Value::Kind::Array);
+    return static_cast<std::uint32_t>(
+        static_cast<const detail::ArrayNode *>(a.node())->items.size());
 }
 
 Value Store::arrayAt(Value a, std::uint32_t index) const noexcept {
-    assert(a.kind() == Value::Kind::Array && sameRegion(a));
-    const detail::ArrayRep &rep = arrays_[a.index()];
-    if (index >= rep.count) { return Value::null(); }
-    return pool_[rep.start + index];
+    assert(a.kind() == Value::Kind::Array);
+    const detail::ArrayNode *node = static_cast<const detail::ArrayNode *>(a.node());
+    if (index >= node->items.size()) { return Value::null(); }
+    // Ссылка не берётся: значение живо, пока его держит сам массив, а массив
+    // держит тот, кто его читает. Кадр скролла к счётчику не обращается.
+    return node->items[index];
 }
 
 bool Store::arraySet(Value a, std::uint32_t index, Value v) noexcept {
-    assert(a.kind() == Value::Kind::Array && sameRegion(a));
-    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
-    detail::ArrayRep &rep = arrays_[a.index()];
-    if (index >= rep.count) { return false; }
-    pool_[rep.start + index] = v;
+    assert(a.kind() == Value::Kind::Array);
+    assert(materialized(v) && "строка временного региона не материализована");
+    detail::ArrayNode *node = static_cast<detail::ArrayNode *>(a.node());
+    if (index >= node->items.size()) { return false; }
+    retainValue(v);
+    defer(node->items[index]);
+    node->items[index] = v;
     return true;
 }
 
 void Store::arrayPush(Value a, Value v) {
-    assert(a.kind() == Value::Kind::Array && sameRegion(a));
-    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
-    // v пришёл копией, поэтому переезд pool_ внутри growArray ему не страшен.
-    // Заголовок перечитывается после роста: под единой ареной (docs/backlog.md
-    // B1) заголовки будут жить в той же памяти, что и данные, и ссылка,
-    // взятая до роста, повиснет.
-    growArray(arrays_[a.index()], arrays_[a.index()].count + 1);
-    detail::ArrayRep &rep = arrays_[a.index()];
-    pool_[rep.start + rep.count] = v;
-    rep.count += 1;
+    assert(a.kind() == Value::Kind::Array);
+    assert(materialized(v) && "строка временного региона не материализована");
+    // Дописывание в хвост, а не переезд диапазона в конец пула: массив теперь
+    // владеет своими элементами сам.
+    retainValue(v);
+    static_cast<detail::ArrayNode *>(a.node())->items.push_back(v);
 }
 
 bool Store::arrayPop(Value a, Value *out) noexcept {
-    assert(a.kind() == Value::Kind::Array && sameRegion(a));
-    detail::ArrayRep &rep = arrays_[a.index()];
-    if (rep.count == 0) { return false; }
-    rep.count -= 1;
-    if (out != nullptr) { *out = pool_[rep.start + rep.count]; }
+    assert(a.kind() == Value::Kind::Array);
+    detail::ArrayNode *node = static_cast<detail::ArrayNode *>(a.node());
+    if (node->items.empty()) { return false; }
+    const Value last = node->items.back();
+    node->items.pop_back();
+    if (out != nullptr) { *out = last; }
+    // Ссылка ячейки уходит в список, а не в delete: вызывающий читает снятое
+    // значение сразу после возврата.
+    defer(last);
     return true;
 }
 
-// Парная функция — growArray: правку в одной надо повторять в другой.
-void Store::growObject(detail::ObjectRep &rep, std::uint32_t needed, bool exact) {
-    if (needed <= rep.capacity) { return; }
-
-    // Точный размер — для вызывающего, который знает длину заранее: удвоение
-    // ему только тратит память. Рост от вставки, наоборот, удваивает, чтобы
-    // не переезжать на каждой паре.
-    std::uint32_t capacity = needed;
-    if (!exact) {
-        capacity = rep.capacity == 0 ? 4 : rep.capacity;
-        while (capacity < needed) {
-            assert(capacity <= 0x7fffffffu && "объект перерос uint32");
-            capacity *= 2;
-        }
-    }
-
-    assert(entries_.size() + capacity <= 0xffffffffu && "пул пар перерос uint32");
-    const std::uint32_t start = static_cast<std::uint32_t>(entries_.size());
-    entries_.insert(entries_.end(), capacity, detail::PairRep{0, 0, Value::null()});
-    for (std::uint32_t i = 0; i < rep.count; ++i) {
-        entries_[start + i] = entries_[rep.start + i];
-    }
-
-    rep.start = start;
-    rep.capacity = capacity;
-}
-
-std::uint32_t Store::findKey(const detail::ObjectRep &rep, std::string_view key,
-                               bool *found) const noexcept {
-    // Пары отсортированы по ключу, поиск двоичный: на типичных 3–20 ключах
-    // это дешевле хеш-таблицы и не выделяет ничего сверх самого массива.
+std::uint32_t Store::findKey(const detail::ObjectNode &node, std::string_view key,
+                             bool *found) const noexcept {
+    // Пары отсортированы по байтам ключа, поиск двоичный: на типичных 3–20
+    // ключах это дешевле хеш-таблицы и не выделяет ничего сверх самого вектора.
     std::uint32_t low = 0;
-    std::uint32_t high = rep.count;
+    std::uint32_t high = static_cast<std::uint32_t>(node.entries.size());
     while (low < high) {
         const std::uint32_t mid = low + (high - low) / 2;
-        const detail::PairRep &entry = entries_[rep.start + mid];
-        const std::string_view candidate = textAt(entry.keyOffset, entry.keyLength);
+        const std::string_view candidate = node.keys->bytes(node.entries[mid].key);
         if (candidate < key) {
             low = mid + 1;
         } else if (key < candidate) {
@@ -341,75 +249,65 @@ std::uint32_t Store::findKey(const detail::ObjectRep &rep, std::string_view key,
 }
 
 Value Store::makeObject(std::uint32_t capacity) {
-    const std::uint32_t index = static_cast<std::uint32_t>(objects_.size());
-    objects_.push_back(detail::ObjectRep{0, 0, 0});
-    if (capacity > 0) { growObject(objects_[index], capacity, /*exact=*/true); }
-    return Value::object(index, region_);
+    detail::ObjectNode *node = detail::makeObjectNode(keys_, capacity);
+    pending_.push_back(node);   // ссылка создателя — до ближайшей границы
+    return Value::object(node);
 }
 
 std::uint32_t Store::objectCount(Value o) const noexcept {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
-    return objects_[o.index()].count;
+    assert(o.kind() == Value::Kind::Object);
+    return static_cast<std::uint32_t>(
+        static_cast<const detail::ObjectNode *>(o.node())->entries.size());
 }
 
 Value Store::objectGet(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
-    const detail::ObjectRep &rep = objects_[o.index()];
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
     bool found = false;
-    const std::uint32_t at = findKey(rep, key, &found);
+    const std::uint32_t at = findKey(node, key, &found);
     if (!found) { return Value::null(); }
-    return entries_[rep.start + at].value;
+    return node.entries[at].value;
 }
 
 bool Store::objectHas(Value o, std::string_view key) const noexcept {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
+    assert(o.kind() == Value::Kind::Object);
     bool found = false;
-    findKey(objects_[o.index()], key, &found);
+    findKey(*static_cast<const detail::ObjectNode *>(o.node()), key, &found);
     return found;
 }
 
 std::string_view Store::objectKeyAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
-    const detail::ObjectRep &rep = objects_[o.index()];
-    if (i >= rep.count) { return {}; }
-    const detail::PairRep &entry = entries_[rep.start + i];
-    return textAt(entry.keyOffset, entry.keyLength);
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
+    if (i >= node.entries.size()) { return {}; }
+    return node.keys->bytes(node.entries[i].key);
 }
 
 Value Store::objectValueAt(Value o, std::uint32_t i) const noexcept {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
-    const detail::ObjectRep &rep = objects_[o.index()];
-    if (i >= rep.count) { return Value::null(); }
-    return entries_[rep.start + i].value;
+    assert(o.kind() == Value::Kind::Object);
+    const detail::ObjectNode &node = *static_cast<const detail::ObjectNode *>(o.node());
+    if (i >= node.entries.size()) { return Value::null(); }
+    return node.entries[i].value;
 }
 
 void Store::objectSet(Value o, std::string_view key, Value v) {
-    assert(o.kind() == Value::Kind::Object && sameRegion(o));
-    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
+    assert(o.kind() == Value::Kind::Object);
+    assert(materialized(v) && "строка временного региона не материализована");
+    detail::ObjectNode &node = *static_cast<detail::ObjectNode *>(o.node());
 
     bool found = false;
-    const std::uint32_t at = findKey(objects_[o.index()], key, &found);
+    const std::uint32_t at = findKey(node, key, &found);
+    retainValue(v);
     if (found) {
-        const detail::ObjectRep &rep = objects_[o.index()];
-        entries_[rep.start + at].value = v;
+        defer(node.entries[at].value);
+        node.entries[at].value = v;
         return;
     }
-
-    // appendText вправе переселить text_, поэтому смещение берётся до роста
-    // entries_, а срез key после этой строки уже не трогаем.
-    const std::uint32_t keyOffset = appendText(key);
-    const std::uint32_t keyLength = static_cast<std::uint32_t>(key.size());
-
-    // Заголовок перечитывается после appendText и growObject: под единой
-    // ареной (docs/backlog.md B1) заголовки будут жить в той же памяти, что
-    // и данные, и ссылка, взятая до роста, повиснет.
-    growObject(objects_[o.index()], objects_[o.index()].count + 1);
-    detail::ObjectRep &rep = objects_[o.index()];
-    for (std::uint32_t i = rep.count; i > at; --i) {
-        entries_[rep.start + i] = entries_[rep.start + i - 1];
-    }
-    entries_[rep.start + at] = detail::PairRep{keyOffset, keyLength, v};
-    rep.count += 1;
+    // Интернируется только тот ключ, который правда заводится: чтение
+    // отсутствующего имени таблицу не засоряет — за этим следит findKey,
+    // который сравнивает байты и в таблицу не пишет.
+    node.entries.insert(node.entries.begin() + at,
+                        detail::Entry{node.keys->intern(key), v});
 }
 
 std::uint32_t Store::findGlobal(std::string_view name,
@@ -461,12 +359,18 @@ bool Store::hasGlobal(std::string_view name) const noexcept {
 }
 
 void Store::setGlobal(std::string_view name, Value v) {
-    assert(writable(v) && "записываемое значение не продвинуто в этот регион");
+    assert(materialized(v) && "строка временного региона не материализована");
 
     bool found = false;
     const std::uint32_t at = findGlobal(name, &found);
+    retainValue(v);
     if (found) {
-        globalValues_[globalNames_[at].slot] = v;
+        // Ячейка глобальной переменной — корень: прежнее значение она
+        // отпускает, и без этого повторное присваивание растило бы память
+        // вечно.
+        Value &slot = globalValues_[globalNames_[at].slot];
+        defer(slot);
+        slot = v;
         return;
     }
 
@@ -496,20 +400,14 @@ std::string_view Store::globalNameAt(std::uint32_t i) const noexcept {
 }
 
 std::size_t Store::bytesUsed() const noexcept {
-    return pool_.size() * sizeof(Value) +
-           arrays_.size() * sizeof(detail::ArrayRep) +
-           objects_.size() * sizeof(detail::ObjectRep) +
-           entries_.size() * sizeof(detail::PairRep) + text_.size() +
-           globalNames_.size() * sizeof(detail::GlobalName) +
+    // Память узлов сюда не входит и войти не может: хранилище ею не владеет.
+    // Считать живые узлы умеет detail::liveNodeCount (core/src/node.hpp).
+    return text_.size() + globalNames_.size() * sizeof(detail::GlobalName) +
            globalValues_.size() * sizeof(Value);
 }
 
 std::size_t Store::bytesReserved() const noexcept {
-    return pool_.capacity() * sizeof(Value) +
-           arrays_.capacity() * sizeof(detail::ArrayRep) +
-           objects_.capacity() * sizeof(detail::ObjectRep) +
-           entries_.capacity() * sizeof(detail::PairRep) + text_.capacity() +
-           build_.capacity() +
+    return text_.capacity() + build_.capacity() +
            globalNames_.capacity() * sizeof(detail::GlobalName) +
            globalValues_.capacity() * sizeof(Value);
 }

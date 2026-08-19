@@ -335,7 +335,12 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
                     return false;
                 }
-                exec.scratch.arrayPush(array, element);
+                // Продвижение обязательно и здесь, хотя массив временный:
+                // агрегат — узел и умеет уехать в глобальную переменную, а
+                // смещение в арену операции туда попасть не должно.
+                exec.scratch.arrayPush(array,
+                                       exec.scratch.promote(exec.storeOf(element),
+                                                            element));
             }
             *out = array;
             return true;
@@ -356,7 +361,8 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 // узле литерала, которым владеет хранилище контекста, и живут
                 // дольше всякого объекта, который их примет.
                 exec.scratch.objectSet(
-                    object, ast.stringLiteral(ast.child(node, i))->view(), value);
+                    object, ast.stringLiteral(ast.child(node, i))->view(),
+                    exec.scratch.promote(exec.storeOf(value), value));
             }
             *out = object;
             return true;
@@ -644,7 +650,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 value = combined;
             }
 
-            dest.objectSet(base, key, value);
+            dest.objectSet(base, key, dest.promote(exec.storeOf(value), value));
             return true;
         }
 

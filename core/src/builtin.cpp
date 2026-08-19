@@ -236,8 +236,11 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.
+                // materialize, а не makeString: строка ложится в агрегат, а
+                // агрегат — узел и умеет пережить операцию. Смещение в арену
+                // он бы не пережил.
                 exec.scratch.arrayPush(
-                    result, exec.scratch.makeString(first.objectKeyAt(args[0], i)));
+                    result, exec.scratch.materialize(first.objectKeyAt(args[0], i)));
             }
             *out = result;
             return true;

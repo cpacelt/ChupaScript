@@ -67,7 +67,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                 if (!materialize(ast, source, ast.child(node, i), store, &element, diag)) {
                     return false;
                 }
-                store.arrayPush(array, element);
+                store.arrayPush(array, store.promote(store, element));
             }
             *out = array;
             return true;
@@ -86,7 +86,7 @@ bool materialize(const Ast &ast, std::string_view source, NodeId node,
                 // Повторный ключ заменяет значение: последний выигрывает.
                 store.objectSet(
                     object, literalText(ast, ast.child(node, i), source, scratch),
-                    value);
+                    store.promote(store, value));
             }
             *out = object;
             return true;

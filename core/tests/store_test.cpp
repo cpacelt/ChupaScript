@@ -142,9 +142,11 @@ TEST(StoreArray, SameIndexInAnotherRegionIsAnotherArray) {
 }
 
 TEST(StorePromote, KeepsSharingBetweenTwoReferences) {
-    // Один временный массив, положенный в обе ячейки внешнего. Продвижение
-    // обязано сделать одну копию, а не две: иначе разойдутся и равенство по
-    // идентичности (semantics.md §5.4), и видимость записи (§2.3).
+    // Один массив, положенный в обе ячейки внешнего. Раньше продвижение
+    // копировало вглубь и обязано было сделать одну копию, а не две; теперь
+    // копии нет вовсе, и разделение сохраняется само собой. Проверка остаётся:
+    // на ней стоят равенство по идентичности (semantics.md §5.4) и видимость
+    // записи (§2.3).
     Store scratch(Value::Region::Scratch);
     Store persistent(Value::Region::Counted);
 
@@ -200,9 +202,9 @@ TEST(StoreClear, EmptiesTheRegionButKeepsItsCapacity) {
 }
 
 TEST(StoreWriteBarrier, PersistentValueFitsIntoScratchAggregate) {
-    // Барьер направленный: долгоживущее внутри короткоживущего безопасно —
-    // ссылка умрёт раньше того, на что указывает. Это `[state.header]`, и
-    // симметричная проверка регионов запрещала бы его на ровном месте.
+    // Раньше это разрешал направленный барьер записи. Барьера больше нет, и
+    // разрешать нечего: узел живёт по счётчику, а не по региону, и оказаться
+    // короче своего держателя не может. Проверка остаётся — это `[state.header]`.
     Store persistent(Value::Region::Counted);
     Store scratch(Value::Region::Scratch);
 
@@ -235,16 +237,35 @@ TEST(StorePromote, ScalarIntoScratchIsReturnedAsIs) {
     EXPECT_EQ(scratch.promote(persistent, Value::number(7.0)).numberValue(), 7.0);
 }
 
-TEST(StorePromote, CopiesNestedStringsAndKeys) {
+TEST(StorePromote, AggregateCrossesWithoutACopy) {
+    // Раньше здесь проверялось, что продвижение копирует объект вглубь вместе
+    // со строками и ключами. Копии больше нет: объект — узел, и границу он
+    // проходит ссылкой. Проверяется теперь ровно это.
     Store scratch(Value::Region::Scratch);
     Store persistent(Value::Region::Counted);
 
     const Value o = scratch.makeObject(1);
-    scratch.objectSet(o, "имя", scratch.makeString("Вася"));
+    // Строка кладётся в агрегат, значит обязана быть материализована: смещение
+    // в арену операции узел не переживёт.
+    scratch.objectSet(o, "имя", scratch.materialize("Вася"));
     const Value moved = persistent.promote(scratch, o);
 
+    EXPECT_TRUE(moved.sameAggregate(o));
+    scratch.clear();
     EXPECT_EQ(persistent.objectKeyAt(moved, 0), "имя");
     EXPECT_EQ(persistent.string(persistent.objectValueAt(moved, 0)), "Вася");
+}
+
+TEST(StorePromote, ScratchStringIsMaterializedOnItsWayIn) {
+    Store scratch(Value::Region::Scratch);
+    Store persistent(Value::Region::Counted);
+    const Value temp = scratch.makeString("Вася");
+    ASSERT_EQ(temp.region(), Value::Region::Scratch);
+
+    const Value o = persistent.makeObject(1);
+    persistent.objectSet(o, "имя", persistent.promote(scratch, temp));
+    scratch.clear();
+    EXPECT_EQ(persistent.string(persistent.objectValueAt(o, 0)), "Вася");
 }
 
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
@@ -350,19 +371,24 @@ TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
     EXPECT_EQ(store.bytesUsed(), afterReserve);
 }
 
-TEST(StoreArrayMutation, GrowthLeavesGarbageBehind) {
+TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
+    // Раньше здесь проверялось обратное: массив лежал в пуле сплошным
+    // диапазоном, дописать в хвост было нельзя, и рост до 64 элементов
+    // выделял 4+8+16+32+64 = 124 слота, бросая 60 из них мусором навсегда.
+    //
+    // Массив теперь владеет элементами сам, и от роста в хранилище не остаётся
+    // ничего: его метрика байт про элементы не знает вовсе.
     Store store;
     const Value a = store.makeArray();
-    // Заголовок массива уже учтён; дальше растёт только пул элементов, поэтому
-    // сравнивается прирост, а не абсолютное число: размер заголовка тесту
-    // недоступен — тип неполон вне store.cpp.
-    const std::size_t afterHeader = store.bytesUsed();
+    const std::size_t before = store.bytesUsed();
+    const std::size_t nodes = CS::detail::liveNodeCount();
     for (int i = 0; i < 64; ++i) {
         store.arrayPush(a, Value::number(static_cast<double>(i)));
     }
-    // 4 + 8 + 16 + 32 + 64 = 124 слота выделено под 64 элемента: разница —
-    // брошенный мусор, освобождения по одному нет (docs/backlog.md B1).
-    EXPECT_EQ(store.bytesUsed() - afterHeader, 124u * sizeof(Value));
+    EXPECT_EQ(store.arrayCount(a), 64u);
+    EXPECT_EQ(store.bytesUsed(), before);
+    // Ни одного лишнего узла: рост вектора внутри узла узлов не заводит.
+    EXPECT_EQ(CS::detail::liveNodeCount(), nodes);
 }
 
 TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
@@ -590,15 +616,29 @@ TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
     EXPECT_EQ(store.arrayCount(a), 20u);
 }
 
-TEST(StoreObjectMutation, PreallocatedCapacityGrowsNothing) {
+TEST(StoreObjectMutation, KeyBytesLiveInTheTableNotInTheStore) {
+    // Раньше байты ключа дописывались в пул текста хранилища, и восемь
+    // двухсимвольных имён давали ровно 16 байт прироста. Теперь имя живёт в
+    // таблице интернирования, а хранилище о нём не знает.
     Store store;
     const Value o = store.makeObject(8);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 8; ++i) {
         store.objectSet(o, "k" + std::to_string(i), Value::null());
     }
-    // Пары не переезжали; выросло ровно на байты восьми двухсимвольных ключей.
-    EXPECT_EQ(store.bytesUsed(), afterReserve + 16u);
+    EXPECT_EQ(store.bytesUsed(), afterReserve);
+    EXPECT_EQ(store.keys()->count(), 8u);
+}
+
+TEST(StoreObjectMutation, RepeatedKeyIsInternedOnce) {
+    // Ради чего таблица и заводилась: тысяча объектов с одним именем поля
+    // хранит одно имя, а не тысячу.
+    Store store;
+    for (int i = 0; i < 1000; ++i) {
+        const Value o = store.makeObject(1);
+        store.objectSet(o, "name", Value::number(i));
+    }
+    EXPECT_EQ(store.keys()->count(), 1u);
 }
 
 TEST(StoreGlobals, FreshStoreHasNoGlobals) {
@@ -751,9 +791,9 @@ TEST(StoreString, MaterializeMakesANodeEvenInScratch) {
     const Value v = scratch.materialize("a");
     EXPECT_EQ(v.region(), Value::Region::Counted);
     scratch.clear();
-    // Узел арену не заметил.
+    // Узел арену не заметил. Ссылку держит список отложенного освобождения
+    // хранилища, поэтому отпускать её здесь не надо и нельзя.
     EXPECT_EQ(scratch.string(v), "a");
-    CS::detail::release(v.node());
 }
 
 TEST(StorePromote, ScratchStringBecomesNodeAndOutlivesTheArena) {
@@ -766,7 +806,6 @@ TEST(StorePromote, ScratchStringBecomesNodeAndOutlivesTheArena) {
     EXPECT_EQ(kept.region(), Value::Region::Counted);
     scratch.clear();
     EXPECT_EQ(persistent.string(kept), "привет");
-    CS::detail::release(kept.node());
 }
 
 TEST(StoreLiteral, InternedLiteralLivesAsLongAsTheStore) {

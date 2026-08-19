@@ -119,11 +119,9 @@ class Value {
     [[nodiscard]] bool sameAggregate(Value other) const noexcept {
         if (kind_ != other.kind_) { return false; }
         if (kind_ != Kind::Array && kind_ != Kind::Object) { return false; }
-        // TODO: сравнение переедет на node_, когда агрегаты станут узлами
-        // (Task 4, Task 5). Сейчас хранилище всё ещё выдаёт индексы, и по
-        // указателю два хранилища не различить — оба начинают с нуля.
-        if (region_ != other.region_) { return false; }
-        return index_ == other.index_;
+        // Сравнение региона отсюда ушло: у агрегата он всегда Counted, а
+        // личность агрегата — адрес его узла, а не номер в чьих-то пулах.
+        return node_ == other.node_;
     }
 
     // ─── сборка значения из узла ───

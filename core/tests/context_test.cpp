@@ -91,10 +91,14 @@ TEST(Context, TemporaryRegionDoesNotGrowAcrossOperations) {
     CS::Context ctx;
     CS::Diagnostic diag;
 
-    // Литерал создаёт агрегат заново на каждом вычислении (semantics.md §2.3),
-    // поэтому без сброса на границе операции временный регион рос бы линейно
-    // от числа вычислений — ровно то, что [B57] и убирает.
-    const CS::Expression expr = compileIn(ctx, "[1, 2, 3]");
+    // Склейка строит новые байты на каждом вычислении, поэтому без сброса на
+    // границе операции временный регион рос бы линейно от числа вычислений —
+    // ровно то, что [B57] и убирает.
+    //
+    // Раньше здесь стоял литерал массива. Он больше не годится: агрегат теперь
+    // узел со счётчиком, во временном регионе его не бывает, и байт он туда не
+    // кладёт. Мерить рост арены надо тем, что в ней правда живёт, — строкой.
+    const CS::Expression expr = compileIn(ctx, "format('${}${}', 1, 2)");
 
     CS::Value out = CS::Value::null();
     ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
@@ -115,7 +119,8 @@ TEST(Context, ScriptAlsoOpensAnOperation) {
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    ASSERT_EQ(CS::Script::compile("state.n = count([1, 2, 3]);", ctx.store(),
+    // Строка, а не агрегат: во временном регионе теперь живут только байты.
+    ASSERT_EQ(CS::Script::compile("state.n = format('${}${}', 1, 2);", ctx.store(),
                                   &script, diags, 1),
               0u)
         << diags[0].message;

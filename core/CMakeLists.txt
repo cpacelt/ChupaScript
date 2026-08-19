@@ -9,6 +9,7 @@ add_library(chupascript STATIC
     src/data.cpp
     src/eval.cpp
     src/keytable.cpp
+    src/node.cpp
     src/expression.cpp
     src/lexer.cpp
     src/operator.cpp

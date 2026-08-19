@@ -4,6 +4,7 @@ add_executable(chupascript_tests
     c_api_test.cpp
     check_test.cpp
     keytable_test.cpp
+    node_test.cpp
     context_test.cpp
     store_test.cpp
     data_test.cpp

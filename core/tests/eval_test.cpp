@@ -1121,6 +1121,9 @@ TEST(EvalScriptBehaviour, SelfReferenceIsAValidScript) {
     run(exec, "obj['self'] = obj;");
     EXPECT_TRUE(evaluate(exec, "obj['self'] == obj").booleanValue());
     EXPECT_TRUE(evaluate(exec, "obj['self']['self']['self'] == obj").booleanValue());
+    // Break the cycle through the language itself, so the box does not
+    // outlive this test (tools/asan.sh runs under LeakSanitizer).
+    run(exec, "obj['self'] = null;");
 }
 
 TEST(EvalScriptBehaviour, EmptyStatementsAreSkipped) {

@@ -194,6 +194,10 @@ TEST(StoreArrayMutation, ArrayMayContainItself) {
     CS::arrayPush(a, a);
     // semantics.md §2.3: цикл допустим, рекурсивного обхода в слое нет.
     EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(a));
+    // Cycle broken through the language's own means (pop), so the box does
+    // not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    Value taken = Value::null();
+    ASSERT_TRUE(CS::arrayPop(a, &taken, dead));
 }
 
 TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
@@ -453,6 +457,9 @@ TEST(StoreObjectMutation, ObjectMayContainItself) {
     // semantics.md §2.3: obj['self'] = obj — корректная программа.
     EXPECT_TRUE(CS::objectGet(o, "self").sameAggregate(o));
     EXPECT_EQ(CS::objectCount(o), 1u);
+    // Cycle broken through the language's own means (null over the field), so
+    // the box does not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    CS::objectSet(o, "self", Value::null(), dead);
 }
 
 TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
@@ -465,6 +472,10 @@ TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
 
     EXPECT_TRUE(CS::objectGet(o, "items").sameAggregate(a));
     EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(o));
+    // Cycle broken through the language's own means (pop), so the boxes do
+    // not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    Value taken = Value::null();
+    ASSERT_TRUE(CS::arrayPop(a, &taken, dead));
 }
 
 TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {

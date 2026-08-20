@@ -43,4 +43,13 @@ export ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}"
 status=0
 "./${BUILD_DIR}/core/tests/chupascript_tests" "$@" || status=$?
 "./${BUILD_DIR}/cli/tests/chupa_cli_tests" || status=$?
+
+# The cycle program must FAIL here: a reference-counted cycle is unreachable
+# memory, which is exactly what the leak detector reports. A zero exit means
+# the detector stopped seeing it — the check has gone quiet, not the defect.
+if "./${BUILD_DIR}/core/tests/chupascript_cycle_leak" 2>/dev/null; then
+    echo "cycle leak went unreported — the leak detector is not doing its job" >&2
+    status=1
+fi
+
 exit "${status}"

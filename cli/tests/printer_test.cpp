@@ -78,13 +78,21 @@ TEST(PrintValue, SelfReferencingObjectTerminates) {
     // docs/semantics.md §2.3 объявляет такую программу корректной; печатник
     // обязан завершиться, а не зациклиться.
     EXPECT_EQ(chupa::printValue(ctx, o), "{'n': 1, 'self': {...}}");
+    // Cycle broken through the language's own means (null over the field), so
+    // the box does not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    CS::objectSet(o, "self", Value::null(), dead);
 }
 
 TEST(PrintValue, SelfReferencingArrayTerminates) {
+    CS::Deferred dead;
     CS::Context ctx;
     const Value a = put(ctx, "a", "[1]");
     CS::arrayPush(a, a);
     EXPECT_EQ(chupa::printValue(ctx, a), "[1, [...]]");
+    // Cycle broken through the language's own means (pop), so the box does
+    // not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    Value taken = Value::null();
+    ASSERT_TRUE(CS::arrayPop(a, &taken, dead));
 }
 
 TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
@@ -129,6 +137,9 @@ TEST(PrintValue, MutualCycleTerminates) {
     CS::objectSet(b, "a", a, dead);
     // Цикл длиной два: путь ловит и его.
     EXPECT_EQ(chupa::printValue(ctx, a), "{'b': {'a': {...}}}");
+    // Cycle broken through the language's own means (null over the field), so
+    // the boxes do not outlive this test (tools/asan.sh runs under LeakSanitizer).
+    CS::objectSet(b, "a", Value::null(), dead);
 }
 
 }  // namespace

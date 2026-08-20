@@ -1,5 +1,10 @@
 #pragma once
 
+#include <gtest/gtest.h>
+
+#include <cstddef>
+#include <string>
+
 #include "host.hpp"
 
 namespace {

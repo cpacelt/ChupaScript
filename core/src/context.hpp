@@ -136,6 +136,10 @@ class Context {
                                                   Expression *out,
                                                   Diagnostic *diags,
                                                   std::uint32_t capacity) {
+        // Set before compiling, not after success: a failed compile still
+        // means resolveCallee already read the name set, so gating on the
+        // outcome would make registration's window depend on whether this
+        // particular compile happened to succeed.
         compiled_ = true;
         return Expression::compile(source, store_, out, diags, capacity);
     }
@@ -144,6 +148,7 @@ class Context {
     [[nodiscard]] std::uint32_t compileScript(std::string_view source, Script *out,
                                               Diagnostic *diags,
                                               std::uint32_t capacity) {
+        // compiled_ is set before compiling here too — see compileExpression.
         compiled_ = true;
         return Script::compile(source, store_, out, diags, capacity);
     }

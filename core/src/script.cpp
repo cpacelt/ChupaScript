@@ -7,14 +7,14 @@ namespace CS {
 
 std::uint32_t Script::compile(std::string_view source, Store &store,
                               Script *out, Diagnostic *diags,
-                              std::uint32_t capacity) {
+                              std::uint32_t capacity, const HostTable *hosts) {
     // Компиляция идёт в отдельную единицу и переносится в *out только при
     // успехе: иначе неудачный разбор портил бы уже рабочий скрипт.
     Script built;
     built.source_ = std::string(source);
     const std::uint32_t errors = compileScript(
         built.source_.data(), static_cast<std::uint32_t>(built.source_.size()),
-        built.ast_, store, diags, capacity);
+        built.ast_, store, diags, capacity, hosts);
     if (errors != 0) { return errors; }
     built.storeId_ = store.id();
     *out = std::move(built);

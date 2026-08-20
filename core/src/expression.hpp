@@ -11,6 +11,8 @@
 
 namespace CS {
 
+class HostTable;
+
 /// Исход типизированного вычисления.
 ///
 /// Трёхзначен по необходимости: «получилось null» физически некуда положить,
@@ -47,9 +49,13 @@ class Expression {
     /// Из store читается только состав имён (check.hpp): значения роли не
     /// играют. Ссылки на store единица не удерживает, но с этого момента
     /// годна только для него: номера ячеек адресуют его пулы.
+    ///
+    /// hosts defaults to nullptr — see compileExpression (compile.hpp) for
+    /// what that means.
     static std::uint32_t compile(std::string_view source, Store &store,
                                  Expression *out, Diagnostic *diags,
-                                 std::uint32_t capacity);
+                                 std::uint32_t capacity,
+                                 const HostTable *hosts = nullptr);
 
     /// Вычисляет выражение. При отказе возвращает false и заполняет diag;
     /// смещение считается от начала source(). При отказе *out не трогается.

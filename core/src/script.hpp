@@ -10,6 +10,8 @@
 
 namespace CS {
 
+class HostTable;
+
 /// Скомпилированный скрипт: исходник и дерево, связанные навсегда.
 ///
 /// Единица владеет копией своего исходника, поэтому правил времени жизни у
@@ -41,9 +43,13 @@ class Script {
     /// (compile.hpp). Ссылки на store единица не удерживает, но с этого
     /// момента годна только для него: и номера ячеек, и уложенные литералы
     /// адресуют его пулы.
+    ///
+    /// hosts defaults to nullptr — see compileScript (compile.hpp) for what
+    /// that means.
     static std::uint32_t compile(std::string_view source, Store &store,
                                  Script *out, Diagnostic *diags,
-                                 std::uint32_t capacity);
+                                 std::uint32_t capacity,
+                                 const HostTable *hosts = nullptr);
 
     /// Выполняет скрипт. У скрипта нет значения (docs/semantics.md §3.1);
     /// при отказе возвращает false и заполняет diag; смещение считается от

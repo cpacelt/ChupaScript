@@ -141,7 +141,8 @@ class Context {
         // outcome would make registration's window depend on whether this
         // particular compile happened to succeed.
         compiled_ = true;
-        return Expression::compile(source, store_, out, diags, capacity);
+        return Expression::compile(source, store_, out, diags, capacity,
+                                   &hosts_);
     }
 
     /// Same door, for a Script.
@@ -150,7 +151,7 @@ class Context {
                                               std::uint32_t capacity) {
         // compiled_ is set before compiling here too — see compileExpression.
         compiled_ = true;
-        return Script::compile(source, store_, out, diags, capacity);
+        return Script::compile(source, store_, out, diags, capacity, &hosts_);
     }
 
     /// Registers a host function. Refused after the first compilation on

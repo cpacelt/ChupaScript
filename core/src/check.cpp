@@ -14,6 +14,12 @@ struct Checker {
     const Store &store;
     Diagnostic *out;
     std::uint32_t capacity;
+    // hosts and mode are not yet read anywhere in this pass — name
+    // resolution against the host table lands in the next task. They are
+    // stored here so this task's job (carry them to the pass) is complete
+    // and observable, without reaching ahead into work that belongs later.
+    const HostTable *hosts;
+    CompileMode mode;
     std::uint32_t found = 0;
 
     void report(NodeId node, ErrorCode code, const char *message) {
@@ -137,11 +143,12 @@ struct Checker {
 }  // namespace
 
 std::uint32_t check(Ast &ast, std::string_view source, const Store &store,
-                    Diagnostic *out, std::uint32_t capacity) {
+                    Diagnostic *out, std::uint32_t capacity,
+                    const HostTable *hosts, CompileMode mode) {
     const NodeId root = ast.root();
     if (root == kNoNode) { return 0; }
 
-    Checker checker{ast, source, store, out, capacity};
+    Checker checker{ast, source, store, out, capacity, hosts, mode};
     // Плоский цикл, а не рекурсия: узлы лежат в пост-обходе, дети раньше
     // родителей, и проверкам пропускать нечего — значит предела глубины у
     // прохода нет вовсе.

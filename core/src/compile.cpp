@@ -50,26 +50,29 @@ void internStringLiterals(Ast &ast, std::string_view source) {
 
 std::uint32_t compileExpression(const char *source, std::uint32_t length,
                                 Ast &ast, Store &store, Diagnostic *out,
-                                std::uint32_t capacity) {
+                                std::uint32_t capacity,
+                                const HostTable *hosts) {
     Diagnostic diag;
     if (!parseExpression(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
     const std::string_view text(source, length);
-    const std::uint32_t errors = check(ast, text, store, out, capacity);
+    const std::uint32_t errors = check(ast, text, store, out, capacity, hosts,
+                                       CompileMode::Expression);
     if (errors == 0) { internStringLiterals(ast, text); }
     return errors;
 }
 
 std::uint32_t compileScript(const char *source, std::uint32_t length, Ast &ast,
                             Store &store, Diagnostic *out,
-                            std::uint32_t capacity) {
+                            std::uint32_t capacity, const HostTable *hosts) {
     Diagnostic diag;
     if (!parseScript(source, length, ast, diag)) {
         return reportParseFailure(diag, out, capacity);
     }
     const std::string_view text(source, length);
-    const std::uint32_t errors = check(ast, text, store, out, capacity);
+    const std::uint32_t errors = check(ast, text, store, out, capacity, hosts,
+                                       CompileMode::Script);
     if (errors == 0) { internStringLiterals(ast, text); }
     return errors;
 }

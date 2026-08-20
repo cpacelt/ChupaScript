@@ -11,6 +11,7 @@
 #include "compile.hpp"
 #include "data.hpp"
 #include "diagnostic.hpp"
+#include "host.hpp"
 #include "parser.hpp"
 #include "store.hpp"
 
@@ -334,6 +335,32 @@ TEST(Check, CountsWithoutABufferAtAll) {
                                 store, &unused, 0),
               0u);
     EXPECT_EQ(unused.code, CS::ErrorCode::None);
+}
+
+/// Таблица и режим обязаны доехать до прохода. Пользоваться ими проход
+/// начнёт в следующей задаче, но доехать они должны уже сейчас — иначе
+/// следующая задача обнаружит, что чинить надо две вещи вместо одной.
+TEST(CheckCompileMode, ExpressionDoorCompilesWithoutAHostTable) {
+    Store store;
+    Ast ast;
+    Diagnostic diags[4]{};
+    const std::string_view source = "1 + 2";
+    EXPECT_EQ(CS::compileExpression(source.data(),
+                                    static_cast<std::uint32_t>(source.size()),
+                                    ast, store, diags, 4),
+              0u);
+}
+
+TEST(CheckCompileMode, ExpressionDoorAcceptsAHostTable) {
+    Store store;
+    CS::HostTable hosts;
+    Ast ast;
+    Diagnostic diags[4]{};
+    const std::string_view source = "1 + 2";
+    EXPECT_EQ(CS::compileExpression(source.data(),
+                                    static_cast<std::uint32_t>(source.size()),
+                                    ast, store, diags, 4, &hosts),
+              0u);
 }
 
 }  // namespace

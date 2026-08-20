@@ -45,10 +45,15 @@ status=0
 "./${BUILD_DIR}/cli/tests/chupa_cli_tests" || status=$?
 
 # The cycle program must FAIL here: a reference-counted cycle is unreachable
-# memory, which is exactly what the leak detector reports. A zero exit means
-# the detector stopped seeing it — the check has gone quiet, not the defect.
-if "./${BUILD_DIR}/core/tests/chupascript_cycle_leak" 2>/dev/null; then
+# memory, which is exactly what the leak detector reports. A non-zero exit
+# alone is not enough: cycle_leak_main.cpp also returns non-zero on three
+# unrelated setup failures (setVariableText, compileScript, ctx.run), and a
+# regression that broke the cycle itself would exit the same way. Requiring
+# the LeakSanitizer marker in the captured output tells the two cases apart.
+cycle_output=$("./${BUILD_DIR}/core/tests/chupascript_cycle_leak" 2>&1) && cycle_status=0 || cycle_status=$?
+if [[ ${cycle_status} -eq 0 ]] || ! grep -q "ERROR: LeakSanitizer: detected memory leaks" <<< "${cycle_output}"; then
     echo "cycle leak went unreported — the leak detector is not doing its job" >&2
+    echo "${cycle_output}" >&2
     status=1
 fi
 

@@ -6,6 +6,7 @@
 #include "diagnostic.hpp"
 #include "execution.hpp"
 #include "expression.hpp"
+#include "host.hpp"
 #include "script.hpp"
 #include "store.hpp"
 #include "value.hpp"
@@ -41,6 +42,15 @@ namespace CS {
 ///                 keepResult() until the next beginOperation(), or forever
 ///                 if the Context is destroyed first — the destructor
 ///                 releases it explicitly.
+///   hosts_        HostTable — the functions the host registered
+///                 (host.hpp). Append-only; every release runs from
+///                 ~HostTable, that is, when this Context is destroyed.
+///   compiled_     true from the first compileExpression/compileScript on
+///                 this Context until it is destroyed. Registration after
+///                 that point is refused (docs/backlog.md B23).
+///   evaluating_   true for the duration of one eval() or run(), including
+///                 the host callbacks they invoke. Every door of the C API
+///                 refuses while it is up.
 class Context {
    public:
     Context() = default;
@@ -126,6 +136,7 @@ class Context {
                                                   Expression *out,
                                                   Diagnostic *diags,
                                                   std::uint32_t capacity) {
+        compiled_ = true;
         return Expression::compile(source, store_, out, diags, capacity);
     }
 
@@ -133,8 +144,26 @@ class Context {
     [[nodiscard]] std::uint32_t compileScript(std::string_view source, Script *out,
                                               Diagnostic *diags,
                                               std::uint32_t capacity) {
+        compiled_ = true;
         return Script::compile(source, store_, out, diags, capacity);
     }
+
+    /// Registers a host function. Refused after the first compilation on
+    /// this Context, and refused from inside a callback.
+    RegisterOutcome registerFunction(const ChupaFunction &desc) {
+        if (evaluating_) { return RegisterOutcome::Reentrant; }
+        if (compiled_)   { return RegisterOutcome::TooLate; }
+        return hosts_.add(desc);
+    }
+
+    /// The functions registered here. Read by resolveCallee (callee.hpp)
+    /// during compilation and by evaluation to reach the callback.
+    [[nodiscard]] const HostTable &hosts() const noexcept { return hosts_; }
+
+    /// Is a call in flight. The C API asks before doing anything on this
+    /// Context: a host callback runs in the middle of a tree walk, and a
+    /// write there would drain the deferred list the walk is standing on.
+    [[nodiscard]] bool isEvaluating() const noexcept { return evaluating_; }
 
     /// The Store, exposed: the shell (`:vars`, printValue) and the C API both
     /// need the name list and aggregate traversal it offers. Read-only only —
@@ -168,6 +197,9 @@ class Context {
     }
 
     Store store_;
+    HostTable hosts_;
+    bool compiled_ = false;
+    bool evaluating_ = false;
     Execution exec_{store_};
 
     /// The value the last string shortcut borrowed its bytes from.

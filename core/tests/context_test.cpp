@@ -10,6 +10,7 @@
 #include "data.hpp"
 #include "aggregate.hpp"
 #include "execution.hpp"
+#include "host_fixture.hpp"
 
 namespace {
 
@@ -347,6 +348,40 @@ TEST(Execution, SurvivesBufferGrowth) {
     }
     const CS::Value markResult = exec.endString(mark);
     EXPECT_EQ(CS::stringBytes(markResult), expected);
+}
+
+/// Порядок «регистрация → компиляция» обеспечивается, а не оставляется на
+/// совести хоста: check сверяет имена в момент своего вызова и полагается,
+/// что состав имён после этого не меняется (docs/backlog.md B23).
+TEST(ContextHostFunctions, RefusesRegistrationAfterFirstCompile) {
+    CS::Context ctx;
+    ChupaFunction fn = healthyFunction("formatDate");
+    EXPECT_EQ(ctx.registerFunction(fn), CS::RegisterOutcome::Ok);
+
+    CS::Expression expr;
+    CS::Diagnostic diag{};
+    ASSERT_EQ(ctx.compileExpression("42", &expr, &diag, 1), 0u);
+
+    ChupaFunction late = healthyFunction("pluralForm");
+    EXPECT_EQ(ctx.registerFunction(late), CS::RegisterOutcome::TooLate);
+}
+
+TEST(ContextHostFunctions, IsNotEvaluatingOutsideEvaluation) {
+    CS::Context ctx;
+    EXPECT_FALSE(ctx.isEvaluating());
+}
+
+/// Признак снимается и тогда, когда вычисление завершилось ошибкой: иначе
+/// один неудачный кадр закрыл бы контекст навсегда.
+TEST(ContextHostFunctions, EvaluatingFlagClearsAfterFailure) {
+    CS::Context ctx;
+    CS::Expression expr;
+    CS::Diagnostic diag{};
+    ASSERT_EQ(ctx.compileExpression("count(1)", &expr, &diag, 1), 0u);
+
+    CS::Value out = CS::Value::null();
+    EXPECT_FALSE(ctx.eval(expr, &out, diag));   // count требует агрегат
+    EXPECT_FALSE(ctx.isEvaluating());
 }
 
 }  // namespace

@@ -40,6 +40,8 @@ enum class RegisterOutcome : std::uint8_t {
     BadArity,    ///< minArgs > maxArgs
     BadFlags,    ///< DETERMINISTIC without PURE
     TableFull,   ///< kMaxHostFunctions already registered
+    TooLate,     ///< a compileExpression/compileScript already ran on this Context
+    Reentrant,   ///< called from inside a host callback
 };
 
 /// The functions one Context holds.

@@ -297,11 +297,12 @@ typedef struct ChupaFunction {
 CHUPA_API CHUPA_MUST_USE bool
 chupa_register(ChupaContext *ctx, const ChupaFunction *fn);
 
-/* Задаёт причину отказа. Зовётся только изнутри коллбэка хост-функции; вне
- * его — ничего не делает и ставит CHUPA_ERR_USAGE.
+/* Sets the reason for a refusal. Only meaningful from inside a host
+ * callback; outside one, it does nothing and sets CHUPA_ERR_USAGE.
  *
- * Байты сообщения копируются немедленно, поэтому буфер вызывающего дальше не
- * нужен. Смещение подставляет движок — узел вызова: хост его знать не может. */
+ * The message bytes are copied immediately, so the caller's own buffer is
+ * not needed afterwards. The offset is supplied by the engine — the call
+ * site's node — since the host has no way to know it. */
 CHUPA_API void chupa_fail(ChupaContext *ctx, ChupaErrorCode code,
                           const char *msg, size_t len);
 

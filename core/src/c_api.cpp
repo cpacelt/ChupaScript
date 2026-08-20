@@ -88,14 +88,14 @@ struct ChupaScript     { CS::Script     impl; };
 
 namespace {
 
-/// Отказ, если на контексте прямо сейчас идёт вычисление.
+/// Refuses if this context has an evaluation in flight right now.
 ///
-/// Страж работает в релизе, а не только под assert: без него ошибка хоста
-/// проявляется не отказом, а сливом списка отложенного освобождения посреди
-/// обхода дерева — то есть тихо испорченными данными на чужом устройстве.
+/// The guard runs in release, not only under assert: without it a host bug
+/// shows up not as a refusal but as the deferred-release list being drained
+/// mid-walk — silently corrupted data on someone else's device.
 ///
-/// Перечислять, что именно опасно, значило бы поддерживать этот список верным
-/// вечно; закрыто всё, что пишет, компилирует или вычисляет.
+/// Enumerating what exactly is dangerous would mean keeping that list right
+/// forever; instead everything that writes, compiles or evaluates is closed.
 bool refuseWhileEvaluating(::ChupaContext *c) {
     if (!c->impl.isEvaluating()) { return false; }
     c->setError({CS::ErrorCode::Usage, 0,
@@ -267,22 +267,23 @@ CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
 bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
     if (ctx == nullptr || fn == nullptr) { return false; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    // Без refuseWhileEvaluating здесь намеренно: признак "идёт вызов" уже
-    // проверяет Context::registerFunction (RegisterOutcome::Reentrant) —
-    // это тот слой, что владеет флагом evaluating_. Второй страж здесь сверху
-    // сделал бы эту её ветку недостижимой из C, ничего не выиграв взамен.
+    // refuseWhileEvaluating deliberately not called here: the "call in
+    // flight" check is already made by Context::registerFunction
+    // (RegisterOutcome::Reentrant) — that is the layer that owns the
+    // evaluating_ flag. A second guard on top would make that branch of
+    // hers unreachable from C, for nothing gained in return.
     const CS::RegisterOutcome outcome = c->impl.registerFunction(*fn);
     if (outcome == CS::RegisterOutcome::Ok) {
         c->clearError();
         return true;
     }
-    // Утверждение вместе с отказом: код регистрации статичен и выполняется до
-    // всего остального, поэтому разработчик увидит его на первом же запуске у
-    // себя, а не пользователь на устройстве. В релизе утверждение исчезает, и
-    // настоящим контрактом остаётся возвращаемое false. Reentrant — не такой
-    // баг: это ожидаемый исход попытки хоста зарегистрировать функцию из
-    // середины текущего вызова, намеренно проверяемый тестом, и здесь не
-    // ассертится.
+    // Assert paired with the refusal: registration code is static and runs
+    // before anything else, so a developer sees it on their very first run,
+    // not a user on a device. In release the assert compiles out and the
+    // returned false is the whole contract. Reentrant is not that kind of
+    // bug: it is the expected outcome of a host trying to register a
+    // function from the middle of the current call, deliberately covered by
+    // a test, and is not asserted on here.
     assert(outcome == CS::RegisterOutcome::Reentrant &&
           "chupa_register отказал — см. код ошибки контекста");
     c->setError(errorFor(outcome));
@@ -510,6 +511,16 @@ bool chupa_make_string(ChupaContext* ctx, const char* bytes, size_t len,
 // core call. On Ok the core leaves diag untouched entirely (docblock on
 // Expression::eval, core/src/expression.hpp), so without clearing first a
 // successful evaluation would leak the previous call's diagnostic.
+//
+// The core call is always handed a LOCAL Diagnostic, never c->lastError
+// directly: a callback reached mid-walk can refuse a closed door, and that
+// refusal writes through refuseWhileEvaluating into whatever slot it was
+// given. Handing it c->lastError would let a callback's refusal overwrite
+// the very slot this call is about to report success through — the walk
+// finishes Ok, core leaves diag untouched by contract, and the refusal from
+// three frames down is left standing as if it were this call's own outcome.
+// A local scratch diagnostic is thrown away on success and copied over only
+// on failure, so the door a callback knocked on can never outlive the call.
 
 bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
@@ -518,7 +529,11 @@ bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     c->clearError();
 
     CS::Value value = CS::Value::null();
-    if (!c->impl.eval(expr->impl, &value, c->lastError)) { return false; }
+    CS::Diagnostic diag;
+    if (!c->impl.eval(expr->impl, &value, diag)) {
+        c->setError(diag);
+        return false;
+    }
     // Null is a kind, not an outcome: the value says so itself, and a separate
     // return code for it existed only because a double * had nowhere to put
     // "it came out null".
@@ -535,7 +550,10 @@ bool chupa_eval_number(ChupaContext* ctx, ChupaExpression* e, double* out) {
     // untouched) and a wrong kind with CHUPA_ERR_TYPE — exactly the two-way
     // split the shortcut promises, so there is nothing left to translate but
     // the outcome itself.
-    return c->impl.evalNumber(expr->impl, out, c->lastError) == CS::EvalStatus::Ok;
+    CS::Diagnostic diag;
+    const bool ok = c->impl.evalNumber(expr->impl, out, diag) == CS::EvalStatus::Ok;
+    if (!ok) { c->setError(diag); }
+    return ok;
 }
 
 bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
@@ -543,7 +561,10 @@ bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
     if (refuseWhileEvaluating(c)) { return false; }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
-    return c->impl.evalBool(expr->impl, out, c->lastError) == CS::EvalStatus::Ok;
+    CS::Diagnostic diag;
+    const bool ok = c->impl.evalBool(expr->impl, out, diag) == CS::EvalStatus::Ok;
+    if (!ok) { c->setError(diag); }
+    return ok;
 }
 
 bool chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
@@ -554,7 +575,11 @@ bool chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
     c->clearError();
 
     CS::Value value = CS::Value::null();
-    if (!c->impl.eval(expr->impl, &value, c->lastError)) { return false; }
+    CS::Diagnostic diag;
+    if (!c->impl.eval(expr->impl, &value, diag)) {
+        c->setError(diag);
+        return false;
+    }
     if (value.kind() == CS::Value::Kind::Null) { return false; }  // error stays NONE
     if (value.kind() != CS::Value::Kind::String) {
         c->setError({CS::ErrorCode::Type, 0, "expression is not a string"});

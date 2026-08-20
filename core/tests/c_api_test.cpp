@@ -1344,13 +1344,29 @@ TEST(EvalHostCall, VoidFunctionReceivesNullOut) {
 
 namespace {
 
-/// Пробует каждую закрытую дверь и запоминает, все ли отказали.
+/// Пробует каждую из четырнадцати закрытых дверей и запоминает, все ли
+/// отказали. probe() пишет через set_data, чтобы registerFromCallback ниже
+/// мог наблюдать это без отдельной инфраструктуры — но здесь это не нужно.
 bool g_everyDoorRefused = false;
+
+/// eval/eval_number/eval_bool/eval_string и run нуждаются в уже
+/// скомпилированной единице — компилировать внутри колбэка нельзя, это
+/// сама по себе одна из закрытых дверей. Обе заводятся до вычисления, тем
+/// же ctx, пока он ещё открыт, и переживают probesClosedDoors как есть.
+ChupaExpression *g_probeExpr = nullptr;
+ChupaScript *g_probeScript = nullptr;
 
 bool probesClosedDoors(ChupaContext *ctx, const ChupaValue *, size_t,
                        ChupaValue *out, void *) {
     auto refusedWithUsage = [ctx](bool ok) {
         if (ok) { return false; }
+        ChupaError err;
+        chupa_context_error(ctx, &err);
+        return err.code == CHUPA_ERR_USAGE;
+    };
+    // void-двери не возвращают успех/отказ напрямую: страж всё равно пишет
+    // CHUPA_ERR_USAGE в контекст, и это единственный способ его увидеть.
+    auto voidDoorRefused = [ctx]() {
         ChupaError err;
         chupa_context_error(ctx, &err);
         return err.code == CHUPA_ERR_USAGE;
@@ -1361,10 +1377,36 @@ bool probesClosedDoors(ChupaContext *ctx, const ChupaValue *, size_t,
     late.name_len = 7;
     late.call = probesClosedDoors;
 
+    double number = 0.0;
+    bool boolean = false;
+    const char *bytes = nullptr;
+    size_t len = 0;
+
+    // listener не nullable в заголовке (assume_nonnull), поэтому кормим
+    // страж настоящим указателем на функцию — этому колбэку он всё равно
+    // никогда не позвонит, он должен отказать раньше.
+    chupa_context_on_redraw(ctx, [](ChupaContext *, void *) {}, nullptr);
+    const bool redrawRefused = voidDoorRefused();
+
     g_everyDoorRefused =
+        refusedWithUsage(chupa_context_set_data(ctx, "x", 1, "1", 1)) &&
+        refusedWithUsage(chupa_context_set_bool(ctx, "x", 1, true)) &&
         refusedWithUsage(chupa_context_set_number(ctx, "x", 1, 1.0)) &&
+        refusedWithUsage(chupa_context_set_string(ctx, "x", 1, "s", 1)) &&
         refusedWithUsage(chupa_compile_expression(ctx, "1", 1) != nullptr) &&
-        refusedWithUsage(chupa_register(ctx, &late));
+        refusedWithUsage(chupa_compile_script(ctx, "1;", 2) != nullptr) &&
+        refusedWithUsage(chupa_register(ctx, &late)) &&
+        refusedWithUsage(chupa_eval(ctx, g_probeExpr, out)) &&
+        refusedWithUsage(chupa_eval_number(ctx, g_probeExpr, &number)) &&
+        refusedWithUsage(chupa_eval_bool(ctx, g_probeExpr, &boolean)) &&
+        refusedWithUsage(chupa_eval_string(ctx, g_probeExpr, &bytes, &len)) &&
+        refusedWithUsage(chupa_run(ctx, g_probeScript)) &&
+        redrawRefused;
+
+    // chupa_context_destroy тоже закрытая дверь, но её отказ проверяется
+    // отдельным тестом (ClosedContextDestroyRefusesAndLeaksInsteadOfCorrupting):
+    // проверить его здесь означало бы либо вызвать delete на живом ctx посреди
+    // обхода дерева, либо просто позвать функцию и поверить контракту на слово.
 
     chupa_make_number(out, 0.0);
     return true;
@@ -1394,9 +1436,29 @@ bool failsSilently(ChupaContext *, const ChupaValue *, size_t, ChupaValue *,
     return false;
 }
 
+/// Зовёт chupa_fail и всё равно возвращает true — тот самый случай, из-за
+/// которого takeHostFailure обязан забирать причину безусловно, а не только
+/// на ветке отказа: иначе она осталась бы висеть и на успехе.
+bool failsButReturnsTrue(ChupaContext *ctx, const ChupaValue *, size_t,
+                         ChupaValue *out, void *) {
+    chupa_fail(ctx, CHUPA_ERR_RANGE, "ignored", 7);
+    chupa_make_number(out, 0.0);
+    return true;
+}
+
 /// Поднимается, только когда колбэк ниже реально был позван: без него тест,
 /// в котором evalText вовсе не дошёл до вызова, прошёл бы так же тихо.
 bool g_registerFromCallbackWasChecked = false;
+
+/// Тело скрипта под g_probeScript ниже нуждается в каком-нибудь операторе:
+/// голое выражение оператором не является (script_test.cpp), а зовущийся
+/// void-функцией вызов — самый простой из них. Сам этот колбэк никогда не
+/// будет позван: refuseWhileEvaluating откажет chupa_run раньше.
+bool neverActuallyRuns(ChupaContext *, const ChupaValue *, size_t,
+                       ChupaValue *, void *) {
+    ADD_FAILURE() << "g_probeScript ran instead of being refused";
+    return true;
+}
 
 bool registersFromInsideACallback(ChupaContext *ctx, const ChupaValue *, size_t,
                                   ChupaValue *out, void *) {
@@ -1414,6 +1476,25 @@ bool registersFromInsideACallback(ChupaContext *ctx, const ChupaValue *, size_t,
     return true;
 }
 
+/// Тот же принцип, что у g_registerFromCallbackWasChecked: без флага тест с
+/// незапущенным колбэком прошёл бы так же тихо.
+bool g_destroyFromCallbackWasChecked = false;
+
+bool destroysFromInsideACallback(ChupaContext *ctx, const ChupaValue *, size_t,
+                                 ChupaValue *out, void *) {
+    // Отказ — void: единственный способ его увидеть — состояние ошибки после.
+    // Если бы страж не сработал, delete случился бы здесь, и всё, что
+    // случится после return в этом колбэке (включая сам этот вызов на стеке
+    // ядра), читало бы память освобождённого ctx.
+    chupa_context_destroy(ctx);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    g_destroyFromCallbackWasChecked = err.code == CHUPA_ERR_USAGE;
+
+    chupa_make_number(out, 0.0);
+    return true;
+}
+
 }  // namespace
 
 /// Каждая запрещённая дверь отказывает, и вычисление после этого доходит до
@@ -1423,10 +1504,26 @@ TEST(CApiClosedContext, EveryWriteDoorRefusesFromInsideACallback) {
     g_everyDoorRefused = false;
     ChupaFunction fn = described("probe", 0, 0, probesClosedDoors);
     ASSERT_TRUE(chupa_register(ctx, &fn));
+    ChupaFunction never = described("neverActuallyRuns", 0, 0, neverActuallyRuns);
+    never.flags = 0;  // void — a statement, so it compiles as a script body
+    ASSERT_TRUE(chupa_register(ctx, &never));
+
+    // Скомпилированы, пока ctx ещё открыт: сама компиляция — одна из дверей,
+    // которые probesClosedDoors проверяет закрытыми, поэтому внутри колбэка
+    // завести их было бы уже нельзя.
+    g_probeExpr = chupa_compile_expression(ctx, "1", 1);
+    ASSERT_NE(g_probeExpr, nullptr);
+    g_probeScript = chupa_compile_script(ctx, "neverActuallyRuns();", 20);
+    ASSERT_NE(g_probeScript, nullptr);
 
     ChupaValue out{};
     EXPECT_TRUE(evalText(ctx, "probe()", &out));
     EXPECT_TRUE(g_everyDoorRefused);
+
+    chupa_expression_destroy(g_probeExpr);
+    chupa_script_destroy(g_probeScript);
+    g_probeExpr = nullptr;
+    g_probeScript = nullptr;
 
     chupa_context_destroy(ctx);
 }
@@ -1457,6 +1554,24 @@ TEST(CApiClosedContext, RegisterFromInsideACallbackRefusesWithUsage) {
     ChupaValue out{};
     EXPECT_TRUE(evalText(ctx, "registerIt()", &out));
     EXPECT_TRUE(g_registerFromCallbackWasChecked);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Худшая из четырнадцати дверей: без стража это было бы delete на памяти,
+/// которую ядро ещё читает на своём собственном стеке вызовов. Проверена
+/// отдельно от probesClosedDoors, а не внутри него: реальный вызов там
+/// означал бы либо остановиться на первом же delete, либо просто поверить
+/// контракту на слово вместо проверки.
+TEST(CApiClosedContext, DestroyFromInsideACallbackRefusesInsteadOfCorrupting) {
+    ChupaContext *ctx = chupa_context_create();
+    g_destroyFromCallbackWasChecked = false;
+    ChupaFunction fn = described("destroyIt", 0, 0, destroysFromInsideACallback);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_TRUE(evalText(ctx, "destroyIt()", &out));
+    EXPECT_TRUE(g_destroyFromCallbackWasChecked);
 
     chupa_context_destroy(ctx);
 }
@@ -1513,3 +1628,38 @@ TEST(CApiHostFailure, ReasonDoesNotLeakIntoTheNextRefusal) {
     chupa_context_destroy(ctx);
 }
 
+
+/// Причина, поднятая на успехе, не должна достаться следующему МОЛЧАЛИВОМУ
+/// отказу — тот же контракт, что ReasonDoesNotLeakIntoTheNextRefusal, но
+/// источник протечки другой: колбэк, который назвал причину и всё равно
+/// вернул true, а не колбэк, который отказал.
+TEST(CApiHostFailure, ReasonFromASuccessfulCallDoesNotLeakIntoTheNextRefusal) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction loud = described("succeedsAnyway", 0, 0, failsButReturnsTrue);
+    ChupaFunction quiet = described("quiet", 0, 0, failsSilently);
+    ASSERT_TRUE(chupa_register(ctx, &loud));
+    ASSERT_TRUE(chupa_register(ctx, &quiet));
+
+    ChupaValue out{};
+    EXPECT_TRUE(evalText(ctx, "succeedsAnyway()", &out));
+    EXPECT_FALSE(evalText(ctx, "quiet()", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+
+    chupa_context_destroy(ctx);
+}
+
+/// chupa_fail вне колбэка — контракт заголовка: ничего не делает, кроме
+/// как ставит CHUPA_ERR_USAGE в контекст.
+TEST(CApiHostFailure, FailOutsideACallbackIsUsage) {
+    ChupaContext *ctx = chupa_context_create();
+
+    chupa_fail(ctx, CHUPA_ERR_TYPE, "not from a callback", 20);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_USAGE);
+
+    chupa_context_destroy(ctx);
+}

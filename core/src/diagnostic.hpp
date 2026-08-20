@@ -21,8 +21,11 @@ enum class ErrorCode : std::uint8_t {
 
 /// Описание одной неудачи.
 ///
-/// message — статическая строка; Diagnostic ничем не владеет и свободно
-/// копируется.
+/// message обычно статическая строка, и Diagnostic ничем не владеет и
+/// свободно копируется. Исключение — путь отказа хоста: там message
+/// указывает внутрь Execution::hostFailureText_ (execution.hpp) и остаётся
+/// годным лишь до следующего chupa_fail на этом контексте, тот же срок,
+/// что публичный заголовок обещает для ChupaError.message.
 struct Diagnostic {
     ErrorCode code = ErrorCode::None;
     std::uint32_t offset = 0;  ///< смещение в байтах от начала исходника

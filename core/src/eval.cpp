@@ -79,17 +79,19 @@ bool coerceToString(const Ast &ast, NodeId node, const Value &value,
 
 /// Fails a host call whose callback returned false.
 ///
-/// The reason is whatever chupa_fail last stashed on this Execution
-/// (takeHostFailure, execution.hpp) — taken, not merely read, so the same
-/// reason cannot leak into the next refusal. An empty reason means the
-/// callback returned false without ever calling chupa_fail, and gets
-/// ErrorCode::Host with a fixed message instead of an engine-chosen guess at
-/// why a function the engine never looked inside declined to run. What stays
-/// true either way is the offset — the host has no node to blame, so the
-/// call site's own node is what the diagnostic points at.
-bool failHostCall(const Ast &ast, NodeId node, Execution &exec,
+/// reason is whatever chupa_fail last stashed on this Execution, already
+/// taken by the caller (evalHostCall) — not read here, because the take has
+/// to happen unconditionally right after the callback returns, on the Ok
+/// path too, or a reason left standing from a callback that called
+/// chupa_fail and then returned true would leak into the next silent
+/// refusal. An empty reason means the callback returned false without ever
+/// calling chupa_fail, and gets ErrorCode::Host with a fixed message instead
+/// of an engine-chosen guess at why a function the engine never looked
+/// inside declined to run. What stays true either way is the offset — the
+/// host has no node to blame, so the call site's own node is what the
+/// diagnostic points at.
+bool failHostCall(const Ast &ast, NodeId node, const Diagnostic &reason,
                   Diagnostic &diag) {
-    const Diagnostic reason = exec.takeHostFailure();
     if (reason.code == ErrorCode::None) {
         return fail(ast, node, ErrorCode::Host, "host function failed", diag);
     }
@@ -141,7 +143,12 @@ bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
     const bool ok = callee.call(exec.hostHandle(), asC(frame.data()), count,
                                 slot, callee.userData);
 
-    if (!ok) { return failHostCall(ast, node, exec, diag); }
+    // Taken unconditionally, on the Ok path too: a callback that calls
+    // chupa_fail and then still returns true would otherwise leave its
+    // reason standing, ready to be misread as the cause of a later, unrelated
+    // silent refusal on the same Execution.
+    const Diagnostic reason = exec.takeHostFailure();
+    if (!ok) { return failHostCall(ast, node, reason, diag); }
     *out = produced;
     return true;
 }

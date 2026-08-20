@@ -194,11 +194,15 @@ class Execution {
     }
 
     /// Reads back what setHostFailure stashed and resets the code, so the
-    /// reason for one refusal is never mistaken for the reason of the next
-    /// one: code is ErrorCode::None when the callback refused without ever
-    /// calling chupa_fail — failHostCall (eval.cpp) is what turns that into
-    /// ErrorCode::Host and a fixed message, and it branches on code alone,
-    /// never on hostFailureText_.
+    /// reason for one call is never mistaken for the reason of the next one.
+    /// evalHostCall (eval.cpp) calls this unconditionally right after every
+    /// callback returns, Ok included — a callback may call chupa_fail and
+    /// still return true, and without an unconditional take that reason
+    /// would sit here and be misattributed to a later, unrelated silent
+    /// refusal. code is ErrorCode::None when the callback refused without
+    /// ever calling chupa_fail — failHostCall (eval.cpp) is what turns that
+    /// into ErrorCode::Host and a fixed message, and it branches on code
+    /// alone, never on hostFailureText_.
     ///
     /// hostFailureText_ itself is left as is, not cleared: the returned
     /// message points straight into its buffer, and a std::string::clear()

@@ -248,8 +248,16 @@ CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 typedef enum ChupaFunctionFlags {
     CHUPA_FN_NONE          = 0,
     CHUPA_FN_RETURNS_VALUE = 1u << 0,  /* without it — Void (docs/semantics.md 2.2) */
-    CHUPA_FN_PURE          = 1u << 1,  /* without it — callable from a script only */
-    CHUPA_FN_DETERMINISTIC = 1u << 2   /* room for a props cache; not read yet */
+    CHUPA_FN_PURE          = 1u << 1,  /* permits skipping, repeating or reordering the
+                                         * call — nothing outside the engine notices.
+                                         * Without it — callable from a script only. */
+    CHUPA_FN_DETERMINISTIC = 1u << 2   /* permits answering a repeat call from a cache
+                                         * instead of calling again — the value stays
+                                         * correct. A function reading mutable host
+                                         * state MUST NOT be declared deterministic;
+                                         * the engine cannot check this, so it is on
+                                         * the host, same as UTF-8 above. Room for a
+                                         * props cache; not read yet. */
 } ChupaFunctionFlags;
 
 /* No upper bound on argument count — as format has. */

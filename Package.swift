@@ -67,7 +67,11 @@ let package = Package(
         ),
         .testTarget(
             name: "ChupaScriptTests",
-            dependencies: ["ChupaScript"],
+            // ChupaScriptC — тестам, проверяющим сырую перегрузку `register`,
+            // нужен прямой доступ к `chupa_value_kind` / `chupa_array_count`:
+            // агрегатный аргумент не проходит через `CSConvertible`, и именно
+            // это сырая перегрузка и раскрывает.
+            dependencies: ["ChupaScript", "ChupaScriptC"],
             path: "Tests/ChupaScriptTests"
         ),
     ],

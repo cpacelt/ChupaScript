@@ -1,5 +1,6 @@
 import XCTest
 
+import ChupaScriptC
 @testable import ChupaScript
 
 /// Хост-функции: замыкание регистрируется типизированным, `ChupaValue`
@@ -64,5 +65,63 @@ final class HostFunctionTests: XCTestCase {
             _ = context
         }
         XCTAssertEqual(Witness.alive, 0)
+    }
+
+    /// Сырая перегрузка — единственный способ выразить переменную арность:
+    /// `CHUPA_VARIADIC` как `maxArgs`, число аргументов известно только
+    /// внутри тела.
+    func testRawRegisterHandlesAVariadicFunction() throws {
+        let context = Context()
+        try context.register("sumAll", minArgs: 1, maxArgs: UInt8(CHUPA_VARIADIC)) { args, ctx, out in
+            var total = 0.0
+            for i in 0..<args.count {
+                guard let value = Double.fromChupa(args[i]) else {
+                    throw Error(code: .type, message: "sumAll: аргумент \(i + 1) не Double", offset: nil)
+                }
+                total += value
+            }
+            _ = total.intoChupa(ctx, out!)
+        }
+        let one: ChupaScript.Expression<Double> = try context.compile(expression: "sumAll(3)")
+        XCTAssertEqual(try one.eval(), 3)
+        let five: ChupaScript.Expression<Double> = try context.compile(expression: "sumAll(1, 2, 3, 4, 5)")
+        XCTAssertEqual(try five.eval(), 15)
+    }
+
+    /// Сырая перегрузка — единственный способ принять агрегат: массив не
+    /// ложится ни в одну маску `CSConvertible`. Проверяет, что агрегатный
+    /// аргумент доезжает до Swift-колбэка живым, а не только то, что
+    /// компилируется.
+    func testRawRegisterReceivesAnAggregateArgumentAlive() throws {
+        let context = Context()
+        try context.register("lengthOf", minArgs: 1, maxArgs: 1) { args, ctx, out in
+            var value = args[0]
+            guard chupa_value_kind(&value) == CHUPA_KIND_ARRAY else {
+                throw Error(code: .type, message: "lengthOf: аргумент 1 не массив", offset: nil)
+            }
+            let count = Double(chupa_array_count(&value))
+            _ = count.intoChupa(ctx, out!)
+        }
+        try context.set("xs", text: "[1, 2, 3, 4]")
+        let expression: ChupaScript.Expression<Double> = try context.compile(expression: "lengthOf(xs)")
+        XCTAssertEqual(try expression.eval(), 4)
+    }
+
+    /// `.unrepresentable`, брошенная телом хост-функции, доезжает до
+    /// прикладного кода как `.type`, а не сваливается в общий `.host`: смысл
+    /// случая — «значение есть, но нужного типа не собрать», то есть ровно
+    /// про тип, и в C для этого есть подходящий код.
+    func testUnrepresentableFromHostBodyBecomesType() throws {
+        let context = Context()
+        try context.register("bad") { (_: Double) -> Double in
+            throw Error(code: .unrepresentable, message: "not representable", offset: nil)
+        }
+        let expression: ChupaScript.Expression<Double> = try context.compile(expression: "bad(1)")
+        XCTAssertThrowsError(try expression.eval()) { error in
+            guard let chupaError = error as? Error else {
+                return XCTFail("expected ChupaScript.Error, got \(error)")
+            }
+            XCTAssertEqual(chupaError.code, .type)
+        }
     }
 }

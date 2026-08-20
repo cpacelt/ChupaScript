@@ -149,8 +149,17 @@ private func chupaRawErrorCode(for code: ErrorCode) -> ChupaErrorCode {
     case .usage:                return CHUPA_ERR_USAGE
     case .memory:                return CHUPA_ERR_MEMORY
     case .host:                  return CHUPA_ERR_HOST
-    case .unrepresentable:       return CHUPA_ERR_HOST
-    case .unrecognized:          return CHUPA_ERR_HOST
+    // У .unrepresentable нет своего кода в C — смысл случая «значение есть,
+    // но нужного типа не собрать», то есть ровно про тип, и ближайший по
+    // смыслу код честнее общего CHUPA_ERR_HOST, который сказал бы только
+    // «хост отказал», не называя причины. Отвергнутая альтернатива — свести
+    // всё в HOST — теряет различимость, которая у хоста уже была.
+    case .unrepresentable:       return CHUPA_ERR_TYPE
+    // raw пришёл из C в первую очередь — обвязка его не узнала и сохранила
+    // как есть; подменять его на HOST значило бы терять то, что сам движок
+    // прислал. rawValue у ChupaErrorCode совпадает по типу с тем, что несёт
+    // .unrecognized (ErrorCode.swift), так что конструктор не может отказать.
+    case .unrecognized(let raw): return ChupaErrorCode(rawValue: raw)
     }
 }
 

@@ -77,6 +77,31 @@ TEST(BuiltinTable, IsSortedByName) {
     }
 }
 
+/// push и pop — единственные билтины, меняющие данные. Тест перечисляет их
+/// поимённо, а не выводит из returnsValue: совпадение этих двух признаков у
+/// сегодняшних двенадцати функций — доказательство docs/grammar.md §6.3, и
+/// выводить одно из другого значило бы сделать это доказательство
+/// непроверяемым.
+TEST(BuiltinTable, PushAndPopAreTheOnlyImpureOnes) {
+    for (int i = 0; i <= static_cast<int>(CS::Builtin::Str); ++i) {
+        const CS::Builtin id = static_cast<CS::Builtin>(i);
+        const bool mutates = id == CS::Builtin::Push || id == CS::Builtin::Pop;
+        EXPECT_EQ(CS::builtinInfo(id).pure, !mutates)
+            << "builtin: " << CS::builtinInfo(id).name;
+    }
+}
+
+/// Детерминированность обещает, что результат можно взять из кэша; грязная
+/// функция зовётся ради побочного эффекта, и пропуск вызова его отменяет.
+/// Сочетание запрещено и у билтинов, и у хост-функций (спека §6).
+TEST(BuiltinTable, NoImpureBuiltinClaimsDeterminism) {
+    for (int i = 0; i <= static_cast<int>(CS::Builtin::Str); ++i) {
+        const CS::BuiltinInfo &info =
+            CS::builtinInfo(static_cast<CS::Builtin>(i));
+        if (!info.pure) { EXPECT_FALSE(info.deterministic) << info.name; }
+    }
+}
+
 TEST(BuiltinTable, TypeofIsReservedAndThereforeNotBuiltin) {
     // typeof зарезервирован грамматикой (docs/grammar.md §4.5): лексер отдаёт
     // на него Reserved, поэтому вызов с таким именем не разбирается вовсе.

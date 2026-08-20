@@ -14,12 +14,18 @@ namespace {
 /// Порядок обязан совпадать с порядком в enum Builtin — на этом стоит индексация
 /// в builtinInfo, и тест BuiltinTable.IsSortedByName стережёт инвариант.
 constexpr BuiltinInfo kTable[] = {
-    {"abs", 1, 1, true},        {"count", 1, 1, true},
-    {"format", 1, kVariadic, true}, {"has", 2, 2, true},
-    {"keys", 1, 1, true},       {"last", 1, 1, true},
-    {"max", 2, 2, true},        {"min", 2, 2, true},
-    {"pop", 1, 1, false},       {"push", 2, 2, false},
-    {"round", 1, 1, true},      {"str", 1, 1, true},
+    {"abs", 1, 1, true, true, true},
+    {"count", 1, 1, true, true, true},
+    {"format", 1, kVariadic, true, true, true},
+    {"has", 2, 2, true, true, true},
+    {"keys", 1, 1, true, true, true},
+    {"last", 1, 1, true, true, true},
+    {"max", 2, 2, true, true, true},
+    {"min", 2, 2, true, true, true},
+    {"pop", 1, 1, false, false, false},
+    {"push", 2, 2, false, false, false},
+    {"round", 1, 1, true, true, true},
+    {"str", 1, 1, true, true, true},
 };
 
 constexpr std::size_t kCount = sizeof kTable / sizeof kTable[0];

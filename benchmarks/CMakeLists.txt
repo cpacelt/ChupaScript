@@ -4,6 +4,7 @@ add_executable(chupascript_benchmarks
     data_benchmark.cpp
     eval_benchmark.cpp
     host_benchmark.cpp
+    host_function_benchmark.cpp
     lexer_benchmark.cpp
     parser_benchmark.cpp
     store_benchmark.cpp

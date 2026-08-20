@@ -11,6 +11,7 @@
 #include "chupascript/chupascript.h"
 #include "report.hpp"
 #include "context.hpp"
+#include "echo.hpp"
 #include "store.hpp"
 
 #include "diagnostic.hpp"
@@ -109,7 +110,7 @@ void printUsage(std::ostream &out) {
 
 void printHelp(std::ostream &out) {
     out << "  expr: <expression>   evaluate an expression\n"
-        << "  script: <statements> run a script\n"
+        << "  script: <statements> run a script (try `echo('hi');`)\n"
         << "  :set <name> = <literal>  put a variable into the context\n"
         << "  :vars                    list the context\n"
         << "  :reset                   start with an empty context\n"
@@ -251,9 +252,19 @@ After handleLine(CS::Context &ctx, std::string_view line) {
 /// свойство, которое обязана сохранять всякая правка этого цикла, а не
 /// исторический факт о нём: команда вроде гипотетической `:last`, кладущей
 /// последнее значение про запас между строками, его нарушит.
+/// Пересобирает контекст и ставит демонстрационный хост заново.
+///
+/// `echo` регистрируется ровно тут — один раз на каждый СВЕЖИЙ контекст,
+/// а не на каждую строку: `:reset` строит контекст заново (`ctx.emplace()`),
+/// и без повторной регистрации `echo` пропал бы вместе со старым контекстом.
+void rebuildContext(std::optional<CS::Context> &ctx) {
+    ctx.emplace();
+    chupa::registerEcho(*ctx, std::cout);
+}
+
 int runRepl() {
     std::optional<CS::Context> ctx;
-    ctx.emplace();
+    rebuildContext(ctx);
 
     std::cout << "chupa " << chupa_version() << ", :help for commands\n";
 
@@ -269,7 +280,7 @@ int runRepl() {
         const After after = handleLine(*ctx, line);
         if (after == After::Quit) { break; }
         if (after == After::Reset) {
-            ctx.emplace();
+            rebuildContext(ctx);
             std::cout << "the context is empty\n";
         }
     }

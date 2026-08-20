@@ -2,8 +2,11 @@
 // something to find.
 //
 // Not a gtest case: a passing test suite must stay green, and this program's
-// whole purpose is to make the sanitizer report a leak. tools/asan.sh runs it
-// separately and requires a NON-zero exit.
+// whole purpose is to make the sanitizer report a leak. There is no add_test
+// for it, so an ordinary build never runs it. tools/asan.sh runs it
+// separately and requires the LeakSanitizer marker in its captured output — a
+// non-zero exit alone would not tell a real leak from cycle_leak_main.cpp's
+// own setup failures.
 //
 // Reference counting will never collect this. The language allows it in two
 // lines (docs/semantics.md §2.3), a collector would cost more than the rest of

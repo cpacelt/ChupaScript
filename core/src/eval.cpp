@@ -65,8 +65,8 @@ bool readKey(const Ast &ast, NodeId node, Value base, std::string_view key,
 ///
 /// value is taken by const reference, not by value: an inline string's bytes
 /// live inside the value itself, and a by-value copy here would die on
-/// return while *out still pointed into it (defect uncovered by task 8, ASan
-/// catches it). The caller's own named Value must outlive this call.
+/// return while *out still pointed into it. The caller's own named Value
+/// must outlive this call.
 ///
 /// numberBuffer обязан быть размером не меньше kNumberBufferSize.
 bool coerceToString(const Ast &ast, NodeId node, const Value &value,
@@ -219,16 +219,18 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             return true;
 
         case NodeKind::String: {
-            // Байты уложены в пул текста на компиляции, вместе с
-            // раскодированным экранированием (core/src/compile.hpp). Здесь
-            // остаётся собрать значение из координат — ровно как берётся число
+            // Байты уложены в box, которым владеет это дерево, на
+            // компиляции, вместе с раскодированным экранированием
+            // (core/src/compile.hpp, Ast::internLiteral). Здесь остаётся
+            // собрать значение из готового узла — ровно как берётся число
             // из узла Number строкой выше. Раньше на каждом вычислении
-            // заводился черновик и байты дописывались в пул заново, а он
-            // поштучно не освобождается: выражение со строкой растило память на
-            // каждом кадре (docs/backlog.md B51).
-            // The box is owned by the Ast that parsed the literal (task 3:
-            // Ast::internLiteral); the Value built here takes no reference of
-            // its own. It borrows: the box is valid from this point until
+            // заводился черновик и байты собирались заново, а черновик
+            // поштучно не освобождался: выражение со строкой растило память
+            // на каждом кадре (docs/backlog.md B51).
+            //
+            // The box is owned by the Ast that parsed the literal
+            // (Ast::internLiteral); the Value built here takes no reference
+            // of its own. It borrows: the box is valid from this point until
             // the owning Ast is destroyed or reset, and this Value must not
             // outlive that Ast unless it is retained first
             // (chupa_value_retain).

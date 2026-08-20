@@ -226,16 +226,11 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 return failType(offset, "keys expects an object", diag);
             }
             const std::uint32_t size = CS::objectCount(args[0]);
-            // Результат — новое значение, значит временный регион; ключи
-            // читаются оттуда, где лежит объект.
             // Точное выделение: длина известна заранее.
             Value result = CS::makeArray(size, exec.deferred());
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.
-                // materialize, а не makeString: строка ложится в агрегат, а
-                // агрегат — узел и умеет пережить операцию. Смещение в арену
-                // он бы не пережил.
                 arrayPush(result, CS::materialize(CS::objectKeyAt(args[0], i), exec.deferred()));
             }
             *out = result;

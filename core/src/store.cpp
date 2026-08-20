@@ -46,6 +46,8 @@ Store::~Store() {
 
 std::uint32_t Store::appendName(std::string_view bytes) {
     const std::uint32_t offset = static_cast<std::uint32_t>(names_.size());
+    // Пул такого размера — другая проблема, и здесь срабатывает отладочное
+    // утверждение, которое компилируется прочь под NDEBUG.
     assert(names_.size() + bytes.size() <= 0xffffffffu && "пул имён перерос uint32");
 
     // bytes may point back into names_ itself — that is what

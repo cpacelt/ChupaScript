@@ -41,9 +41,9 @@ bool buildValue(const Ast &ast, std::string_view source, NodeId node,
             return true;
 
         case NodeKind::String: {
-            // materialize, а не makeString: данные от хоста целиком ложатся в
-            // глобальную переменную и обязаны пережить операцию, а региона
-            // хранилища этот разбор не спрашивает вовсе.
+            // Данные от хоста целиком ложатся в глобальную переменную:
+            // materialize кладёт короткую строку внутрь Value, а длинную — в
+            // отдельно выделенный box.
             std::string scratch;
             *out = CS::materialize(literalText(ast, node, source, scratch), dead);
             return true;

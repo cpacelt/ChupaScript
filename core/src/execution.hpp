@@ -111,6 +111,8 @@ class Execution {
     /// Starts building a string. The returned mark goes to endString or
     /// abortString; every path out of a build must pass through one of them.
     [[nodiscard]] std::uint32_t beginString() noexcept {
+        // A builder that large is a different problem, and it trips a debug
+        // assertion — compiled out under NDEBUG.
         assert(builder_.size() <= 0xffffffffu && "string builder outgrew uint32");
         return static_cast<std::uint32_t>(builder_.size());
     }

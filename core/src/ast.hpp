@@ -279,9 +279,9 @@ class Ast {
                 std::uint32_t count;
             } children;                   ///< виды до kLastKindWithChildren
             double number;                ///< Number
-            /// String, после укладки: узел строки, которым владеет хранилище
-            /// контекста. Восемь байт — ровно столько же, сколько занимала
-            /// пара «смещение, длина».
+            /// String, после укладки: узел строки, которым владеет это
+            /// дерево (см. internLiteral выше). Восемь байт — ровно столько
+            /// же, сколько занимала пара «смещение, длина».
             detail::StringBox *literal;
             GlobalSlot globalValuesSlot;  ///< Identifier, после прохода
         } payload = {{0, 0}};
@@ -301,7 +301,7 @@ class Ast {
     std::uint32_t sourceLength_ = 0;
     NodeId root_ = kNoNode;
     bool checked_ = false;
-    std::vector<Node> nodes_;      // TODO(B7): переехать в арену хранилища
+    std::vector<Node> nodes_;
     std::vector<NodeId> children_; // TODO(B10): боковой пул детей
     std::vector<detail::StringBox *> literals_;  // one reference each
 };

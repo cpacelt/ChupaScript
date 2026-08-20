@@ -6,7 +6,7 @@ namespace CS {
 /// Класс ошибки.
 ///
 /// Значения намеренно совпадают с ChupaErrorCode из публичного C-заголовка;
-/// соответствие будет закреплено static_assert'ами, когда тот появится.
+/// соответствие закреплено static_assert'ами в c_api.cpp.
 enum class ErrorCode : std::uint8_t {
     None = 0,
     Syntax,  ///< лексика и синтаксис

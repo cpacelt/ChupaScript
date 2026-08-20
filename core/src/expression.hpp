@@ -45,10 +45,8 @@ class Expression {
     /// уже собранную единицу.
     ///
     /// Из store читается только состав имён (check.hpp): значения роли не
-    /// играют. Пишется в него ровно одно — байты строковых литералов, разово
-    /// (compile.hpp). Ссылки на store единица не удерживает, но с этого
-    /// момента годна только для него: и номера ячеек, и уложенные литералы
-    /// адресуют его пулы.
+    /// играют. Ссылки на store единица не удерживает, но с этого момента
+    /// годна только для него: номера ячеек адресуют его пулы.
     static std::uint32_t compile(std::string_view source, Store &store,
                                  Expression *out, Diagnostic *diags,
                                  std::uint32_t capacity);
@@ -67,7 +65,7 @@ class Expression {
     /// после разрушения объекта либо после следующего compile() срез
     /// провисает — обычное для string_view правило, но раз выше объявлено
     /// отсутствие правил времени жизни у самой единицы, здесь оно
-    /// уточняется отдельно (review round 2, M1).
+    /// уточняется отдельно.
     [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
     /// Вычисляет и достаёт результат нужного типа.
@@ -76,22 +74,10 @@ class Expression {
     /// тронут. Error — ошибка вычисления либо несовпадение типа, подробности
     /// в diag, *out не тронут. На исходах Ok и Null diag не трогается вовсе:
     /// он остаётся тем, чем был у вызывающего до вызова, — включая
-    /// устаревшую ошибку от прошлого раза, если вызывающий её не сбросил
-    /// (review round 3, M1).
+    /// устаревшую ошибку от прошлого раза, если вызывающий её не сбросил.
     EvalStatus evalNumber(Execution &exec, double *out,
                           Diagnostic &diag) const;
     EvalStatus evalBool  (Execution &exec, bool *out, Diagnostic &diag) const;
-
-    // evalString removed (task 8, fix round 1): it returned a
-    // std::string_view sliced from a Value local, which is safe only while
-    // every string is a box. Since a string of Value::kInlineCapacity bytes
-    // or fewer now lives inside the Value itself, that local's bytes die at
-    // the end of this method while callers still held the view — the same
-    // dangling-view defect the C API boundary was reshaped to prevent (task
-    // 6). It had no production caller: Context never exposed it, and
-    // cli/main.cpp deliberately takes the raw eval() path instead. Callers
-    // use eval() plus stringBytes() on a named Value local, the pattern the
-    // rest of the suite already uses.
 
    private:
     /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит

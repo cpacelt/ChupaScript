@@ -71,7 +71,8 @@ std::uint32_t grownCapacity(std::uint32_t cap) noexcept {
     if (cap < 4) { return 4u; }
     // The clamp is not decoration: cap * 2 wraps to zero at 2^31, and a zero
     // capacity would make push write past the end of a zero-sized buffer.
-    // An aggregate that large is a different problem, and it fails loudly.
+    // An aggregate that large is a different problem, and it trips a debug
+    // assertion — compiled out under NDEBUG, same as every assert here.
     assert(cap <= 0x7fffffffu && "aggregate outgrew uint32 capacity");
     return cap * 2u;
 }

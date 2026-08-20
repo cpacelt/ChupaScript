@@ -66,9 +66,17 @@ inline constexpr GlobalSlot kNoGlobalSlot = 0xffffffffu;
 /// aggregate carry a pointer to a reference-counted box, and the box carries
 /// its bytes and — for an object — its own field-name table.
 ///
-/// INVARIANT: in an inline string, the bytes past the length are zero. That is
-/// what makes comparing two inline strings a comparison of two eight-byte
-/// words, with no length to consult and no memcmp over a variable range.
+/// One exception: a value built from a string literal (eval.cpp, evaluating
+/// a String node) points at the box `Ast::internLiteral` laid the literal
+/// into, without retaining it. That box lives and dies with the Ast that
+/// owns it (ast.hpp), not with any Context — the same lifetime chupascript.h
+/// documents at the C boundary for a literal-derived result.
+///
+/// INVARIANT: in an inline string, the bytes past the length are zero. That
+/// keeps a comparison of two inline strings available as a comparison of two
+/// eight-byte words, with no length to consult and no memcmp over a variable
+/// range — see operator.cpp's stringBytes()-based comparison for where that
+/// path could be taken.
 ///
 /// NaN-boxing was rejected permanently (design document Р2): eight bytes are
 /// spent entirely on the double and the tags, leaving no room for string

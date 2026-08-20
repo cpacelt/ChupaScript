@@ -32,8 +32,9 @@ target_link_libraries(chupascript_tests PRIVATE
 gtest_discover_tests(chupascript_tests)
 
 # A standalone program, not a test case: it leaks a cycle on purpose so that
-# the leak detector has something to find. tools/asan.sh runs it and requires a
-# non-zero exit; an ordinary build runs it and requires zero.
+# the leak detector has something to find. There is no add_test for it, so an
+# ordinary build never runs it; tools/asan.sh runs it separately and requires
+# the LeakSanitizer marker in its output, not merely a non-zero exit.
 add_executable(chupascript_cycle_leak cycle_leak_main.cpp)
 target_include_directories(chupascript_cycle_leak PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 target_link_libraries(chupascript_cycle_leak PRIVATE

@@ -34,6 +34,13 @@ public enum ErrorCode: Sendable, Equatable {
     /// Память не выделилась.
     case memory
 
+    /// Хост-функция отказала, не назвав причину через `chupa_fail`.
+    ///
+    /// Движок подставляет этот код сам — не молчаливый провал, а именованный
+    /// случай, который прикладной код может различить `switch`ем, не разбирая
+    /// текст сообщения.
+    case host
+
     /// Значение корректно, но тип хоста из него не собирается.
     ///
     /// Возникает только в обвязке: движок вернул строку `'centre'`, а в
@@ -71,6 +78,7 @@ extension ErrorCode {
         case CHUPA_ERR_DATA:   self = .data
         case CHUPA_ERR_USAGE:  self = .usage
         case CHUPA_ERR_MEMORY: self = .memory
+        case CHUPA_ERR_HOST:   self = .host
         default:               self = .unrecognized(raw.rawValue)
         }
     }
@@ -88,6 +96,7 @@ extension ErrorCode: CustomStringConvertible {
         case .data:                    return "data"
         case .usage:                   return "usage"
         case .memory:                  return "memory"
+        case .host:                    return "host"
         case .unrepresentable:         return "unrepresentable"
         case .unrecognized(let value): return "unrecognized(\(value))"
         }

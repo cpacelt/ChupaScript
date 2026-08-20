@@ -10,6 +10,7 @@ add_executable(chupascript_tests
     store_test.cpp
     data_test.cpp
     eval_test.cpp
+    execution_test.cpp
     expression_test.cpp
     lexer_test.cpp
     operator_test.cpp

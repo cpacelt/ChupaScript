@@ -1,8 +1,10 @@
 #pragma once
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "aggregate.hpp"
 #include "deferred.hpp"
@@ -10,7 +12,14 @@
 #include "store.hpp"
 #include "value.hpp"
 
+/// The C boundary's context handle (defined in c_api.cpp). Opaque here on
+/// purpose: the core carries it for a host callback but never looks inside
+/// it, so a forward declaration is all this header needs.
+struct ChupaContext;
+
 namespace CS {
+
+class HostTable;
 
 /// One evaluation: its string builder and deferred list, plus the Store it
 /// runs over.
@@ -21,6 +30,17 @@ namespace CS {
 ///   Execution::store_      &Store — the global variables this evaluation
 ///                          reads and writes; owned by the caller, not by
 ///                          this Execution
+///   Execution::hosts_      const HostTable * — the functions the host
+///                          registered, read to reach a callback; nullptr
+///                          means none are registered, owned by the Context
+///   Execution::hostHandle_ ChupaContext * — passed to a callback as its
+///                          first argument and never dereferenced here.
+///                          Opaque on purpose: this is the C boundary's
+///                          type, and the core has no business inside it.
+///   Execution::argStack_   Value storage shared by every call in flight.
+///                          One call owns the half-open range
+///                          [base, base + count); an ArgFrame keeps that
+///                          range and gives it back on destruction.
 ///
 /// A String, Object or Array Value is a box (box.hpp) and needs no Store to
 /// be read — CS::stringBytes and the free functions in aggregate.hpp read a
@@ -62,6 +82,26 @@ class Execution {
 
     /// Список отложенного освобождения этого выполнения (см. deferred.hpp).
     [[nodiscard]] Deferred &deferred() noexcept { return deferred_; }
+
+    /// The host functions this evaluation may call, or nullptr for none.
+    [[nodiscard]] const HostTable *hosts() const noexcept { return hosts_; }
+
+    /// Wires the table in. Separate from the constructor rather than a
+    /// second constructor argument: a second argument would force every one
+    /// of the 169 existing `Execution(store)` call sites in tests and the
+    /// benchmark to add it for no new assertion of theirs (see
+    /// task-7-brief.md's controller note) — a setter costs nothing at any
+    /// of them.
+    void setHosts(const HostTable *hosts) noexcept { hosts_ = hosts; }
+
+    /// The opaque handle a host callback receives as its first argument.
+    [[nodiscard]] ChupaContext *hostHandle() const noexcept {
+        return hostHandle_;
+    }
+
+    /// Set once, by chupa_context_create — see the LAYOUT note on
+    /// hostHandle_ above for why the core never looks inside it.
+    void setHostHandle(ChupaContext *handle) noexcept { hostHandle_ = handle; }
 
     /// Таблица имён полей контекста — та единственная, что есть. Нужна тому,
     /// кто создаёт объект (CS::makeObject); владеет ею хранилище.
@@ -139,6 +179,8 @@ class Execution {
     void abortString(std::uint32_t mark) noexcept { builder_.resize(mark); }
 
    private:
+    friend class ArgFrame;
+
     /// Scratch buffer for format. Declared before deferred_ only for
     /// readability; it owns nothing that ordering could affect.
     std::string builder_;
@@ -147,6 +189,66 @@ class Execution {
     /// обоих, а значит отпускает всё, что накопил, пока живы и та и другое.
     Deferred deferred_;
     Store &store_;
+
+    /// A pointer, not a reference like store_: a reference would have to be
+    /// bound at construction, which is exactly the 169-call-site cost the
+    /// controller's note above rejects. nullptr for "none registered" is the
+    /// same convention compilation already uses for the same reason.
+    const HostTable *hosts_ = nullptr;
+    ChupaContext    *hostHandle_ = nullptr;
+    std::vector<Value> argStack_;
+};
+
+/// One call's arguments, living on the Execution's shared stack.
+///
+/// LAYOUT — the frame owns a half-open range and nothing else:
+///
+///   exec_   &Execution — whose stack this range is cut from
+///   base_   index of the first slot
+///   count_  how many slots
+///
+/// Lifetime: the range is valid from construction to destruction of this
+/// frame. Frames nest and unwind in order, because an argument of an outer
+/// call may itself be a call.
+class ArgFrame {
+   public:
+    ArgFrame(Execution &exec, std::uint32_t count)
+        : exec_(exec), base_(exec.argStack_.size()), count_(count) {
+        // Value has no public default constructor (value.hpp keeps its
+        // factories closed), so resize needs the fill argument.
+        exec_.argStack_.resize(base_ + count, Value::null());
+    }
+
+    ~ArgFrame() { exec_.argStack_.resize(base_, Value::null()); }
+
+    ArgFrame(const ArgFrame &) = delete;
+    ArgFrame &operator=(const ArgFrame &) = delete;
+    ArgFrame(ArgFrame &&) = delete;
+    ArgFrame &operator=(ArgFrame &&) = delete;
+
+    Value &operator[](std::uint32_t i) noexcept {
+        assert(i < count_);
+        return exec_.argStack_[base_ + i];
+    }
+
+    /// The arguments as a contiguous block.
+    ///
+    /// Recomputed on every call and NEVER cached by the caller: a nested
+    /// frame may have grown the vector and moved its buffer since the last
+    /// time this was taken. Taking this pointer is safe exactly once — after
+    /// every argument of this call has been evaluated, when no nested frame
+    /// is left alive and nothing can push again, because a host callback
+    /// runs on a closed frame.
+    [[nodiscard]] const Value *data() const noexcept {
+        return exec_.argStack_.data() + base_;
+    }
+
+    [[nodiscard]] std::uint32_t size() const noexcept { return count_; }
+
+   private:
+    Execution     &exec_;
+    std::size_t    base_;
+    std::uint32_t  count_;
 };
 
 }  // namespace CS

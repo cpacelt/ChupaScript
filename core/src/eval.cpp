@@ -338,13 +338,28 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // доходит вовсе — компиляция отвергает его ошибкой Name. Отметка
             // прохода check утверждается ниже по функции, поэтому номер тут
             // заведомо проставлен.
-            *out = exec.store().globalValueAt(ast.globalValuesSlot(node));
+            const GlobalSlot slot = ast.globalValuesSlot(node);
+            // Зависимость — ячейка, а не значение в ней: значение
+            // тривиально копируемо и ходит по значению, эпохе там не жить
+            // (спека §7, «Эпоха в Value»). Владельца у ячейки нет: её эпоха
+            // живёт столько же, сколько хранилище.
+            exec.deps().add(exec.store().epochAddressAt(slot), Value::null());
+            *out = exec.store().globalValueAt(slot);
             return true;
         }
 
         case NodeKind::Member: {
             Value base = Value::null();
             if (!eval(ast, source, ast.child(node, 0), exec, &base, diag)) { return false; }
+            // Коробка, через которую идёт спуск, — тоже зависимость: правка
+            // соседнего элемента не должна будить читателя нулевого (§3.2).
+            // Владелец приезжает рядом, чтобы читателю было за что взяться
+            // ретейном: без этого он держал бы голый адрес внутри коробки,
+            // которую счётчик ссылок вправе освободить (§2.7).
+            if (base.kind() == Value::Kind::Array ||
+                base.kind() == Value::Kind::Object) {
+                exec.deps().add(CS::epochAddressOf(base), base);
+            }
             // Имя поля берётся из узла буквально, без приведения.
             return readKey(ast, node, base, ast.text(node, source), out, diag);
         }
@@ -352,6 +367,11 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
         case NodeKind::Index: {
             Value base = Value::null();
             if (!eval(ast, source, ast.child(node, 0), exec, &base, diag)) { return false; }
+            // Та же зависимость-коробка, что и у Member выше.
+            if (base.kind() == Value::Kind::Array ||
+                base.kind() == Value::Kind::Object) {
+                exec.deps().add(CS::epochAddressOf(base), base);
+            }
             // Индекс вычисляется даже при базе null: порядок зафиксирован
             // (docs/semantics.md §3.3), а короткого замыкания у индексации нет.
             Value subscript = Value::null();
@@ -741,6 +761,9 @@ bool evalExpression(const Ast &ast, std::string_view source, Execution &exec,
                     Value *out, Diagnostic &diag) {
     assert(ast.root() != kNoNode && "дерево обязано быть разобрано успешно");
     assert(ast.isChecked() && "дерево обязано пройти check перед вычислением");
+    // Набор строится заново на всяком вычислении: у выражения с путями он
+    // меняется от раза к разу — прошлый раз ушёл влево, этот уйдёт вправо.
+    exec.deps().reset();
     return eval(ast, source, ast.root(), exec, out, diag);
 }
 

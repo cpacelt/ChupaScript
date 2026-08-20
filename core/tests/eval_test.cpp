@@ -1577,4 +1577,60 @@ TEST(EvalFormat, NestedAssemblyKeepsTheOuterPrefix) {
         "1357642");
 }
 
+TEST(EvalDeps, AConstantDependsOnNothing) {
+    Store store;
+    CS::Execution exec(store);
+    evaluate(exec, "42");
+    EXPECT_EQ(exec.deps().count(), 0u);
+    EXPECT_FALSE(exec.deps().overflowed());
+}
+
+TEST(EvalDeps, ABareScalarDependsOnItsCell) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "button_enabled", "true");
+    evaluate(exec, "button_enabled");
+
+    ASSERT_EQ(exec.deps().count(), 1u);
+    EXPECT_EQ(exec.deps().at(0).epoch,
+              store.epochAddressAt(store.globalSlot("button_enabled")));
+    EXPECT_EQ(exec.deps().at(0).owner.kind(), Value::Kind::Null)
+        << "у ячейки владельца нет: её эпоха живёт столько же, сколько "
+           "хранилище";
+}
+
+TEST(EvalDeps, APathRecordsCellAndEveryBoxOnTheWay) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "users", "[{'name': 'Вася'}, {'name': 'Петя'}]");
+    evaluate(exec, "users[0].name");
+
+    ASSERT_EQ(exec.deps().count(), 3u);
+    EXPECT_EQ(exec.deps().at(0).epoch,
+              store.epochAddressAt(store.globalSlot("users")));
+    EXPECT_EQ(exec.deps().at(1).owner.kind(), Value::Kind::Array);
+    EXPECT_EQ(exec.deps().at(2).owner.kind(), Value::Kind::Object);
+}
+
+TEST(EvalDeps, ADeepPathOverflows) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "u", "{'a': {'b': {'c': {'d': {'e': 1}}}}}");
+    evaluate(exec, "u.a.b.c.d.e");
+
+    EXPECT_TRUE(exec.deps().overflowed());
+}
+
+TEST(EvalDeps, TheSetIsRebuiltOnEveryEvaluation) {
+    // Набор верен до следующего вычисления этого выражения — у выражения с
+    // путями он меняется от вычисления к вычислению (спека §2.6).
+    Store store;
+    CS::Execution exec(store);
+    put(store, "a", "1");
+    evaluate(exec, "a");
+    evaluate(exec, "42");
+
+    EXPECT_EQ(exec.deps().count(), 0u);
+}
+
 }  // namespace

@@ -9,6 +9,7 @@
 #include "aggregate.hpp"
 #include "deferred.hpp"
 #include "diagnostic.hpp"
+#include "epoch.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -20,6 +21,57 @@ struct ChupaContext;
 namespace CS {
 
 class HostTable;
+
+/// Зависимости одного вычисления: где оно побывало.
+///
+/// Набор = ячейки прочитанных имён + коробки, через которые прошёл спуск. То
+/// есть ровно то, что вычисление и так трогает: выяснять ничего не надо, надо
+/// записывать тронутое (спека §2.3).
+///
+/// Потолок — kMaxDeps. Не поместилось — выражение не кэшируется никогда и
+/// считается как сегодня. Направление огрубления безопасное: лишний пересчёт,
+/// но никогда ложное попадание.
+///
+/// Пишется на всяком вычислении, а не только на отслеживаемом. Отдельный режим
+/// «сейчас записываем» был отвергнут: он раздваивает путь вычисления, и ошибка
+/// в редкой половине не ловится ничем, кроме экрана, который перестал
+/// обновляться. Цена — четыре записи в горячий массив; она меряется в задаче
+/// 10 (BM_Eval_Constant до и после), и §5.5 требует, чтобы она осталась в шуме.
+class DepSet {
+   public:
+    void reset() noexcept {
+        count_ = 0;
+        overflowed_ = false;
+    }
+
+    /// Записывает место. Повтор адреса слиянием: `a.x + a.y` трогает и ячейку,
+    /// и коробку дважды, и без слияния переполнялся бы на ровном месте.
+    /// Сравнений не больше трёх — набор крошечный, ни хеша, ни сортировки.
+    void add(const Epoch *epoch, Value owner) noexcept {
+        for (std::uint32_t i = 0; i < count_; ++i) {
+            if (deps_[i].epoch == epoch) { return; }
+        }
+        if (count_ == kMaxDeps) {
+            overflowed_ = true;
+            return;
+        }
+        deps_[count_++] = Dep{epoch, owner};
+    }
+
+    [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
+    [[nodiscard]] bool overflowed() const noexcept { return overflowed_; }
+
+    /// Предусловие: i < count().
+    [[nodiscard]] const Dep &at(std::uint32_t i) const noexcept {
+        assert(i < count_);
+        return deps_[i];
+    }
+
+   private:
+    Dep deps_[kMaxDeps];
+    std::uint32_t count_ = 0;
+    bool overflowed_ = false;
+};
 
 /// One evaluation: its string builder and deferred list, plus the Store it
 /// runs over.
@@ -48,6 +100,9 @@ class HostTable;
 ///   Execution::hostFailureText_  std::string — an OWNING copy of the reason
 ///                          a host callback gave for refusing; the host's own
 ///                          buffer is gone by the time anyone reads this.
+///   Execution::deps_       DepSet — где побывало текущее вычисление
+///                          выражения. Сбрасывается на входе evalExpression и
+///                          заполняется по ходу обхода (см. DepSet выше).
 ///
 /// A String, Object or Array Value is a box (box.hpp) and needs no Store to
 /// be read — CS::stringBytes and the free functions in aggregate.hpp read a
@@ -116,6 +171,17 @@ class Execution {
     /// Лента контекста, через хранилище: мутаторы и создатели агрегатов
     /// принимают её параметром (aggregate.hpp).
     [[nodiscard]] EpochClock &clock() noexcept { return store_.clock(); }
+
+    /// Зависимости текущего вычисления. Сбрасывается на входе в
+    /// evalExpression и заполняется по ходу обхода.
+    ///
+    /// Набор ведётся ради выражений (evalTracked, задача 7): у скрипта
+    /// результата нет вовсе (docs/semantics.md §3.1), и отвечать «годится ли
+    /// прошлое значение» ему не на что. runScript набор не сбрасывает — после
+    /// его выполнения здесь остаётся мусор, накопленный за все стейтменты, и
+    /// читать deps() после runScript не вправе никто.
+    [[nodiscard]] DepSet &deps() noexcept { return deps_; }
+    [[nodiscard]] const DepSet &deps() const noexcept { return deps_; }
 
     /// Rejects a compiled unit that belongs to another Store.
     ///
@@ -243,6 +309,7 @@ class Execution {
     std::vector<Value> argStack_;
     ErrorCode   hostFailureCode_ = ErrorCode::None;
     std::string hostFailureText_;
+    DepSet deps_;
 };
 
 /// One call's arguments, living on the Execution's shared stack.

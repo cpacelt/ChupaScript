@@ -63,3 +63,48 @@ TEST(Execution, CarriesTheHostTableItWasBuiltWith) {
     CS::Execution bare(store);
     EXPECT_EQ(bare.hosts(), nullptr);
 }
+
+TEST(DepSet, RecordsUpToTheCeiling) {
+    CS::DepSet deps;
+    CS::Epoch a = 1, b = 2, c = 3, d = 4;
+    deps.add(&a, CS::Value::null());
+    deps.add(&b, CS::Value::null());
+    deps.add(&c, CS::Value::null());
+    deps.add(&d, CS::Value::null());
+
+    EXPECT_EQ(deps.count(), CS::kMaxDeps);
+    EXPECT_FALSE(deps.overflowed());
+}
+
+TEST(DepSet, OneMoreThanTheCeilingIsOverflow) {
+    // Направление огрубления безопасное: лишний пересчёт, но никогда ложное
+    // попадание (спека §2.3).
+    CS::DepSet deps;
+    CS::Epoch words[5] = {1, 2, 3, 4, 5};
+    for (CS::Epoch &word : words) { deps.add(&word, CS::Value::null()); }
+
+    EXPECT_TRUE(deps.overflowed());
+}
+
+TEST(DepSet, TheSameAddressTwiceTakesOneSlot) {
+    // a.x + a.y трогает ячейку a дважды и коробку a дважды. Без слияния такое
+    // выражение переполнялось бы на ровном месте.
+    CS::DepSet deps;
+    CS::Epoch a = 1, b = 2;
+    deps.add(&a, CS::Value::null());
+    deps.add(&b, CS::Value::null());
+    deps.add(&a, CS::Value::null());
+
+    EXPECT_EQ(deps.count(), 2u);
+}
+
+TEST(DepSet, ResetForgetsEverythingIncludingOverflow) {
+    CS::DepSet deps;
+    CS::Epoch words[5] = {1, 2, 3, 4, 5};
+    for (CS::Epoch &word : words) { deps.add(&word, CS::Value::null()); }
+
+    deps.reset();
+
+    EXPECT_EQ(deps.count(), 0u);
+    EXPECT_FALSE(deps.overflowed());
+}

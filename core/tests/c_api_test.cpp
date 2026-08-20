@@ -1147,3 +1147,165 @@ TEST(CApiMake, StringWorksOnBothSidesOfTheInlineBoundary) {
 
     chupa_context_destroy(ctx);
 }
+
+namespace {
+
+double g_base = 0.0;
+
+/// Складывает все аргументы поверх базы из user_data: через неё проверяется,
+/// что получатель доезжает — коллбэк один, а получателей у него много.
+bool addUp(ChupaContext *, const ChupaValue *args, size_t argc,
+           ChupaValue *out, void *user_data) {
+    double acc = *static_cast<double *>(user_data);
+    for (size_t i = 0; i < argc; ++i) { acc += chupa_value_number(&args[i]); }
+    chupa_make_number(out, acc);
+    return true;
+}
+
+bool sizeOf(ChupaContext *, const ChupaValue *args, size_t, ChupaValue *out,
+            void *) {
+    chupa_make_number(out, static_cast<double>(chupa_array_count(&args[0])));
+    return true;
+}
+
+bool makeLongString(ChupaContext *ctx, const ChupaValue *, size_t,
+                    ChupaValue *out, void *) {
+    static const char text[] =
+        "Длинное название карточки, какое приходит с бэкенда";
+    return chupa_make_string(ctx, text, sizeof text - 1, out);
+}
+
+/// Возвращает первый аргумент как есть — значение, созданное не им.
+bool identity(ChupaContext *, const ChupaValue *args, size_t, ChupaValue *out,
+              void *) {
+    *out = args[0];
+    return true;
+}
+
+bool alwaysRefuses(ChupaContext *, const ChupaValue *, size_t, ChupaValue *,
+                   void *) {
+    return false;
+}
+
+/// Компилирует и вычисляет одно выражение, отдавая значение наружу.
+/// Единица разрушается здесь же: результат — скаляр либо значение, чьи байты
+/// принадлежат не ей.
+bool evalText(ChupaContext *ctx, const char *text, ChupaValue *out) {
+    ChupaExpression *e = chupa_compile_expression(ctx, text, std::strlen(text));
+    if (e == nullptr) { return false; }
+    const bool ok = chupa_eval(ctx, e, out);
+    chupa_expression_destroy(e);
+    return ok;
+}
+
+}  // namespace
+
+TEST(EvalHostCall, ArgumentsArriveInOrderAndCount) {
+    ChupaContext *ctx = chupa_context_create();
+    g_base = 0.0;
+    ChupaFunction fn = described("addUp", 0, CHUPA_VARIADIC, addUp, &g_base);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "addUp(1, 2, 3)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 6.0);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(EvalHostCall, UserDataReachesTheCallback) {
+    ChupaContext *ctx = chupa_context_create();
+    g_base = 10.0;
+    ChupaFunction fn = described("addUp", 0, CHUPA_VARIADIC, addUp, &g_base);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "addUp(1)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 11.0);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Агрегат в аргументе читается теми же функциями, что и результат eval, и
+/// контекста для этого не требует.
+TEST(EvalHostCall, AggregateArgumentIsReadable) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("sizeOf", 1, 1, sizeOf);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "items", 5, "[1,2,3,4]", 9));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "sizeOf(items)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 4.0);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Строка длиннее пятнадцати байт — коробка, и ссылка создателя лежит в
+/// списке отложенного освобождения контекста. Читается она ПОСЛЕ возврата из
+/// eval: список сливается на следующей операции, а не на этой.
+TEST(EvalHostCall, ReturnedStringOutlivesTheCall) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("makeLong", 0, 0, makeLongString);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "makeLong()", &out));
+    const char *bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string(&out, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len),
+              "Длинное название карточки, какое приходит с бэкенда");
+
+    chupa_context_destroy(ctx);
+}
+
+/// Вернуть аргумент как есть безопасно: его удерживает ссылка, оставленная
+/// вычислением подвыражения, и она лежит в том же списке.
+TEST(EvalHostCall, ReturningAnArgumentUnchangedIsSafe) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("echoBack", 1, 1, identity);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    const char *text = "Длинный текст, который не поместится внутрь значения";
+    ASSERT_TRUE(chupa_context_set_string(ctx, "longText", 8, text,
+                                         std::strlen(text)));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "echoBack(longText)", &out));
+    const char *bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string(&out, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len), text);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(EvalHostCall, RefusalFailsTheEvaluationAtTheCallOffset) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("willFail", 1, 1, alwaysRefuses);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "1 + willFail(2)", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.offset, 4u);   // позиция 'w' в "1 + willFail(2)"
+
+    chupa_context_destroy(ctx);
+}
+
+/// Тот самый случай, ради которого стек: вложенный вызов занимает аргументы
+/// раньше, чем внешний собрал свои.
+TEST(EvalHostCall, NestedHostCallsBothGetTheirOwnArguments) {
+    ChupaContext *ctx = chupa_context_create();
+    g_base = 0.0;
+    ChupaFunction fn = described("addUp", 0, CHUPA_VARIADIC, addUp, &g_base);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "addUp(addUp(1, 2), 3)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 6.0);
+
+    chupa_context_destroy(ctx);
+}
+

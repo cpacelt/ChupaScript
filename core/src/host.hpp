@@ -1,14 +1,50 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "builtin_id.hpp"
 #include "chupascript/chupascript.h"
+#include "value.hpp"
 
 namespace CS {
+
+// ─── ChupaValue ⇄ Value: one crossing, shared by c_api.cpp and eval.cpp ───
+//
+// ChupaValue is the same sixteen bytes as CS::Value, and fromC reinterprets a
+// host pointer as a CS::Value IN PLACE — no copy, no table, no allocation.
+// c_api.cpp uses this to hand the host slices into its own ChupaValue
+// variables (defect В3); eval.cpp uses it to hand a host callback the
+// ArgFrame's contiguous block without copying it first.
+//
+// Defined once, here, because host.hpp is already included on both sides of
+// the boundary — c_api.cpp for HostTable, eval.cpp for calleeOf's Callee.
+// Two definitions in two files would be the "two truths about one thing"
+// defect task 1 already fixed once.
+
+static_assert(sizeof(ChupaValue) == sizeof(CS::Value),
+              "ChupaValue обязан совпадать с CS::Value байт в байт");
+static_assert(alignof(ChupaValue) >= alignof(CS::Value),
+              "выравнивание ChupaValue не должно быть слабее");
+
+/// Reinterprets the host's sixteen bytes as a CS::Value IN PLACE.
+///
+/// A reference, not a copy: a short string's bytes live inside the value, and
+/// every slice handed back to the host points into the host's own variable.
+inline const CS::Value &fromC(const ChupaValue *v) {
+    return *reinterpret_cast<const CS::Value *>(v);
+}
+
+/// Copies a CS::Value into a host-owned output slot. The reverse of fromC:
+/// here the host's storage is the destination, so a copy is unavoidable and
+/// harmless — the sixteen bytes just landed in the caller's own variable,
+/// which is exactly where the by-address contract wants them.
+inline void toC(CS::Value v, ChupaValue *out) {
+    std::memcpy(out, &v, sizeof(*out));
+}
 
 /// One function the host registered.
 ///

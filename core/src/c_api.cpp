@@ -341,26 +341,13 @@ void chupa_script_destroy(ChupaScript* s) {
 
 namespace {
 
-static_assert(sizeof(ChupaValue) == sizeof(CS::Value),
-              "ChupaValue обязан совпадать с CS::Value байт в байт");
-static_assert(alignof(ChupaValue) >= alignof(CS::Value),
-              "выравнивание ChupaValue не должно быть слабее");
-
-/// Reinterprets the host's sixteen bytes as a CS::Value IN PLACE.
-///
-/// A reference, not a copy: a short string's bytes live inside the value, and
-/// every slice handed back to the host points into the host's own variable.
-const CS::Value& fromC(const ChupaValue* v) {
-    return *reinterpret_cast<const CS::Value*>(v);
-}
-
-/// Copies a CS::Value into a host-owned output slot. The reverse of fromC:
-/// here the host's storage is the destination, so a copy is unavoidable and
-/// harmless — the sixteen bytes just landed in the caller's own variable,
-/// which is exactly where the by-address contract wants them.
-void toC(CS::Value v, ChupaValue* out) {
-    std::memcpy(out, &v, sizeof(*out));
-}
+// fromC/toC and their layout static_asserts live in host.hpp now — eval.cpp
+// needs them too, and host.hpp is already on both translation units'
+// include path (see the block comment there). This file lives in the global
+// namespace, so the two are pulled in by name rather than qualified at every
+// call site below.
+using CS::fromC;
+using CS::toC;
 
 // CS::Value::Kind and ChupaKind deliberately do NOT match for Object/Array:
 // CS::Value::Kind puts Object before Array (value.hpp), ChupaKind puts Array

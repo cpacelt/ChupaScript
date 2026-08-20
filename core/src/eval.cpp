@@ -8,6 +8,8 @@
 
 #include "builtin.hpp"
 #include "box.hpp"
+#include "callee.hpp"
+#include "host.hpp"
 #include "operator.hpp"
 #include "text.hpp"
 #include "aggregate.hpp"
@@ -73,6 +75,68 @@ bool coerceToString(const Ast &ast, NodeId node, const Value &value,
                     char *numberBuffer, std::string_view *out,
                     Diagnostic &diag) {
     return coerceScalarToString(value, numberBuffer, out, ast.offset(node), diag);
+}
+
+/// Fails a host call whose callback returned false.
+///
+/// A stub for this task: the real reason is what chupa_fail (task 10) will
+/// have stashed on the ChupaContext, read back here instead of this fixed
+/// message. What stays true either way is the offset — the host has no node
+/// to blame, so the call site's own node is what the diagnostic points at.
+bool failHostCall(const Ast &ast, NodeId node, Execution &exec,
+                  Diagnostic &diag) {
+    (void)exec;
+    return fail(ast, node, ErrorCode::Usage, "host function failed", diag);
+}
+
+/// Calls one host function.
+///
+/// The arguments are evaluated left to right into a frame on the Execution's
+/// stack; the callback then sees them as one contiguous block. Nothing
+/// retains them: each is held by the reference its own sub-expression left in
+/// the deferred list, and that list is drained at the operation boundary,
+/// which is after this whole evaluation returns to the host.
+bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
+                  Execution &exec, Value *out, Diagnostic &diag) {
+    const Callee callee = calleeOf(exec.hosts(), ast.callee(node));
+    const std::uint32_t count = ast.childCount(node);
+
+    // Each argument lands in a local first, never straight into frame[i]:
+    // a sub-expression that is itself a host call grows its own ArgFrame on
+    // the same shared vector, and growth may reallocate the buffer. Writing
+    // through &frame[i] taken before that recursion would then write into
+    // memory the vector already abandoned; frame[i] afterwards re-derives
+    // the address from the vector's current buffer, so the copy is safe.
+    ArgFrame frame(exec, count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        Value argument = Value::null();
+        if (!eval(ast, source, ast.child(node, i), exec, &argument, diag)) {
+            return false;
+        }
+        frame[i] = argument;
+    }
+
+    // out передаётся только тем, кто объявил, что возвращает значение:
+    // иначе Void-функция записала бы в него мусор, а вызывающий стейтмент
+    // прочитал бы его как результат.
+    Value produced = Value::null();
+    ChupaValue *slot =
+        callee.returnsValue ? reinterpret_cast<ChupaValue *>(&produced)
+                            : nullptr;
+
+    // frame.data() пересчитывается ЗДЕСЬ, после того как каждый аргумент уже
+    // вычислен: аргумент внешнего вызова сам мог быть вложенным вызовом, и
+    // его собственный ArgFrame мог вырастить общий стек и переселить буфер.
+    // Кэшировать адрес раньше — читать через указатель, который вложенный
+    // вызов уже сделал висячим.
+    const bool ok = callee.call(
+        exec.hostHandle(),
+        reinterpret_cast<const ChupaValue *>(frame.data()),
+        count, slot, callee.userData);
+
+    if (!ok) { return failHostCall(ast, node, exec, diag); }
+    *out = produced;
+    return true;
 }
 
 /// Собирает строку по шаблону (docs/semantics.md §8.8).
@@ -409,7 +473,11 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // вместе с ним из исходника читался текст имени (docs/backlog.md
             // B54). Неизвестное имя до вычисления не доходит: check отвергает
             // его ошибкой Name, а отметку прохода утверждает evalExpression.
-            const Builtin id = builtinOfCallee(ast.callee(node));
+            const CalleeRef ref = ast.callee(node);
+            if (isHostCallee(ref)) {
+                return evalHostCall(ast, source, node, exec, out, diag);
+            }
+            const Builtin id = builtinOfCallee(ref);
             // format вариадичен, и буфер аргументов ниже на него не рассчитан:
             // он вычисляет аргументы по мере надобности и придёт своим путём
             // (core/src/eval.cpp, задача 6). assert тут не годится — в

@@ -424,6 +424,32 @@ TEST(ParserStatement, AssignmentTargetMayHaveCallInSubscript) {
     EXPECT_EQ(script(source), "(script (+= ([] arr (call idx)) 1))");
 }
 
+/// Вызов без завершающей точки с запятой обязан жаловаться на неё, а не на
+/// форму стейтмента: он и есть вызов, и прежнее сообщение уводило автора
+/// перечитывать то, что верно (docs/backlog.md B66).
+TEST(ParserStatement, CallWithoutSemicolonBlamesTheSemicolon) {
+    const std::string source = "push(items, 1)";
+    const Parsed parsed = parseScriptSource(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message, "expected ';'");
+    // Каретка на конце текста, где ожидалась точка с запятой, а не на начале
+    // стейтмента.
+    EXPECT_EQ(parsed.diag.offset, static_cast<std::uint32_t>(source.size()));
+}
+
+/// А вот форма, которая вправду не стейтмент, обязана получить прежнее
+/// сообщение: разделение условия не должно было его отменить.
+TEST(ParserStatement, NonCallChainStillBlamesTheStatementForm) {
+    const std::string source = "items[0];";
+    const Parsed parsed = parseScriptSource(source);
+    EXPECT_FALSE(parsed.ok);
+    EXPECT_EQ(parsed.diag.code, CS::ErrorCode::Syntax);
+    EXPECT_STREQ(parsed.diag.message,
+                 "statement must be an assignment or a call");
+    EXPECT_EQ(parsed.diag.offset, 0u);
+}
+
 TEST(ParserStatement, CallStatement) {
     const std::string source = "push(items, 1);";
     EXPECT_EQ(script(source), "(script (stmt (call push items 1)))");

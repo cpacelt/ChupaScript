@@ -210,4 +210,43 @@ TEST(AstShape, TextSurvivesSourceRelocation) {
     EXPECT_EQ(ast.text(ast.child(ast.root(), 0), sources[0]), "user");
 }
 
+TEST(CalleeRef, BuiltinRoundTrips) {
+    for (int i = 0; i <= static_cast<int>(CS::Builtin::Str); ++i) {
+        const CS::Builtin id = static_cast<CS::Builtin>(i);
+        const CS::CalleeRef ref = CS::calleeOfBuiltin(id);
+        EXPECT_FALSE(CS::isHostCallee(ref));
+        EXPECT_EQ(CS::builtinOfCallee(ref), id);
+    }
+}
+
+TEST(CalleeRef, HostRoundTrips) {
+    for (std::uint8_t i = 0; i < CS::kMaxHostFunctions; ++i) {
+        const CS::CalleeRef ref = CS::calleeOfHost(i);
+        EXPECT_TRUE(CS::isHostCallee(ref));
+        EXPECT_EQ(CS::hostIndexOfCallee(ref), i);
+    }
+}
+
+/// Ссылка на хост-функцию с наибольшим допустимым номером обязана
+/// отличаться от «не разрешено»: иначе последняя зарегистрированная функция
+/// выглядела бы неразрешённым именем.
+TEST(CalleeRef, LastHostIndexIsNotNoCallee) {
+    EXPECT_NE(CS::calleeOfHost(CS::kMaxHostFunctions - 1), CS::kNoCallee);
+}
+
+TEST(AstNode, CalleeStartsUnresolved) {
+    CS::Ast ast;
+    const CS::NodeId node = ast.call(ident(0, 3), nullptr, 0);
+    EXPECT_FALSE(ast.hasCallee(node));
+}
+
+TEST(AstNode, CalleeSurvivesRoundTrip) {
+    CS::Ast ast;
+    const CS::NodeId node = ast.call(ident(0, 3), nullptr, 0);
+    ast.setCallee(node, CS::calleeOfHost(5));
+    EXPECT_TRUE(ast.hasCallee(node));
+    EXPECT_TRUE(CS::isHostCallee(ast.callee(node)));
+    EXPECT_EQ(CS::hostIndexOfCallee(ast.callee(node)), 5);
+}
+
 }  // namespace

@@ -274,8 +274,8 @@ TEST(Check, ResolvesTheBuiltinIntoTheCallNode) {
     // Имя разрешено на компиляции: вычислению искать его в таблице незачем.
     const CS::NodeId call = ast.root();
     ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
-    EXPECT_TRUE(ast.hasBuiltinId(call));
-    EXPECT_EQ(ast.builtinId(call), CS::Builtin::Count);
+    EXPECT_TRUE(ast.hasCallee(call));
+    EXPECT_EQ(CS::builtinOfCallee(ast.callee(call)), CS::Builtin::Count);
 }
 
 TEST(Check, LeavesTheCallNodeUnresolvedForAnUnknownName) {
@@ -293,7 +293,7 @@ TEST(Check, LeavesTheCallNodeUnresolvedForAnUnknownName) {
     // результата, которая иначе прочла бы чужую функцию.
     const CS::NodeId call = ast.root();
     ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
-    EXPECT_FALSE(ast.hasBuiltinId(call));
+    EXPECT_FALSE(ast.hasCallee(call));
 }
 
 TEST(Check, ResetClearsTheResolvedBuiltin) {
@@ -315,7 +315,7 @@ TEST(Check, ResetClearsTheResolvedBuiltin) {
               0u);
     const CS::NodeId call = ast.root();
     ASSERT_EQ(ast.kind(call), CS::NodeKind::Call);
-    EXPECT_EQ(ast.builtinId(call), CS::Builtin::Min);
+    EXPECT_EQ(CS::builtinOfCallee(ast.callee(call)), CS::Builtin::Min);
 }
 
 TEST(Check, CountsWithoutABufferAtAll) {

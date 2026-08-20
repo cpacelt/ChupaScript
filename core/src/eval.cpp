@@ -409,7 +409,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // вместе с ним из исходника читался текст имени (docs/backlog.md
             // B54). Неизвестное имя до вычисления не доходит: check отвергает
             // его ошибкой Name, а отметку прохода утверждает evalExpression.
-            const Builtin id = ast.builtinId(node);
+            const Builtin id = builtinOfCallee(ast.callee(node));
             // format вариадичен, и буфер аргументов ниже на него не рассчитан:
             // он вычисляет аргументы по мере надобности и придёт своим путём
             // (core/src/eval.cpp, задача 6). assert тут не годится — в

@@ -369,26 +369,21 @@ bool Ast::hasStringLiteral(NodeId node) const noexcept {
     return (nodes_[node].flags & kFlagLiteral) != 0;
 }
 
-Builtin Ast::builtinId(NodeId node) const noexcept {
+CalleeRef Ast::callee(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    assert(nodes_[node].kind == NodeKind::Call &&
-           "функция бывает только у вызова");
-    assert(nodes_[node].builtin != kNoBuiltin &&
-           "имя обязано быть разрешено проходом");
-    return nodes_[node].builtin;
+    assert(nodes_[node].kind == NodeKind::Call);
+    return nodes_[node].callee;
 }
 
-void Ast::setBuiltinId(NodeId node, Builtin id) noexcept {
+void Ast::setCallee(NodeId node, CalleeRef ref) noexcept {
     assert(node < nodes_.size());
-    assert(nodes_[node].kind == NodeKind::Call &&
-           "функция бывает только у вызова");
-    assert(id != kNoBuiltin && "разрешением kNoBuiltin не бывает");
-    nodes_[node].builtin = id;
+    assert(nodes_[node].kind == NodeKind::Call);
+    nodes_[node].callee = ref;
 }
 
-bool Ast::hasBuiltinId(NodeId node) const noexcept {
+bool Ast::hasCallee(NodeId node) const noexcept {
     assert(node < nodes_.size());
-    return nodes_[node].builtin != kNoBuiltin;
+    return nodes_[node].callee != kNoCallee;
 }
 
 std::uint32_t Ast::nodeCount() const noexcept {

@@ -153,27 +153,27 @@ class Ast {
     /// ячейки другие виды узлов (см. Node).
     [[nodiscard]] bool hasGlobalValuesSlot(NodeId node) const noexcept;
 
-    /// Встроенная функция, в которую разрешено имя узла Call.
+    /// What the name of this Call node resolved to — a builtin or a host
+    /// function (builtin_id.hpp).
     ///
-    /// Разрешает его check (core/src/check.hpp) — единственное место, где имя
-    /// функции вообще ищется, — и вычислению остаётся прочесть готовое.
-    /// Раньше findBuiltin звался заново на каждом вычислении каждого вызова, а
-    /// вместе с ним читался и текст имени из исходника: двоичный поиск по
-    /// таблице с посимвольным сравнением там, где ответ известен с компиляции
-    /// (docs/backlog.md B54).
+    /// check (core/src/check.hpp) resolves it, and it is the only place where
+    /// the name of a function is looked up at all; evaluation reads what is
+    /// already there. findBuiltin used to run on every evaluation of every
+    /// call, reading the name text out of the source with it (docs/backlog.md
+    /// B54).
     ///
-    /// Предусловие: дерево прошло check, а узел — Call с известным именем.
-    /// Неизвестное имя до вычисления не доходит: check отвергает его ошибкой
-    /// Name, и значение остаётся kNoBuiltin.
-    [[nodiscard]] Builtin builtinId(NodeId node) const noexcept;
+    /// Precondition: the tree passed check and this node is a Call whose name
+    /// is known. An unknown name never reaches evaluation — check rejects it
+    /// with a Name error and the field stays kNoCallee.
+    [[nodiscard]] CalleeRef callee(NodeId node) const noexcept;
 
-    /// Записывает разрешённую функцию. Зовёт только check.
-    void setBuiltinId(NodeId node, Builtin id) noexcept;
+    /// Records what the name resolved to. Called only by check.
+    void setCallee(NodeId node, CalleeRef ref) noexcept;
 
-    /// Разрешено ли имя узла Call. Проходу — чтобы не искать имя второй раз
-    /// при проверке употребления результата; вычислению этот вопрос не нужен,
-    /// у него ответ гарантирован.
-    [[nodiscard]] bool hasBuiltinId(NodeId node) const noexcept;
+    /// Is the name resolved. check asks — so it does not look the name up a
+    /// second time when it checks how the result is used; evaluation does
+    /// not, its answer is guaranteed.
+    [[nodiscard]] bool hasCallee(NodeId node) const noexcept;
 
     /// Готовый узел строкового литерала для узла String.
     ///
@@ -257,8 +257,8 @@ class Ast {
     struct Node {
         NodeKind kind = NodeKind::Invalid;  ///< смещение 0
         TokenKind op = TokenKind::End;      ///< 1 — Unary, Binary, Assign
-        /// 2 — Call; заполняет check. См. builtinId().
-        Builtin builtin = kNoBuiltin;
+        /// 2 — Call; заполняет check. См. callee().
+        CalleeRef callee = kNoCallee;
         /// 3 — набор битов kFlag* (ast.cpp): экранирование у String, значение
         /// у Boolean, признак уложенного литерала у String. Три бита вместо
         /// трёх байт: каждый принадлежит одному виду узла и с прочими не

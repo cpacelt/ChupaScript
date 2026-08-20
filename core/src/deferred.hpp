@@ -27,7 +27,7 @@ namespace CS {
 /// вызова на каждом вычислении.
 ///
 /// Обоснование:
-/// docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md Р4.
+/// docs/superpowers/specs/2026-08-19-memory-model-redesign-design.md Р3.
 class Deferred {
    public:
     Deferred() = default;

@@ -21,7 +21,7 @@ inline constexpr std::uint32_t kNoKey = 0xffffffffu;
 /// коробка-объект, и она переживает контекст ровно тогда, когда её пережил хоть
 /// один объект, уехавший к хосту. Иначе у такого объекта повисли бы ключи.
 ///
-/// Обоснование: docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md Р5.
+/// Обоснование: docs/superpowers/specs/2026-08-19-memory-model-redesign-design.md Р5.
 class KeyTable {
    public:
     /// Новая таблица со счётчиком 1.

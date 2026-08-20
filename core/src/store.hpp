@@ -52,7 +52,7 @@ struct GlobalName;
 /// до ближайшей мутации того, откуда он взят.
 ///
 /// Обоснование:
-/// docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md
+/// docs/superpowers/specs/2026-08-19-memory-model-redesign-design.md Р5.
 class Store {
    public:
     Store();

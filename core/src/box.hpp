@@ -38,7 +38,7 @@ namespace detail {
 /// копируемость, на которой стоит static_assert; требует второй аллокации под
 /// блок управления, а строке нужна одна, хвостом; считает атомарно.
 ///
-/// Обоснование: docs/superpowers/specs/2026-08-19-chupascript-memory-model-design.md Р3.
+/// Обоснование: docs/superpowers/specs/2026-08-19-memory-model-redesign-design.md Р4.
 struct Box {
     std::uint32_t rc;
     Value::Kind kind;

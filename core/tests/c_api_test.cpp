@@ -6,6 +6,8 @@
 #include <string>
 #include <string_view>
 
+#include "host_fixture.hpp"
+
 // Helper: set a global from a ChupaScript literal text
 bool setGlobal(ChupaContext* ctx, const std::string& name, const std::string& text) {
     return chupa_context_set_data(ctx, name.c_str(), name.size(), text.c_str(), text.size());
@@ -1053,4 +1055,95 @@ TEST(CApi, RefusesAUnitFromAnotherContext) {
     chupa_expression_destroy(e);
     chupa_context_destroy(other);
     chupa_context_destroy(home);
+}
+
+// ─── chupa_register ───
+//
+// chupa_register pairs a refusal with an assert (see the comment on it in
+// c_api.cpp): the code path a test would exercise below always aborts first
+// in a debug build. The tests that reach a refusal are therefore visible only
+// in a release build (#ifdef NDEBUG), where the assert compiles out and false
+// is the whole contract. HostTable::add — reached before chupa_register does
+// its own assert-then-refuse — already covers every refusal reason without
+// an assert in the way; that coverage is task 3's host_test.cpp and runs in
+// both builds.
+
+#ifdef NDEBUG
+
+TEST(CApiRegister, AcceptsAndRefusesThroughTheSameDoor) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = healthyFunction("formatDate");
+    EXPECT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaFunction taken = healthyFunction("count");
+    EXPECT_FALSE(chupa_register(ctx, &taken));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NAME);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRegister, RefusesAfterFirstCompile) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaExpression *e = chupa_compile_expression(ctx, "42", 2);
+    ASSERT_NE(e, nullptr);
+
+    ChupaFunction fn = healthyFunction("formatDate");
+    EXPECT_FALSE(chupa_register(ctx, &fn));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_USAGE);
+
+    chupa_expression_destroy(e);
+    chupa_context_destroy(ctx);
+}
+
+#endif  // NDEBUG
+
+/// release зовётся при разрушении контекста, а не при отказе регистрации.
+TEST(CApiRegister, ReleaseRunsOnContextDestroy) {
+    static int released = 0;
+    released = 0;
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = healthyFunction("formatDate");
+    fn.release = [](void *) { ++released; };
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    EXPECT_EQ(released, 0);
+    chupa_context_destroy(ctx);
+    EXPECT_EQ(released, 1);
+}
+
+// ─── chupa_make_* ───
+
+TEST(CApiMake, ScalarsNeedNoContext) {
+    ChupaValue v{};
+    chupa_make_null(&v);
+    EXPECT_EQ(chupa_value_kind(&v), CHUPA_KIND_NULL);
+    chupa_make_bool(&v, true);
+    EXPECT_EQ(chupa_value_kind(&v), CHUPA_KIND_BOOL);
+    EXPECT_TRUE(chupa_value_bool(&v));
+    chupa_make_number(&v, 3.5);
+    EXPECT_EQ(chupa_value_number(&v), 3.5);
+}
+
+/// Строка длиннее пятнадцати байт — коробка; короткая лежит внутри значения.
+/// Проверяются обе, потому что путь у них разный.
+TEST(CApiMake, StringWorksOnBothSidesOfTheInlineBoundary) {
+    ChupaContext *ctx = chupa_context_create();
+    const char shortText[] = "Вася";
+    const char longText[] = "Длинное название карточки из ленты товаров";
+
+    ChupaValue v{};
+    ASSERT_TRUE(chupa_make_string(ctx, shortText, sizeof shortText - 1, &v));
+    const char *bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string(&v, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len), shortText);
+
+    ASSERT_TRUE(chupa_make_string(ctx, longText, sizeof longText - 1, &v));
+    chupa_value_string(&v, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len), longText);
+
+    chupa_context_destroy(ctx);
 }

@@ -274,6 +274,37 @@ typedef struct ChupaFunction {
     void      (*CHUPA_NULLABLE release)(void *CHUPA_NULLABLE user_data);
 } ChupaFunction;
 
+/* Registers fn on ctx.
+ *
+ * MUST be called BEFORE the first compilation on this context: check sees
+ * the name set as it stands the moment it runs, and relies on that set not
+ * changing afterwards. Refusing everything registered too late is how that
+ * is kept true, not a separate rule enforced elsewhere.
+ *
+ * Refusal is false, with the reason in the context's error. */
+CHUPA_API CHUPA_MUST_USE bool
+chupa_register(ChupaContext *ctx, const ChupaFunction *fn);
+
+/* ─── Making values ────────────────────────────────────────────────────────
+ *
+ * A callback needs these to build its result. The first three allocate
+ * nothing at all; a string of at most fifteen bytes is inlined into the
+ * value the same way. */
+
+CHUPA_API void chupa_make_null  (ChupaValue *out);
+CHUPA_API void chupa_make_bool  (ChupaValue *out, bool value);
+CHUPA_API void chupa_make_number(ChupaValue *out, double value);
+
+/* bytes MUST be valid UTF-8 — the same obligation as chupa_context_set_string
+ * above. Refusal is false, with CHUPA_ERR_MEMORY in the context's error.
+ *
+ * The value this produces lives until the next operation boundary on ctx,
+ * exactly like any value the engine itself produced; keeping it longer needs
+ * chupa_value_retain. */
+CHUPA_API CHUPA_MUST_USE bool
+chupa_make_string(ChupaContext *ctx, const char *bytes, size_t len,
+                  ChupaValue *out);
+
 /* ─── Evaluation ──────────────────────────────────────────────────────────
  *
  * ChupaValue is a plain 16-byte struct. It is not a handle into a table and

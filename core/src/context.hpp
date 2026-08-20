@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string_view>
 
+#include "aggregate.hpp"
 #include "diagnostic.hpp"
 #include "execution.hpp"
 #include "expression.hpp"
@@ -116,6 +117,15 @@ class Context {
                          exec_.deferred());
     }
 
+    /// Materialises a string the host handed over, on this Context's terms.
+    ///
+    /// Exists so the deferred list stays private: chupa_make_string needs to
+    /// deposit the creator reference somewhere, and handing out
+    /// exec_.deferred() would open every rule this class owns.
+    [[nodiscard]] Value makeString(std::string_view text) {
+        return CS::materialize(text, exec_.deferred());
+    }
+
     /// Разбор текста от хоста в глобальную переменную. Тоже операция, и по той
     /// же причине: разбор создаёт коробки.
     bool setVariableText(std::string_view name, std::string_view text,
@@ -165,6 +175,14 @@ class Context {
     /// The functions registered here. Read by resolveCallee (callee.hpp)
     /// during compilation and by evaluation to reach the callback.
     [[nodiscard]] const HostTable &hosts() const noexcept { return hosts_; }
+
+    /// Wires in the opaque handle a host callback receives as its first
+    /// argument. A one-line forward to Execution::setHostHandle — see the
+    /// LAYOUT note there for why the core carries this pointer but never
+    /// looks inside it.
+    void setHostHandle(ChupaContext *handle) noexcept {
+        exec_.setHostHandle(handle);
+    }
 
     /// Is a call in flight. The C API asks before doing anything on this
     /// Context: a host callback runs in the middle of a tree walk, and a

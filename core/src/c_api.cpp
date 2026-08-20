@@ -4,6 +4,7 @@
 // implements it by forwarding to CS::Context.
 #include "chupascript/chupascript.h"
 
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -24,6 +25,13 @@
 // Defined here, not in the header: C doesn't see C++ members.
 
 struct ChupaContext {
+    /// Проводит непрозрачный указатель на себя внутрь ядра прямо при
+    /// построении, а не отдельным вызовом в теле chupa_context_create: вызов,
+    /// который обязан случиться, но стоит отдельно от построения, однажды
+    /// забудут — так и вышло с сеттером таблицы в задаче 7, и повторять это
+    /// здесь не будем.
+    ChupaContext() { impl.setHostHandle(this); }
+
     /// Хранилище и состояние выполнения вместе с границей операции —
     /// core/src/context.hpp. Здесь остаётся только то, что принадлежит C:
     /// ошибка в стиле errno и колбэк перерисовки.
@@ -166,6 +174,68 @@ bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_l
     c->clearError();
     c->notifyRedraw();
     return true;
+}
+
+// ─── Host functions: register ───
+
+namespace {
+
+/// Translates a refusal into the pair the context's error reports.
+///
+/// A switch without a default: RegisterOutcome grew two members between
+/// task 3 and task 4 (TooLate, Reentrant) with no compiler complaint at the
+/// call site that consumed it — adding a tenth must not repeat that.
+///
+/// Ok never reaches here (chupa_register branches on it above); the case is
+/// still spelled out because the switch has no default to fall back on.
+CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
+    switch (outcome) {
+        case CS::RegisterOutcome::Ok:
+            return {CS::ErrorCode::None, 0, ""};
+        case CS::RegisterOutcome::BadName:
+            return {CS::ErrorCode::Name, 0,
+                   "function name must be an identifier, not a reserved word"};
+        case CS::RegisterOutcome::NameTaken:
+            return {CS::ErrorCode::Name, 0,
+                   "a builtin or another registered function already has this name"};
+        case CS::RegisterOutcome::NoCallback:
+            return {CS::ErrorCode::Usage, 0, "fn->call must not be NULL"};
+        case CS::RegisterOutcome::BadArity:
+            return {CS::ErrorCode::Usage, 0,
+                   "fn->min_args must not exceed fn->max_args"};
+        case CS::RegisterOutcome::BadFlags:
+            return {CS::ErrorCode::Usage, 0,
+                   "CHUPA_FN_DETERMINISTIC requires CHUPA_FN_PURE"};
+        case CS::RegisterOutcome::TableFull:
+            return {CS::ErrorCode::Range, 0,
+                   "no more host functions may be registered on this context"};
+        case CS::RegisterOutcome::TooLate:
+            return {CS::ErrorCode::Usage, 0,
+                   "chupa_register must run before the first compilation on this context"};
+        case CS::RegisterOutcome::Reentrant:
+            return {CS::ErrorCode::Usage, 0,
+                   "chupa_register was called from inside a host callback"};
+    }
+    return {CS::ErrorCode::None, 0, ""};
+}
+
+}  // namespace
+
+bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
+    if (ctx == nullptr || fn == nullptr) { return false; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    const CS::RegisterOutcome outcome = c->impl.registerFunction(*fn);
+    if (outcome == CS::RegisterOutcome::Ok) {
+        c->clearError();
+        return true;
+    }
+    // Утверждение вместе с отказом: код регистрации статичен и выполняется до
+    // всего остального, поэтому разработчик увидит его на первом же запуске у
+    // себя, а не пользователь на устройстве. В релизе утверждение исчезает, и
+    // настоящим контрактом остаётся возвращаемое false.
+    assert(false && "chupa_register отказал — см. код ошибки контекста");
+    c->setError(errorFor(outcome));
+    return false;
 }
 
 // ─── Error reporting ───
@@ -319,6 +389,27 @@ const CS::detail::ObjectBox* asObject(const CS::Value& v) {
 }
 
 }  // namespace
+
+// ─── Making values ───
+
+void chupa_make_null(ChupaValue* out) { toC(CS::Value::null(), out); }
+
+void chupa_make_bool(ChupaValue* out, bool value) {
+    toC(CS::Value::boolean(value), out);
+}
+
+void chupa_make_number(ChupaValue* out, double value) {
+    toC(CS::Value::number(value), out);
+}
+
+bool chupa_make_string(ChupaContext* ctx, const char* bytes, size_t len,
+                       ChupaValue* out) {
+    if (ctx == nullptr || out == nullptr) { return false; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    const std::string_view text(bytes == nullptr ? "" : bytes, len);
+    toC(c->impl.makeString(text), out);
+    return true;
+}
 
 // ─── Eval ───
 //

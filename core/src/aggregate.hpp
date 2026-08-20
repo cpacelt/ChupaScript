@@ -225,7 +225,10 @@ inline void objectSet(Value o, std::string_view key, Value v, EpochClock &clock,
     const std::uint32_t at = detail::findEntry(box, key, prefix, &found);
     detail::retainValue(v);
     // Один подъём на обе ветки: и замена значения, и заведение ключа —
-    // изменение объекта, и различать их читателю нечем и незачем.
+    // изменение объекта, и различать их читателю нечем и незачем. Отвергнутая
+    // альтернатива — тикать в каждой ветке отдельно: тот же результат ценой
+    // повторенной строки и риска, что будущая правка одной ветки забудет
+    // повторить её в другой.
     box.epoch = clock.tick();
     if (found) {
         dead.take(box.at(at).value);

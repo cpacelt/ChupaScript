@@ -71,61 +71,71 @@ TEST(PrintValue, NestedAggregates) {
 }
 
 TEST(PrintValue, SelfReferencingObjectTerminates) {
+    // Агрегат собран напрямую через Store, а не через put(): все мутации
+    // ниже обязаны идти по одной настоящей ленте (store.clock()), а не по
+    // второй, независимо заведённой, — иначе эпоха коробки способна
+    // понизиться относительно уже выданных номеров (epoch.hpp: «номер,
+    // выданный позже, всегда больше выданного раньше»).
     CS::Deferred dead;
-    CS::EpochClock clock;
+    CS::Store store;
     CS::Context ctx;
-    const Value o = put(ctx, "o", "{'n': 1}");
-    CS::objectSet(o, "self", o, clock, dead);
+    const Value o = CS::makeObject(store.keys(), 2, store.clock(), dead);
+    CS::objectSet(o, "n", Value::number(1.0), store.clock(), dead);
+    CS::objectSet(o, "self", o, store.clock(), dead);
     // docs/semantics.md §2.3 объявляет такую программу корректной; печатник
     // обязан завершиться, а не зациклиться.
     EXPECT_EQ(chupa::printValue(ctx, o), "{'n': 1, 'self': {...}}");
     // Cycle broken through the language's own means (null over the field), so
     // the box does not outlive this test (tools/asan.sh runs under LeakSanitizer).
-    CS::objectSet(o, "self", Value::null(), clock, dead);
+    CS::objectSet(o, "self", Value::null(), store.clock(), dead);
 }
 
 TEST(PrintValue, SelfReferencingArrayTerminates) {
     CS::Deferred dead;
-    CS::EpochClock clock;
+    CS::Store store;
     CS::Context ctx;
-    const Value a = put(ctx, "a", "[1]");
-    CS::arrayPush(a, a, clock);
+    const Value a = CS::makeArray(2, store.clock(), dead);
+    CS::arrayPush(a, Value::number(1.0), store.clock());
+    CS::arrayPush(a, a, store.clock());
     EXPECT_EQ(chupa::printValue(ctx, a), "[1, [...]]");
     // Cycle broken through the language's own means (pop), so the box does
     // not outlive this test (tools/asan.sh runs under LeakSanitizer).
     Value taken = Value::null();
-    ASSERT_TRUE(CS::arrayPop(a, &taken, clock, dead));
+    ASSERT_TRUE(CS::arrayPop(a, &taken, store.clock(), dead));
 }
 
 TEST(PrintValue, SharedAggregateIsPrintedInFullTwice) {
     CS::Deferred dead;
-    CS::EpochClock clock;
+    CS::Store store;
     CS::Context ctx;
-    const Value shared = put(ctx, "shared", "[1, 2]");
-    const Value holder = put(ctx, "holder", "{}");
-    CS::objectSet(holder, "a", shared, clock, dead);
-    CS::objectSet(holder, "b", shared, clock, dead);
+    const Value shared = CS::makeArray(2, store.clock(), dead);
+    CS::arrayPush(shared, Value::number(1.0), store.clock());
+    CS::arrayPush(shared, Value::number(2.0), store.clock());
+    const Value holder = CS::makeObject(store.keys(), 2, store.clock(), dead);
+    CS::objectSet(holder, "a", shared, store.clock(), dead);
+    CS::objectSet(holder, "b", shared, store.clock(), dead);
     // Один агрегат под двумя ключами — не цикл. Отслеживается путь печати, а
     // не всё виденное, поэтому оба вхождения печатаются целиком.
     EXPECT_EQ(chupa::printValue(ctx, holder), "{'a': [1, 2], 'b': [1, 2]}");
 }
 
 TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
-    CS::Context ctx;
     // Не цикл: каждый массив содержит следующий ровно один раз, ни один
     // агрегат не встречается на собственном пути печати. Путь его не
     // поймает — глубина ловится отдельным счётчиком (cli/printer.cpp,
     // kMaxPrintDepth). Без него печать такого дерева переполнила бы стек.
+    CS::Deferred dead;
+    CS::Store store;
+    CS::Context ctx;
     constexpr int kCount = 200;
     std::vector<Value> arrays;
     arrays.reserve(kCount);
     for (int i = 0; i < kCount; ++i) {
-        arrays.push_back(put(ctx, "r" + std::to_string(i), "[]"));
+        arrays.push_back(CS::makeArray(1, store.clock(), dead));
     }
-    CS::EpochClock clock;
     for (int i = 0; i + 1 < kCount; ++i) {
         CS::arrayPush(arrays[static_cast<std::size_t>(i)],
-                      arrays[static_cast<std::size_t>(i + 1)], clock);
+                      arrays[static_cast<std::size_t>(i + 1)], store.clock());
     }
     const std::string printed = chupa::printValue(ctx, arrays[0]);
     // Печать обязана завершиться (не упасть по стеку) и оборваться меткой.
@@ -134,17 +144,17 @@ TEST(PrintValue, DeepNonCyclicTreeIsTruncated) {
 
 TEST(PrintValue, MutualCycleTerminates) {
     CS::Deferred dead;
-    CS::EpochClock clock;
+    CS::Store store;
     CS::Context ctx;
-    const Value a = put(ctx, "a", "{}");
-    const Value b = put(ctx, "b", "{}");
-    CS::objectSet(a, "b", b, clock, dead);
-    CS::objectSet(b, "a", a, clock, dead);
+    const Value a = CS::makeObject(store.keys(), 1, store.clock(), dead);
+    const Value b = CS::makeObject(store.keys(), 1, store.clock(), dead);
+    CS::objectSet(a, "b", b, store.clock(), dead);
+    CS::objectSet(b, "a", a, store.clock(), dead);
     // Цикл длиной два: путь ловит и его.
     EXPECT_EQ(chupa::printValue(ctx, a), "{'b': {'a': {...}}}");
     // Cycle broken through the language's own means (null over the field), so
     // the boxes do not outlive this test (tools/asan.sh runs under LeakSanitizer).
-    CS::objectSet(b, "a", Value::null(), clock, dead);
+    CS::objectSet(b, "a", Value::null(), store.clock(), dead);
 }
 
 }  // namespace

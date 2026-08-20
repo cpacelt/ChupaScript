@@ -12,6 +12,7 @@
 #include "data.hpp"
 #include "diagnostic.hpp"
 #include "host.hpp"
+#include "host_fixture.hpp"
 #include "parser.hpp"
 #include "store.hpp"
 
@@ -30,24 +31,26 @@ void put(Store &store, std::string_view name, std::string_view text) {
 
 /// Компилирует выражение и возвращает найденные ошибки.
 std::vector<Diagnostic> checkExpr(Store &store, std::string_view text,
-                                  std::uint32_t capacity = 8) {
+                                  std::uint32_t capacity = 8,
+                                  const CS::HostTable *hosts = nullptr) {
     Ast ast;
     std::vector<Diagnostic> found(capacity);
     const std::uint32_t count = CS::compileExpression(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, store,
-        found.data(), capacity);
+        found.data(), capacity, hosts);
     found.resize(std::min<std::uint32_t>(count, capacity));
     return found;
 }
 
 /// То же для скрипта.
 std::vector<Diagnostic> checkScript(Store &store, std::string_view text,
-                                    std::uint32_t capacity = 8) {
+                                    std::uint32_t capacity = 8,
+                                    const CS::HostTable *hosts = nullptr) {
     Ast ast;
     std::vector<Diagnostic> found(capacity);
     const std::uint32_t count = CS::compileScript(
         text.data(), static_cast<std::uint32_t>(text.size()), ast, store,
-        found.data(), capacity);
+        found.data(), capacity, hosts);
     found.resize(std::min<std::uint32_t>(count, capacity));
     return found;
 }
@@ -361,6 +364,87 @@ TEST(CheckCompileMode, ExpressionDoorAcceptsAHostTable) {
                                     static_cast<std::uint32_t>(source.size()),
                                     ast, store, diags, 4, &hosts),
               0u);
+}
+
+TEST(CheckHostFunctions, ResolvesRegisteredName) {
+    Store store;
+    CS::HostTable hosts;
+    ASSERT_EQ(hosts.add(healthyFunction("formatDate")), CS::RegisterOutcome::Ok);
+    EXPECT_TRUE(checkExpr(store, "formatDate(1)", 8, &hosts).empty());
+}
+
+TEST(CheckHostFunctions, UnknownNameStillReportsUnknownFunction) {
+    Store store;
+    CS::HostTable hosts;
+    const auto found = checkExpr(store, "noSuchFunction(1)", 8, &hosts);
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_STREQ(found[0].message, "unknown function");
+}
+
+/// Без таблицы вовсе — та же диагностика: hosts == nullptr значит «хост-функций
+/// нет», а не «искать негде».
+TEST(CheckHostFunctions, UnknownNameWithoutATableReportsTheSameThing) {
+    Store store;
+    const auto found = checkExpr(store, "formatDate(1)");
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_STREQ(found[0].message, "unknown function");
+}
+
+TEST(CheckHostFunctions, ArityIsCheckedForHostFunctions) {
+    Store store;
+    CS::HostTable hosts;
+    ASSERT_EQ(hosts.add(healthyFunction("formatDate")), CS::RegisterOutcome::Ok);
+    const auto found = checkExpr(store, "formatDate(1, 2)", 8, &hosts);
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_STREQ(found[0].message, "wrong number of arguments");
+}
+
+TEST(CheckHostFunctions, VariadicHostFunctionAcceptsAnyCountAboveMinimum) {
+    Store store;
+    CS::HostTable hosts;
+    ChupaFunction fn = healthyFunction("joinAll");
+    fn.min_args = 1;
+    fn.max_args = CHUPA_VARIADIC;
+    ASSERT_EQ(hosts.add(fn), CS::RegisterOutcome::Ok);
+
+    EXPECT_TRUE(checkExpr(store, "joinAll(1, 2, 3, 4, 5)", 8, &hosts).empty());
+    EXPECT_EQ(checkExpr(store, "joinAll()", 8, &hosts).size(), 1u);
+}
+
+/// Грязная функция в выражении — ошибка компиляции. Это и есть та проверка,
+/// которой docs/grammar.md §6.3 раньше не требовал: он ВЫВОДИЛ чистоту из
+/// «грязное не возвращает значения», а хост-функция вправе эту посылку
+/// нарушить — объявить и RETURNS_VALUE, и отсутствие PURE.
+TEST(CheckHostFunctions, ImpureFunctionIsRefusedInAnExpression) {
+    Store store;
+    CS::HostTable hosts;
+    ChupaFunction fn = healthyFunction("track");
+    fn.flags = CHUPA_FN_RETURNS_VALUE;   // возвращает значение и грязная
+    ASSERT_EQ(hosts.add(fn), CS::RegisterOutcome::Ok);
+
+    const auto found = checkExpr(store, "track(1)", 8, &hosts);
+    ASSERT_EQ(found.size(), 1u);
+    EXPECT_EQ(found[0].code, CS::ErrorCode::Usage);
+}
+
+TEST(CheckHostFunctions, ImpureFunctionIsAllowedInAScript) {
+    Store store;
+    put(store, "x", "{'n': 0}");
+    CS::HostTable hosts;
+    ChupaFunction fn = healthyFunction("track");
+    fn.flags = CHUPA_FN_RETURNS_VALUE;
+    ASSERT_EQ(hosts.add(fn), CS::RegisterOutcome::Ok);
+
+    EXPECT_TRUE(checkScript(store, "x.n = track(1);", 8, &hosts).empty());
+}
+
+/// push и pop грязные, но новая диагностика их не касается: их случай уже
+/// закрыт правилом «результат Void употреблять нельзя», и вторая жалоба на тот
+/// же факт удвоила бы вывод компилятора.
+TEST(CheckHostFunctions, ImpureBuiltinKeepsItsOldSingleDiagnostic) {
+    Store store;
+    put(store, "items", "[1, 2, 3]");
+    EXPECT_EQ(checkExpr(store, "push(items, 1)").size(), 1u);
 }
 
 }  // namespace

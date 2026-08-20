@@ -3,6 +3,7 @@
 #include <string_view>
 
 #include "builtin.hpp"
+#include "callee.hpp"
 
 namespace CS {
 namespace {
@@ -14,10 +15,6 @@ struct Checker {
     const Store &store;
     Diagnostic *out;
     std::uint32_t capacity;
-    // hosts and mode are not yet read anywhere in this pass — name
-    // resolution against the host table lands in the next task. They are
-    // stored here so this task's job (carry them to the pass) is complete
-    // and observable, without reaching ahead into work that belongs later.
     const HostTable *hosts;
     CompileMode mode;
     std::uint32_t found = 0;
@@ -36,7 +33,7 @@ struct Checker {
     /// — имя неизвестно, и об этом уже сообщено.
     void requireValue(NodeId call) {
         if (!ast.hasCallee(call)) { return; }  // уже сообщено
-        if (!builtinInfo(builtinOfCallee(ast.callee(call))).returnsValue) {
+        if (!calleeOf(hosts, ast.callee(call)).returnsValue) {
             report(call, ErrorCode::Name, "builtin does not return a value");
         }
     }
@@ -44,32 +41,45 @@ struct Checker {
     /// Вызов в позиции стейтмента обязан значения не возвращать (§6.1).
     void requireVoid(NodeId call) {
         if (!ast.hasCallee(call)) { return; }
-        if (builtinInfo(builtinOfCallee(ast.callee(call))).returnsValue) {
+        if (calleeOf(hosts, ast.callee(call)).returnsValue) {
             report(call, ErrorCode::Name, "call result is not used");
         }
     }
 
     void checkCall(NodeId node) {
-        Builtin id = Builtin::Count;
-        if (!findBuiltin(ast.text(node, source), &id)) {
+        const Callee callee = resolveCallee(hosts, ast.text(node, source));
+        if (callee.ref == kNoCallee) {
             report(node, ErrorCode::Name, "unknown function");
             return;
         }
-        // Здесь же имя разрешается и кладётся в узел: проход и так ищет его,
-        // чтобы отвергнуть незнакомое, и второй раз искать его на каждом
-        // вычислении незачем. Это единственное место, где имя функции вообще
-        // ищется. Кладётся до проверки арности намеренно: неверное число
-        // аргументов — ошибка, до вычисления такое дерево не доходит, а
-        // разрешение всё равно верное, и хранить его половинчато не за что.
-        ast.setCallee(node, calleeOfBuiltin(id));
-        const BuiltinInfo &info = builtinInfo(id);
+        // Кладётся до проверки арности намеренно: неверное число аргументов —
+        // ошибка, до вычисления такое дерево не доходит, а разрешение всё
+        // равно верное, и хранить его половинчато не за что.
+        ast.setCallee(node, callee.ref);
+
         const std::uint32_t count = ast.childCount(node);
-        if (count < info.minArgs ||
-            (info.maxArgs != kVariadic && count > info.maxArgs)) {
+        if (count < callee.minArgs ||
+            (callee.maxArgs != kVariadic && count > callee.maxArgs)) {
             report(node, ErrorCode::Name, "wrong number of arguments");
             return;
         }
-        if (id != Builtin::Format) { return; }
+
+        // Грязный вызов в выражении. Спрашивается только у хост-функций: у
+        // билтинов тот же факт уже закрыт правилом §6.2 «результат Void
+        // употреблять нельзя», и это правило и есть доказательство §6.3.
+        // Вторая жалоба на один факт удвоила бы вывод компилятора, а первым
+        // сообщением осталось бы менее точное.
+        if (isHostCallee(callee.ref) && !callee.pure &&
+            mode == CompileMode::Expression) {
+            report(node, ErrorCode::Usage,
+                   "impure function cannot be called from an expression");
+            return;
+        }
+
+        if (isHostCallee(callee.ref) ||
+            builtinOfCallee(callee.ref) != Builtin::Format) {
+            return;
+        }
 
         // Шаблон-литерал сверяется здесь; иначе проверка уходит в выполнение
         // (docs/semantics.md §8.8). Считаем по сырому, недекодированному

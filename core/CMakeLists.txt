@@ -2,6 +2,7 @@ add_library(chupascript STATIC
     src/ast.cpp
     src/builtin.cpp
     src/c_api.cpp
+    src/callee.cpp
     src/check.cpp
     src/compile.cpp
     src/context.cpp

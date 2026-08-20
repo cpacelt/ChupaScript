@@ -82,7 +82,9 @@ struct ChupaScript     { CS::Script     impl; };
 // A host callback runs in the middle of a tree walk that owns the deferred
 // list and the argument stack (execution.hpp). Every door that writes,
 // compiles or evaluates must refuse for as long as that walk is in flight —
-// see refuseWhileEvaluating below, called first thing in each such door.
+// see refuseWhileEvaluating below, called first thing in each such door,
+// with one exception: chupa_register, whose own reentrancy check lives one
+// layer down, in Context::registerFunction — see the comment there.
 
 namespace {
 
@@ -265,7 +267,10 @@ CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
 bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
     if (ctx == nullptr || fn == nullptr) { return false; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    if (refuseWhileEvaluating(c)) { return false; }
+    // Без refuseWhileEvaluating здесь намеренно: признак "идёт вызов" уже
+    // проверяет Context::registerFunction (RegisterOutcome::Reentrant) —
+    // это тот слой, что владеет флагом evaluating_. Второй страж здесь сверху
+    // сделал бы эту её ветку недостижимой из C, ничего не выиграв взамен.
     const CS::RegisterOutcome outcome = c->impl.registerFunction(*fn);
     if (outcome == CS::RegisterOutcome::Ok) {
         c->clearError();
@@ -274,8 +279,12 @@ bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
     // Утверждение вместе с отказом: код регистрации статичен и выполняется до
     // всего остального, поэтому разработчик увидит его на первом же запуске у
     // себя, а не пользователь на устройстве. В релизе утверждение исчезает, и
-    // настоящим контрактом остаётся возвращаемое false.
-    assert(false && "chupa_register отказал — см. код ошибки контекста");
+    // настоящим контрактом остаётся возвращаемое false. Reentrant — не такой
+    // баг: это ожидаемый исход попытки хоста зарегистрировать функцию из
+    // середины текущего вызова, намеренно проверяемый тестом, и здесь не
+    // ассертится.
+    assert(outcome == CS::RegisterOutcome::Reentrant &&
+          "chupa_register отказал — см. код ошибки контекста");
     c->setError(errorFor(outcome));
     return false;
 }

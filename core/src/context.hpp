@@ -198,14 +198,11 @@ class Context {
 
     /// Forwards to Execution::setHostFailure — see the LAYOUT note there for
     /// why the fields live on exec_ rather than here: eval() only ever sees
-    /// Execution, and failHostCall (eval.cpp) reads the reason back from it.
+    /// Execution, and failHostCall (eval.cpp) reads the reason back from it
+    /// via exec_.takeHostFailure() directly — this class has no matching
+    /// forward for that half, because nothing outside eval.cpp ever needs one.
     void setHostFailure(ErrorCode code, std::string_view text) {
         exec_.setHostFailure(code, text);
-    }
-
-    /// Forwards to Execution::takeHostFailure — see setHostFailure above.
-    [[nodiscard]] Diagnostic takeHostFailure() noexcept {
-        return exec_.takeHostFailure();
     }
 
     /// The Store, exposed: the shell (`:vars`, printValue) and the C API both

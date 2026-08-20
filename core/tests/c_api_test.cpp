@@ -1394,6 +1394,26 @@ bool failsSilently(ChupaContext *, const ChupaValue *, size_t, ChupaValue *,
     return false;
 }
 
+/// Поднимается, только когда колбэк ниже реально был позван: без него тест,
+/// в котором evalText вовсе не дошёл до вызова, прошёл бы так же тихо.
+bool g_registerFromCallbackWasChecked = false;
+
+bool registersFromInsideACallback(ChupaContext *ctx, const ChupaValue *, size_t,
+                                  ChupaValue *out, void *) {
+    ChupaFunction another{};
+    another.name = "another";
+    another.name_len = 7;
+    another.call = probesClosedDoors;
+
+    const bool refused = !chupa_register(ctx, &another);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    g_registerFromCallbackWasChecked = refused && err.code == CHUPA_ERR_USAGE;
+
+    chupa_make_number(out, 0.0);
+    return true;
+}
+
 }  // namespace
 
 /// Каждая запрещённая дверь отказывает, и вычисление после этого доходит до
@@ -1420,6 +1440,23 @@ TEST(CApiClosedContext, ReadingValuesFromInsideACallbackIsAllowed) {
     ChupaValue out{};
     ASSERT_TRUE(evalText(ctx, "readIt(items)", &out));
     EXPECT_EQ(chupa_value_number(&out), 3.0);
+
+    chupa_context_destroy(ctx);
+}
+
+/// chupa_register из середины вызова — тот самый RegisterOutcome::Reentrant,
+/// который до этой правки проверял только ассерт в отладочной сборке и ни
+/// один тест. Единственный страж теперь — Context::registerFunction, и это
+/// он должен отказать с CHUPA_ERR_USAGE.
+TEST(CApiClosedContext, RegisterFromInsideACallbackRefusesWithUsage) {
+    ChupaContext *ctx = chupa_context_create();
+    g_registerFromCallbackWasChecked = false;
+    ChupaFunction fn = described("registerIt", 0, 0, registersFromInsideACallback);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_TRUE(evalText(ctx, "registerIt()", &out));
+    EXPECT_TRUE(g_registerFromCallbackWasChecked);
 
     chupa_context_destroy(ctx);
 }

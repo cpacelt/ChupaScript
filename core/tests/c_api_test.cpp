@@ -2,6 +2,7 @@
 
 #include "chupascript/chupascript.h"
 
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <string_view>
@@ -1335,6 +1336,142 @@ TEST(EvalHostCall, VoidFunctionReceivesNullOut) {
     ASSERT_TRUE(chupa_run(ctx, s));
     EXPECT_TRUE(g_voidWasCalled);
     chupa_script_destroy(s);
+
+    chupa_context_destroy(ctx);
+}
+
+// ─── Closed context: every write/compile/eval door refuses mid-callback ───
+
+namespace {
+
+/// Пробует каждую закрытую дверь и запоминает, все ли отказали.
+bool g_everyDoorRefused = false;
+
+bool probesClosedDoors(ChupaContext *ctx, const ChupaValue *, size_t,
+                       ChupaValue *out, void *) {
+    auto refusedWithUsage = [ctx](bool ok) {
+        if (ok) { return false; }
+        ChupaError err;
+        chupa_context_error(ctx, &err);
+        return err.code == CHUPA_ERR_USAGE;
+    };
+
+    ChupaFunction late{};
+    late.name = "tooLate";
+    late.name_len = 7;
+    late.call = probesClosedDoors;
+
+    g_everyDoorRefused =
+        refusedWithUsage(chupa_context_set_number(ctx, "x", 1, 1.0)) &&
+        refusedWithUsage(chupa_compile_expression(ctx, "1", 1) != nullptr) &&
+        refusedWithUsage(chupa_register(ctx, &late));
+
+    chupa_make_number(out, 0.0);
+    return true;
+}
+
+/// Читать значения изнутри коллбэка можно: чтение контекста не касается.
+bool readsItsArgument(ChupaContext *, const ChupaValue *args, size_t,
+                      ChupaValue *out, void *) {
+    const bool isArray = chupa_value_kind(&args[0]) == CHUPA_KIND_ARRAY;
+    chupa_make_number(out, isArray ? static_cast<double>(chupa_array_count(&args[0]))
+                                   : -1.0);
+    return true;
+}
+
+bool failsWithReason(ChupaContext *ctx, const ChupaValue *, size_t,
+                     ChupaValue *, void *) {
+    // Сообщение собирается на стеке: chupa_fail копирует байты немедленно,
+    // поэтому буфер дальше не нужен.
+    char message[64];
+    std::snprintf(message, sizeof message, "нет такой локали: %s", "xx_YY");
+    chupa_fail(ctx, CHUPA_ERR_TYPE, message, std::strlen(message));
+    return false;
+}
+
+bool failsSilently(ChupaContext *, const ChupaValue *, size_t, ChupaValue *,
+                   void *) {
+    return false;
+}
+
+}  // namespace
+
+/// Каждая запрещённая дверь отказывает, и вычисление после этого доходит до
+/// конца корректно: отказ — это отказ, а не порча состояния.
+TEST(CApiClosedContext, EveryWriteDoorRefusesFromInsideACallback) {
+    ChupaContext *ctx = chupa_context_create();
+    g_everyDoorRefused = false;
+    ChupaFunction fn = described("probe", 0, 0, probesClosedDoors);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_TRUE(evalText(ctx, "probe()", &out));
+    EXPECT_TRUE(g_everyDoorRefused);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiClosedContext, ReadingValuesFromInsideACallbackIsAllowed) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("readIt", 1, 1, readsItsArgument);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    ASSERT_TRUE(chupa_context_set_data(ctx, "items", 5, "[1,2,3]", 7));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "readIt(items)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 3.0);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Байты сообщения копируются немедленно, поэтому буфер вызывающего дальше не
+/// нужен — а код берётся тот, что задал хост, а не общий.
+TEST(CApiHostFailure, FailMessageAndCodeReachTheHostVerbatim) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("pickLocale", 0, 0, failsWithReason);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "pickLocale()", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_TYPE);
+    EXPECT_EQ(std::string(err.message, err.message_len),
+              "нет такой локали: xx_YY");
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiHostFailure, RefusalWithoutFailGetsErrHost) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("quiet", 0, 0, failsSilently);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "quiet()", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Причина одного отказа не должна достаться следующему: takeHostFailure
+/// сбрасывает поля.
+TEST(CApiHostFailure, ReasonDoesNotLeakIntoTheNextRefusal) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction loud = described("pickLocale", 0, 0, failsWithReason);
+    ChupaFunction quiet = described("quiet", 0, 0, failsSilently);
+    ASSERT_TRUE(chupa_register(ctx, &loud));
+    ASSERT_TRUE(chupa_register(ctx, &quiet));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "pickLocale()", &out));
+    EXPECT_FALSE(evalText(ctx, "quiet()", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
 
     chupa_context_destroy(ctx);
 }

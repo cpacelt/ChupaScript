@@ -77,6 +77,32 @@ struct ChupaContext {
 struct ChupaExpression { CS::Expression impl; };
 struct ChupaScript     { CS::Script     impl; };
 
+// ─── Guarding the closed context ───
+//
+// A host callback runs in the middle of a tree walk that owns the deferred
+// list and the argument stack (execution.hpp). Every door that writes,
+// compiles or evaluates must refuse for as long as that walk is in flight —
+// see refuseWhileEvaluating below, called first thing in each such door.
+
+namespace {
+
+/// Отказ, если на контексте прямо сейчас идёт вычисление.
+///
+/// Страж работает в релизе, а не только под assert: без него ошибка хоста
+/// проявляется не отказом, а сливом списка отложенного освобождения посреди
+/// обхода дерева — то есть тихо испорченными данными на чужом устройстве.
+///
+/// Перечислять, что именно опасно, значило бы поддерживать этот список верным
+/// вечно; закрыто всё, что пишет, компилирует или вычисляет.
+bool refuseWhileEvaluating(::ChupaContext *c) {
+    if (!c->impl.isEvaluating()) { return false; }
+    c->setError({CS::ErrorCode::Usage, 0,
+                 "the context is closed while a host function is running"});
+    return true;
+}
+
+}  // namespace
+
 // ─── Version ───
 
 #define CHUPA_STR_(x) #x
@@ -97,6 +123,12 @@ ChupaContext* chupa_context_create(void) {
 
 void chupa_context_destroy(ChupaContext* ctx) {
     if (!ctx) { return; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    // Destroying the context out from under the call stack currently walking
+    // it would free memory that walk is still reading. Refusing leaks ctx if
+    // the host really does this — a host bug either way — and a leak beats
+    // destruction out from under yourself.
+    if (refuseWhileEvaluating(c)) { return; }
     // ⚠️ UAF-2 — ЗДЕСЬ НИЧЕГО НЕ СНИМАЕТСЯ.
     // Ни redrawListener, ни redrawUserData не обнуляются перед delete.
     // Снятия колбэка нет ни здесь, ни в Swift: swift/Context.swift не зовёт
@@ -104,7 +136,7 @@ void chupa_context_destroy(ChupaContext* ctx) {
     // (Раньше здесь приводилась цитата из шапки swift/ChupaContext.swift,
     // утверждавшей обратное. Задача 7 ложную фразу удалила — дефект от этого
     // не исчез, см. B38.)
-    delete reinterpret_cast<::ChupaContext*>(ctx);
+    delete c;
 }
 
 // ─── Set: text literal ───
@@ -112,6 +144,7 @@ void chupa_context_destroy(ChupaContext* ctx) {
 bool chupa_context_set_data(ChupaContext* ctx, const char* name, size_t name_len,
                             const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     CS::Diagnostic diag;
     bool ok = c->impl.setVariableText(std::string_view(name, name_len),
                                       std::string_view(text, text_len), diag);
@@ -143,6 +176,7 @@ bool acceptName(::ChupaContext* c, std::string_view name) {
 bool chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len,
                             bool value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
@@ -155,6 +189,7 @@ bool chupa_context_set_bool(ChupaContext* ctx, const char* name, size_t name_len
 bool chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_len,
                               double value) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
@@ -167,6 +202,7 @@ bool chupa_context_set_number(ChupaContext* ctx, const char* name, size_t name_l
 bool chupa_context_set_string(ChupaContext* ctx, const char* name, size_t name_len,
                               const char* text, size_t text_len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     const std::string_view key(name, name_len);
     if (!acceptName(c, key)) { return false; }
 
@@ -229,6 +265,7 @@ CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
 bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
     if (ctx == nullptr || fn == nullptr) { return false; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     const CS::RegisterOutcome outcome = c->impl.registerFunction(*fn);
     if (outcome == CS::RegisterOutcome::Ok) {
         c->clearError();
@@ -257,6 +294,7 @@ static_assert(static_cast<int>(CS::ErrorCode::Range)  == CHUPA_ERR_RANGE,  "Erro
 static_assert(static_cast<int>(CS::ErrorCode::Data)   == CHUPA_ERR_DATA,   "ErrorCode::Data must match CHUPA_ERR_DATA");
 static_assert(static_cast<int>(CS::ErrorCode::Usage)  == CHUPA_ERR_USAGE,  "ErrorCode::Usage must match CHUPA_ERR_USAGE");
 static_assert(static_cast<int>(CS::ErrorCode::Memory) == CHUPA_ERR_MEMORY, "ErrorCode::Memory must match CHUPA_ERR_MEMORY");
+static_assert(static_cast<int>(CS::ErrorCode::Host)   == CHUPA_ERR_HOST,   "ErrorCode::Host must match CHUPA_ERR_HOST");
 
 /// Translates the core's error code to the public one. Mapped explicitly, not
 /// cast, to guard against future enum drift even though the values currently
@@ -271,8 +309,29 @@ ChupaErrorCode toCode(CS::ErrorCode code) {
         case CS::ErrorCode::Data:    return CHUPA_ERR_DATA;
         case CS::ErrorCode::Usage:   return CHUPA_ERR_USAGE;
         case CS::ErrorCode::Memory:  return CHUPA_ERR_MEMORY;
+        case CS::ErrorCode::Host:    return CHUPA_ERR_HOST;
     }
     return CHUPA_ERR_NONE;
+}
+
+/// The inverse of toCode, for chupa_fail: a host reports its refusal in the
+/// public vocabulary, and setHostFailure stores it in the core's. Mapped
+/// explicitly for the same reason toCode is — a switch with no default so a
+/// code ChupaErrorCode grows tomorrow fails to compile here instead of
+/// silently falling through.
+CS::ErrorCode fromCode(ChupaErrorCode code) {
+    switch (code) {
+        case CHUPA_ERR_NONE:   return CS::ErrorCode::None;
+        case CHUPA_ERR_SYNTAX: return CS::ErrorCode::Syntax;
+        case CHUPA_ERR_NAME:   return CS::ErrorCode::Name;
+        case CHUPA_ERR_TYPE:   return CS::ErrorCode::Type;
+        case CHUPA_ERR_RANGE:  return CS::ErrorCode::Range;
+        case CHUPA_ERR_DATA:   return CS::ErrorCode::Data;
+        case CHUPA_ERR_USAGE:  return CS::ErrorCode::Usage;
+        case CHUPA_ERR_MEMORY: return CS::ErrorCode::Memory;
+        case CHUPA_ERR_HOST:   return CS::ErrorCode::Host;
+    }
+    return CS::ErrorCode::Host;
 }
 
 }  // namespace
@@ -287,11 +346,31 @@ void chupa_context_error(const ChupaContext* ctx, ChupaError* out) {
     out->message_len = std::strlen(message);
 }
 
+// ─── Host functions: fail ───
+//
+// The opposite guard from refuseWhileEvaluating's family above: every other
+// door refuses WHILE a call is in flight, this one only WORKS while one is —
+// it has no meaning once the callback that would call it has returned.
+
+void chupa_fail(ChupaContext* ctx, ChupaErrorCode code, const char* msg,
+                size_t len) {
+    if (ctx == nullptr) { return; }
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (!c->impl.isEvaluating()) {
+        c->setError({CS::ErrorCode::Usage, 0,
+                    "chupa_fail was called outside a host callback"});
+        return;
+    }
+    c->impl.setHostFailure(fromCode(code),
+                           std::string_view(msg == nullptr ? "" : msg, len));
+}
+
 // ─── Compile ───
 
 ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
                                           const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return nullptr; }
     auto e = std::make_unique<::ChupaExpression>();
 
     CS::Diagnostic diag;
@@ -308,6 +387,7 @@ ChupaExpression* chupa_compile_expression(ChupaContext* ctx,
 ChupaScript* chupa_compile_script(ChupaContext* ctx,
                                   const char* source, size_t len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return nullptr; }
     auto s = std::make_unique<::ChupaScript>();
 
     CS::Diagnostic diag;
@@ -424,6 +504,7 @@ bool chupa_make_string(ChupaContext* ctx, const char* bytes, size_t len,
 
 bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
 
@@ -438,6 +519,7 @@ bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
 
 bool chupa_eval_number(ChupaContext* ctx, ChupaExpression* e, double* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
     // Expression::evalNumber already answers Null with CHUPA_ERR_NONE (diag
@@ -449,6 +531,7 @@ bool chupa_eval_number(ChupaContext* ctx, ChupaExpression* e, double* out) {
 
 bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
     return c->impl.evalBool(expr->impl, out, c->lastError) == CS::EvalStatus::Ok;
@@ -457,6 +540,7 @@ bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
 bool chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
                        const char** bytes, size_t* len) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
 
@@ -562,6 +646,7 @@ void chupa_value_release(const ChupaValue* v) { CS::detail::releaseValue(fromC(v
 bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     if (!ctx || !script) { return false; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
     CS::Diagnostic diag;
@@ -581,6 +666,7 @@ void chupa_context_on_redraw(ChupaContext* ctx,
                              void* user_data) {
     if (!ctx) { return; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return; }
     c->redrawListener = listener;
     c->redrawUserData = user_data;
 }

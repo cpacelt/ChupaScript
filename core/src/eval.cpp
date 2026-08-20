@@ -79,14 +79,22 @@ bool coerceToString(const Ast &ast, NodeId node, const Value &value,
 
 /// Fails a host call whose callback returned false.
 ///
-/// A stub for this task: the real reason is what chupa_fail (task 10) will
-/// have stashed on the ChupaContext, read back here instead of this fixed
-/// message. What stays true either way is the offset — the host has no node
-/// to blame, so the call site's own node is what the diagnostic points at.
+/// The reason is whatever chupa_fail last stashed on this Execution
+/// (takeHostFailure, execution.hpp) — taken, not merely read, so the same
+/// reason cannot leak into the next refusal. An empty reason means the
+/// callback returned false without ever calling chupa_fail, and gets
+/// ErrorCode::Host with a fixed message instead of an engine-chosen guess at
+/// why a function the engine never looked inside declined to run. What stays
+/// true either way is the offset — the host has no node to blame, so the
+/// call site's own node is what the diagnostic points at.
 bool failHostCall(const Ast &ast, NodeId node, Execution &exec,
                   Diagnostic &diag) {
-    (void)exec;
-    return fail(ast, node, ErrorCode::Usage, "host function failed", diag);
+    const Diagnostic reason = exec.takeHostFailure();
+    if (reason.code == ErrorCode::None) {
+        return fail(ast, node, ErrorCode::Host, "host function failed", diag);
+    }
+    diag = Diagnostic{reason.code, ast.offset(node), reason.message};
+    return false;
 }
 
 /// Calls one host function.

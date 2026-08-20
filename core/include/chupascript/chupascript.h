@@ -111,7 +111,12 @@ typedef enum ChupaErrorCode {
     CHUPA_ERR_RANGE,
     CHUPA_ERR_DATA,
     CHUPA_ERR_USAGE,
-    CHUPA_ERR_MEMORY
+    CHUPA_ERR_MEMORY,
+    /* Appended LAST — the existing codes above must keep their numeric
+     * values, because a host may already have them baked into a switch. A
+     * host callback refused without calling chupa_fail; there is no reason
+     * text to report, so this is the code that says so. */
+    CHUPA_ERR_HOST
 } ChupaErrorCode;
 
 /* One call, one struct. Three separate accessors used to answer one question
@@ -120,15 +125,22 @@ typedef enum ChupaErrorCode {
 typedef struct ChupaError {
     ChupaErrorCode code;         /* CHUPA_ERR_NONE when the last call succeeded */
     size_t         offset;       /* byte offset into the compiled source        */
-    const char    *message;      /* a process-lifetime string literal — never
-                                   * allocated, so it outlives ctx itself, not
-                                   * merely the next call on it              */
+    const char    *message;      /* valid until the NEXT call on ctx — see the
+                                   * note below, not a process-lifetime literal */
     size_t         message_len;
 } ChupaError;
 
 /* Reports the outcome of the last call made on ctx. code is CHUPA_ERR_NONE
  * when that call succeeded; offset and message are meaningful only when it
- * did not. */
+ * did not.
+ *
+ * message is valid until the NEXT call on this ctx — the same rule as every
+ * borrowed value in this header (rule 1). It used to be documented as a
+ * process-lifetime literal that outlived ctx itself; chupa_fail ended that,
+ * because a host's reason for refusing is text the host assembles, and
+ * demanding a literal would have left a Kotlin host with one static string
+ * for every failure. Messages the engine itself produces are still literals;
+ * that is no longer something a caller may rely on. */
 CHUPA_API void chupa_context_error(const ChupaContext *ctx, ChupaError *out);
 
 CHUPA_API const char *chupa_version(void);
@@ -284,6 +296,14 @@ typedef struct ChupaFunction {
  * Refusal is false, with the reason in the context's error. */
 CHUPA_API CHUPA_MUST_USE bool
 chupa_register(ChupaContext *ctx, const ChupaFunction *fn);
+
+/* Задаёт причину отказа. Зовётся только изнутри коллбэка хост-функции; вне
+ * его — ничего не делает и ставит CHUPA_ERR_USAGE.
+ *
+ * Байты сообщения копируются немедленно, поэтому буфер вызывающего дальше не
+ * нужен. Смещение подставляет движок — узел вызова: хост его знать не может. */
+CHUPA_API void chupa_fail(ChupaContext *ctx, ChupaErrorCode code,
+                          const char *msg, size_t len);
 
 /* ─── Making values ────────────────────────────────────────────────────────
  *

@@ -50,11 +50,15 @@ namespace CS {
 ///                 this Context until it is destroyed. Registration after
 ///                 that point is refused (docs/backlog.md B23).
 ///   evaluating_   true for the duration of one eval() or run(), including
-///                 the host callbacks they invoke. Nothing reads it yet: no
-///                 door of the C API refuses while it is up — task 10 adds
-///                 those guards. Today the flag only feeds an assert in
-///                 EvaluationGuard (context.cpp) that catches a reentrant
-///                 call in debug builds and is compiled out under NDEBUG.
+///                 the host callbacks they invoke. Every write, compile and
+///                 eval door of the C API (c_api.cpp, refuseWhileEvaluating)
+///                 refuses while it is up, in release builds as much as in
+///                 debug ones — a callback that reached back into chupa_eval
+///                 or chupa_run on this same Context would otherwise drain
+///                 the deferred list a tree walk is standing on. The flag
+///                 also feeds an assert in EvaluationGuard (context.cpp) that
+///                 catches the same reentrant call earlier in debug builds,
+///                 compiled out under NDEBUG.
 class Context {
    public:
     Context() = default;
@@ -191,6 +195,18 @@ class Context {
     /// Context: a host callback runs in the middle of a tree walk, and a
     /// write there would drain the deferred list the walk is standing on.
     [[nodiscard]] bool isEvaluating() const noexcept { return evaluating_; }
+
+    /// Forwards to Execution::setHostFailure — see the LAYOUT note there for
+    /// why the fields live on exec_ rather than here: eval() only ever sees
+    /// Execution, and failHostCall (eval.cpp) reads the reason back from it.
+    void setHostFailure(ErrorCode code, std::string_view text) {
+        exec_.setHostFailure(code, text);
+    }
+
+    /// Forwards to Execution::takeHostFailure — see setHostFailure above.
+    [[nodiscard]] Diagnostic takeHostFailure() noexcept {
+        return exec_.takeHostFailure();
+    }
 
     /// The Store, exposed: the shell (`:vars`, printValue) and the C API both
     /// need the name list and aggregate traversal it offers. Read-only only —

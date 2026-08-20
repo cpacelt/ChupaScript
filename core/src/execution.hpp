@@ -41,6 +41,13 @@ class HostTable;
 ///                          One call owns the half-open range
 ///                          [base, base + count); an ArgFrame keeps that
 ///                          range and gives it back on destruction.
+///   Execution::hostFailureCode_  ErrorCode — set by Context::setHostFailure
+///                          (a forward from chupa_fail), read and reset by
+///                          takeHostFailure. None means the callback refused
+///                          without calling chupa_fail.
+///   Execution::hostFailureText_  std::string — an OWNING copy of the reason
+///                          a host callback gave for refusing; the host's own
+///                          buffer is gone by the time anyone reads this.
 ///
 /// A String, Object or Array Value is a box (box.hpp) and needs no Store to
 /// be read — CS::stringBytes and the free functions in aggregate.hpp read a
@@ -177,6 +184,36 @@ class Execution {
     /// Abandons the build, truncating the buffer back to the mark.
     void abortString(std::uint32_t mark) noexcept { builder_.resize(mark); }
 
+    /// Stashes the reason a host callback gave for its refusal — the forward
+    /// target of Context::setHostFailure (context.hpp). text is copied
+    /// immediately: chupa_fail's own caller may free its buffer the instant
+    /// the call returns.
+    void setHostFailure(ErrorCode code, std::string_view text) {
+        hostFailureCode_ = code;
+        hostFailureText_.assign(text);
+    }
+
+    /// Reads back what setHostFailure stashed and resets the code, so the
+    /// reason for one refusal is never mistaken for the reason of the next
+    /// one: code is ErrorCode::None when the callback refused without ever
+    /// calling chupa_fail — failHostCall (eval.cpp) is what turns that into
+    /// ErrorCode::Host and a fixed message, and it branches on code alone,
+    /// never on hostFailureText_.
+    ///
+    /// hostFailureText_ itself is left as is, not cleared: the returned
+    /// message points straight into its buffer, and a std::string::clear()
+    /// here would overwrite that buffer's first byte with a NUL — its own
+    /// terminator — the instant before the caller reads through the pointer
+    /// this call just handed back. The text lives on inertly until the next
+    /// setHostFailure overwrites it, which is exactly the "valid until the
+    /// next call on ctx" rule the public header promises for chupa_fail's
+    /// message.
+    [[nodiscard]] Diagnostic takeHostFailure() noexcept {
+        Diagnostic out{hostFailureCode_, 0, hostFailureText_.c_str()};
+        hostFailureCode_ = ErrorCode::None;
+        return out;
+    }
+
    private:
     friend class ArgFrame;
 
@@ -196,6 +233,8 @@ class Execution {
     const HostTable *hosts_ = nullptr;
     ChupaContext    *hostHandle_ = nullptr;
     std::vector<Value> argStack_;
+    ErrorCode   hostFailureCode_ = ErrorCode::None;
+    std::string hostFailureText_;
 };
 
 /// One call's arguments, living on the Execution's shared stack.
@@ -237,10 +276,9 @@ class ArgFrame {
     /// time this was taken. Taking this pointer is safe exactly once — after
     /// every argument of this call has been evaluated, when no nested frame
     /// is left alive and nothing can push again, because a host callback
-    /// runs on a closed frame — true today only because reentrant calls into
-    /// this same Context are caught by an assert in EvaluationGuard
-    /// (context.cpp), compiled out under NDEBUG; task 10 closes every C API
-    /// door instead, which is what makes the claim true unconditionally.
+    /// runs on a closed frame: every C API door that could push a new frame
+    /// refuses while a call is in flight (refuseWhileEvaluating, c_api.cpp),
+    /// in release builds as much as in debug ones.
     [[nodiscard]] const Value *data() const noexcept {
         return exec_.argStack_.data() + base_;
     }

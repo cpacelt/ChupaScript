@@ -451,9 +451,16 @@ void runCheck(benchmark::State &state, std::string_view source, bool script) {
         state.SkipWithError("parse failed");
         return;
     }
+    // check не даёт умолчания hosts/mode (задача 5, check.hpp): дверей у
+    // него ровно четыре, и этот бенчмарк — законный внутренний потребитель,
+    // а не пятая дверь, так что зовёт check напрямую с обоими аргументами,
+    // а не просит сигнатуру ослабить.
+    const CS::CompileMode mode =
+        script ? CS::CompileMode::Script : CS::CompileMode::Expression;
     for (auto _ : state) {
         Diagnostic found[1];
-        std::uint32_t errors = CS::check(ast, source, store, found, 1);
+        std::uint32_t errors =
+            CS::check(ast, source, store, found, 1, /*hosts=*/nullptr, mode);
         benchmark::DoNotOptimize(errors);
     }
 }

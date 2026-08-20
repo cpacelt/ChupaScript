@@ -207,7 +207,12 @@ CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
             return {CS::ErrorCode::Usage, 0,
                    "CHUPA_FN_DETERMINISTIC requires CHUPA_FN_PURE"};
         case CS::RegisterOutcome::TableFull:
-            return {CS::ErrorCode::Range, 0,
+            // Usage, not Range: Range in this engine belongs to the language's
+            // own value space (an array index past the end), and every other
+            // API-misuse outcome here already answers Usage. Registering a
+            // 128th function is a host-side misuse of chupa_register, not a
+            // value out of range.
+            return {CS::ErrorCode::Usage, 0,
                    "no more host functions may be registered on this context"};
         case CS::RegisterOutcome::TooLate:
             return {CS::ErrorCode::Usage, 0,

@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <new>
 #include <string>
 
 #include "aggregate.hpp"
@@ -43,12 +44,34 @@ TEST(ValueLayout, InlineStringKeepsEmbeddedNul) {
 /// comparing two inline strings a comparison of the sixteen bytes, without
 /// consulting the length and without memcmp over a variable range.
 TEST(ValueLayout, PadsWithZeroesSoEqualStringsHaveEqualBytes) {
-    // Built from two different, longer sources, so anything the factory failed
-    // to zero would differ between them.
-    const Value a = Value::inlineString(std::string_view("ab_leftover_one", 2));
-    const Value b = Value::inlineString(std::string_view("ab?????????????", 2));
-    EXPECT_EQ(std::memcmp(&a, &b, sizeof(Value)), 0);
-    EXPECT_EQ(CS::stringBytes(a), "ab");
+    // Fix round 1 (review): the previous version built both operands from
+    // std::string_view(ptr, 2), which truncates to "ab" before inlineString
+    // ever sees the differing tails — memcpy only ever touches the first 2
+    // bytes, so a factory that stopped zeroing the padding would still pass.
+    // Poison the storage before construction instead, so leftover pad bytes
+    // show up as poison rather than by-chance zero from stack reuse, and
+    // check them directly against an explicit zero reference.
+    alignas(Value) unsigned char storage[sizeof(Value)];
+    std::memset(storage, 0xCD, sizeof(storage));
+    new (storage) Value(Value::inlineString("ab"));
+    const Value &v = *reinterpret_cast<const Value *>(storage);
+
+    unsigned char raw[sizeof(Value)];
+    std::memcpy(raw, &v, sizeof(Value));
+
+    // Byte 0 is the tag, bytes 1-2 hold "ab"; everything from byte 3 onward
+    // is padding and must be zero. This is what a factory that skipped
+    // value-initializing wide_ would get wrong, and poisoned storage makes
+    // that failure visible instead of hidden by coincidental zero reuse.
+    const unsigned char zero[sizeof(Value) - 3] = {};
+    EXPECT_EQ(std::memcmp(raw + 3, zero, sizeof(zero)), 0);
+    EXPECT_EQ(CS::stringBytes(v), "ab");
+
+    // The claim the test's name makes: two inline strings built
+    // independently from the same content compare equal across the full
+    // 16 bytes, not just in the bytes stringBytes reads.
+    const Value other = Value::inlineString(std::string_view("ab", 2));
+    EXPECT_EQ(std::memcmp(&v, &other, sizeof(Value)), 0);
 }
 
 /// Sixteen bytes is one too many: the box path starts here.

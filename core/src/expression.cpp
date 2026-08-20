@@ -1,6 +1,5 @@
 #include "expression.hpp"
 
-#include "box.hpp"
 #include "compile.hpp"
 #include "eval.hpp"
 
@@ -64,17 +63,6 @@ EvalStatus Expression::evalBool(Execution &exec, bool *out,
                                          "eval_bool: value is not a boolean",
                                          &value, diag);
     if (status == EvalStatus::Ok) { *out = value.booleanValue(); }
-    return status;
-}
-
-EvalStatus Expression::evalString(Execution &exec, std::string_view *out,
-                                  Diagnostic &diag) const {
-    if (!exec.acceptsUnit(storeId_, diag)) { return EvalStatus::Error; }
-    Value value = Value::null();
-    const EvalStatus status = evalOfKind(exec, Value::Kind::String,
-                                         "eval_string: value is not a string",
-                                         &value, diag);
-    if (status == EvalStatus::Ok) { *out = stringBytes(value); }
     return status;
 }
 

@@ -196,9 +196,9 @@ TEST(Expression, EvalBoolAndString) {
 
     CS::Expression text;
     ASSERT_EQ(CS::Expression::compile("'привет'", store, &text, diags, 1), 0u);
-    std::string_view s;
-    EXPECT_EQ(text.evalString(exec, &s, diag), CS::EvalStatus::Ok);
-    EXPECT_EQ(s, "привет");
+    CS::Value textValue = CS::Value::null();
+    ASSERT_TRUE(text.eval(exec, &textValue, diag));
+    EXPECT_EQ(CS::stringBytes(textValue), "привет");
 }
 
 TEST(Expression, EvalStringPropagatesEvalError) {
@@ -220,14 +220,14 @@ TEST(Expression, EvalStringPropagatesEvalError) {
     // Сторожевое значение по той же причине, что и у out=42.0 выше
     // (review round 3, M2): если *out на исходе Error действительно не
     // тронут, "было" переживёт вызов неизменным.
-    std::string_view s = "было";
-    EXPECT_EQ(expr.evalString(exec, &s, diag), CS::EvalStatus::Error);
+    CS::Value value = CS::Value::inlineString("было");
+    EXPECT_FALSE(expr.eval(exec, &value, diag));
     EXPECT_EQ(diag.code, CS::ErrorCode::Range);
     // Смещение указывает на сам индекс — байт '[' в "items[-1]" (review
     // round 3, M3): ошибка рождается на operation "[...]", а не на всём
     // выражении.
     EXPECT_EQ(diag.offset, 5u);
-    EXPECT_EQ(s, "было");
+    EXPECT_EQ(CS::stringBytes(value), "было");
 }
 
 // Байты литерала уложены в пул текста один раз, на компиляции: пул поштучно не
@@ -241,13 +241,13 @@ TEST(Expression, StringLiteralIsStoredOnceAtCompileTime) {
     CS::Diagnostic diag;
     ASSERT_EQ(CS::Expression::compile("'привет'", store, &expr, diags, 1), 0u);
 
-    std::string_view s;
-    ASSERT_EQ(expr.evalString(exec, &s, diag), CS::EvalStatus::Ok);
+    CS::Value value = CS::Value::null();
+    ASSERT_TRUE(expr.eval(exec, &value, diag));
     const std::size_t after = store.bytesUsed();
 
     for (int i = 0; i < 100; ++i) {
-        ASSERT_EQ(expr.evalString(exec, &s, diag), CS::EvalStatus::Ok);
-        EXPECT_EQ(s, "привет");
+        ASSERT_TRUE(expr.eval(exec, &value, diag));
+        EXPECT_EQ(CS::stringBytes(value), "привет");
     }
     EXPECT_EQ(store.bytesUsed(), after);
 }
@@ -262,13 +262,13 @@ TEST(Expression, EscapedLiteralIsDecodedOnceAtCompileTime) {
     CS::Diagnostic diag;
     ASSERT_EQ(CS::Expression::compile("'до\\nпосле'", store, &expr, diags, 1), 0u);
 
-    std::string_view s;
-    ASSERT_EQ(expr.evalString(exec, &s, diag), CS::EvalStatus::Ok);
-    EXPECT_EQ(s, "до\nпосле");
+    CS::Value value = CS::Value::null();
+    ASSERT_TRUE(expr.eval(exec, &value, diag));
+    EXPECT_EQ(CS::stringBytes(value), "до\nпосле");
     const std::size_t after = store.bytesUsed();
 
-    ASSERT_EQ(expr.evalString(exec, &s, diag), CS::EvalStatus::Ok);
-    EXPECT_EQ(s, "до\nпосле");
+    ASSERT_TRUE(expr.eval(exec, &value, diag));
+    EXPECT_EQ(CS::stringBytes(value), "до\nпосле");
     EXPECT_EQ(store.bytesUsed(), after);
 }
 

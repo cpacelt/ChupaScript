@@ -82,18 +82,16 @@ class Expression {
                           Diagnostic &diag) const;
     EvalStatus evalBool  (Execution &exec, bool *out, Diagnostic &diag) const;
 
-    /// Строка отдаётся срезом в текстовый пул того хранилища, которое её
-    /// выдало, а не копией: владеющую строку вызывающий всё равно строит у
-    /// себя (обёртка Swift — сразу же и всегда), так что копия по дороге жила
-    /// бы ровно до его копии.
-    ///
-    /// Срез действителен, пока в пул не дописали: любая следующая укладка байт
-    /// (set*, компиляция литералов, format в следующем вычислении) может его
-    /// переселить. У вычисленной строки срок ещё короче — она лежит во
-    /// временном регионе, и Context::beginOperation освобождает его целиком.
-    /// Читать надо сразу.
-    EvalStatus evalString(Execution &exec, std::string_view *out,
-                          Diagnostic &diag) const;
+    // evalString removed (task 8, fix round 1): it returned a
+    // std::string_view sliced from a Value local, which is safe only while
+    // every string is a box. Since a string of Value::kInlineCapacity bytes
+    // or fewer now lives inside the Value itself, that local's bytes die at
+    // the end of this method while callers still held the view — the same
+    // dangling-view defect the C API boundary was reshaped to prevent (task
+    // 6). It had no production caller: Context never exposed it, and
+    // cli/main.cpp deliberately takes the raw eval() path instead. Callers
+    // use eval() plus stringBytes() on a named Value local, the pattern the
+    // rest of the suite already uses.
 
    private:
     /// Вычисляет и проверяет вид значения. Ok — значение нужного вида лежит

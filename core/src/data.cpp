@@ -75,7 +75,7 @@ bool buildValue(const Ast &ast, std::string_view source, NodeId node,
                 if (!buildValue(ast, source, ast.child(node, i), store, dead, &element, diag)) {
                     return false;
                 }
-                arrayPush(array, element);
+                arrayPush(array, element, store.clock());
             }
             *out = array;
             return true;
@@ -94,7 +94,7 @@ bool buildValue(const Ast &ast, std::string_view source, NodeId node,
                 // Повторный ключ заменяет значение: последний выигрывает.
                 objectSet(object,
                           literalText(ast, ast.child(node, i), source, scratch),
-                          value, dead);
+                          value, store.clock(), dead);
             }
             *out = object;
             return true;

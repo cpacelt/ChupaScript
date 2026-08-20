@@ -393,7 +393,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
                     return false;
                 }
-                arrayPush(array, element);
+                arrayPush(array, element, exec.clock());
             }
             *out = array;
             return true;
@@ -414,7 +414,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 // узле литерала, которым владеет хранилище контекста, и живут
                 // дольше всякого объекта, который их примет.
                 objectSet(object, ast.stringLiteral(ast.child(node, i))->view(),
-                          value, exec.deferred());
+                          value, exec.clock(), exec.deferred());
             }
             *out = object;
             return true;
@@ -597,7 +597,7 @@ bool assignToKey(const Ast &ast, std::string_view source, NodeId node,
         value = combined;
     }
 
-    objectSet(base, key, value, exec.deferred());
+    objectSet(base, key, value, exec.clock(), exec.deferred());
     return true;
 }
 
@@ -647,7 +647,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
             }
             // Границу проверили выше, поэтому запись не отказывает.
             static_cast<void>(arraySet(base, static_cast<std::uint32_t>(index),
-                                       value, exec.deferred()));
+                                       value, exec.clock(), exec.deferred()));
             return true;
         }
 
@@ -678,7 +678,7 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
                 value = combined;
             }
 
-            objectSet(base, key, value, exec.deferred());
+            objectSet(base, key, value, exec.clock(), exec.deferred());
             return true;
         }
 

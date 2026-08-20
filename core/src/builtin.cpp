@@ -237,7 +237,8 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.
-                arrayPush(result, CS::materialize(CS::objectKeyAt(args[0], i), exec.deferred()));
+                arrayPush(result, CS::materialize(CS::objectKeyAt(args[0], i), exec.deferred()),
+                         exec.clock());
             }
             *out = result;
             return true;
@@ -271,7 +272,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
                 return failType(offset, "push expects an array", diag);
             }
             // Void: *out не трогается (§2.2).
-            arrayPush(args[0], args[1]);
+            arrayPush(args[0], args[1], exec.clock());
             return true;
 
         case Builtin::Pop:
@@ -280,7 +281,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             }
             // На пустом ничего не делает и не отказывает (§8.6). Снятое
             // значение никуда не идёт: pop его не возвращает.
-            arrayPop(args[0], nullptr, exec.deferred());
+            arrayPop(args[0], nullptr, exec.clock(), exec.deferred());
             return true;
 
         case Builtin::Str: {

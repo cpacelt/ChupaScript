@@ -294,10 +294,10 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
     CS::Deferred dead;
     Store store;
     const Value items = CS::makeArray(0, store.clock(), dead);
-    CS::arrayPush(items, number(1.0));
+    CS::arrayPush(items, number(1.0), store.clock());
     const Value alias = items;
     const Value other = CS::makeArray(0, store.clock(), dead);
-    CS::arrayPush(other, number(1.0));
+    CS::arrayPush(other, number(1.0), store.clock());
 
     // docs/semantics.md §5.4: равны тогда и только тогда, когда это один и тот
     // же объект. Одинаковое содержимое не делает их равными.
@@ -307,10 +307,10 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
     // Объекты идут по той же ветке switch, что и массивы, но проверены до сих
     // пор были только массивы.
     const Value box = CS::makeObject(store.keys(), 0, store.clock(), dead);
-    CS::objectSet(box, "k", number(1.0), dead);
+    CS::objectSet(box, "k", number(1.0), store.clock(), dead);
     const Value boxAlias = box;
     const Value otherBox = CS::makeObject(store.keys(), 0, store.clock(), dead);
-    CS::objectSet(otherBox, "k", number(1.0), dead);
+    CS::objectSet(otherBox, "k", number(1.0), store.clock(), dead);
     EXPECT_TRUE(binary(TokenKind::Equal, box, boxAlias).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, box, otherBox).booleanValue());
 }

@@ -158,36 +158,47 @@ namespace CS {
 // ─── изменение ───
 //
 // Вытесненная ссылка уходит в Deferred, а не освобождается на месте: см.
-// deferred.hpp. Больше мутатору от окружения ничего не нужно — ни пула, ни
-// таблицы имён хранилища: имена он берёт у таблицы самой коробки.
+// deferred.hpp.
+//
+// Лента приходит параметром, и подъём эпохи стоит ВНУТРИ мутатора, а не рядом
+// с вызовом. Причина в цене ошибки: пропущенная точка инкремента даёт не
+// «медленно», а молча застывший экран (спека §4.5), поэтому мутация обязана
+// быть невыразима мимо подъёма. Дверей ровно пять — эти четыре и
+// Store::setGlobal, — и список проверяется грепом, а не дисциплиной.
 
 /// Заменяет элемент. false за границей — по docs/semantics.md §7.2 это ошибка,
 /// диагностику формулирует вызывающий.
 /// Предусловие: a.kind() == Value::Kind::Array.
-inline bool arraySet(Value a, std::uint32_t index, Value v,
+inline bool arraySet(Value a, std::uint32_t index, Value v, EpochClock &clock,
                      Deferred &dead) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
+    // Эпоха не двигается на отказе: за границей ничего не изменилось, и
+    // отвечать «изменилось» не за что.
     if (index >= box->size()) { return false; }
     detail::retainValue(v);
     dead.take(box->at(index));
     box->set(index, v);
+    box->epoch = clock.tick();
     return true;
 }
 
 /// Добавляет элемент в конец. Единственный способ расширить массив
 /// (docs/semantics.md §6.1). Вытеснять нечего, поэтому список не нужен.
 /// Предусловие: a.kind() == Value::Kind::Array.
-inline void arrayPush(Value a, Value v) {
+inline void arrayPush(Value a, Value v, EpochClock &clock) {
     assert(a.kind() == Value::Kind::Array);
     detail::retainValue(v);
-    static_cast<detail::ArrayBox *>(a.box())->push(v);
+    detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
+    box->push(v);
+    box->epoch = clock.tick();
 }
 
 /// Снимает последний элемент в *out. false на пустом массиве; выходной
 /// параметр при отказе не меняется. out допускает nullptr.
 /// Предусловие: a.kind() == Value::Kind::Array.
-inline bool arrayPop(Value a, Value *out, Deferred &dead) noexcept {
+inline bool arrayPop(Value a, Value *out, EpochClock &clock,
+                     Deferred &dead) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
     if (box->size() == 0) { return false; }
@@ -196,6 +207,7 @@ inline bool arrayPop(Value a, Value *out, Deferred &dead) noexcept {
     // Ссылка ячейки уходит в список, а не в release: вызывающий читает снятое
     // значение сразу после возврата.
     dead.take(last);
+    box->epoch = clock.tick();
     return true;
 }
 
@@ -203,7 +215,8 @@ inline bool arrayPop(Value a, Value *out, Deferred &dead) noexcept {
 /// (docs/semantics.md §6.2). Байты нового ключа интернируются в таблице самой
 /// коробки.
 /// Предусловие: o.kind() == Value::Kind::Object.
-inline void objectSet(Value o, std::string_view key, Value v, Deferred &dead) {
+inline void objectSet(Value o, std::string_view key, Value v, EpochClock &clock,
+                      Deferred &dead) {
     assert(o.kind() == Value::Kind::Object);
     detail::ObjectBox &box = *static_cast<detail::ObjectBox *>(o.box());
 
@@ -211,6 +224,9 @@ inline void objectSet(Value o, std::string_view key, Value v, Deferred &dead) {
     bool found = false;
     const std::uint32_t at = detail::findEntry(box, key, prefix, &found);
     detail::retainValue(v);
+    // Один подъём на обе ветки: и замена значения, и заведение ключа —
+    // изменение объекта, и различать их читателю нечем и незачем.
+    box.epoch = clock.tick();
     if (found) {
         dead.take(box.at(at).value);
         box.setValue(at, v);

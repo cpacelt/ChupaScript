@@ -250,7 +250,9 @@ CS::Value objectWith(CS::Store &store, CS::Deferred &dead,
                      std::initializer_list<std::string_view> keys) {
     CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), store.clock(), dead);
     double n = 0.0;
-    for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), dead); }
+    for (std::string_view key : keys) {
+        CS::objectSet(o, key, CS::Value::number(n++), store.clock(), dead);
+    }
     return o;
 }
 
@@ -307,3 +309,81 @@ TEST(KeyPrefix, EntryStaysTwentyFourBytes) {
     // размер — это память всякого объекта в системе.
     EXPECT_EQ(sizeof(CS::detail::Entry), 24u);
 }
+
+namespace {
+
+/// Все двери, которыми в языке меняют агрегат. Список закрыт спецификацией:
+/// мутирующих билтинов ровно два — Push и Pop, — а больше данные не меняет
+/// ничего (спека §2.2). Тест обязан перечислять их все: пропущенная дверь
+/// даёт не медленную работу, а молча застывший экран.
+TEST(BoxEpoch, EveryMutatingDoorMovesTheEpoch) {
+    CS::Store store;
+    CS::Deferred dead;
+    CS::EpochClock &clock = store.clock();
+
+    const Value array = CS::makeArray(4, clock, dead);
+    const CS::Epoch *arrayEpoch = CS::epochAddressOf(array);
+
+    CS::Epoch before = *arrayEpoch;
+    CS::arrayPush(array, Value::number(1.0), clock);
+    EXPECT_GT(*arrayEpoch, before) << "arrayPush";
+
+    before = *arrayEpoch;
+    EXPECT_TRUE(CS::arraySet(array, 0, Value::number(2.0), clock, dead));
+    EXPECT_GT(*arrayEpoch, before) << "arraySet";
+
+    before = *arrayEpoch;
+    EXPECT_TRUE(CS::arrayPop(array, nullptr, clock, dead));
+    EXPECT_GT(*arrayEpoch, before) << "arrayPop";
+
+    const Value object = CS::makeObject(store.keys(), 2, clock, dead);
+    const CS::Epoch *objectEpoch = CS::epochAddressOf(object);
+
+    before = *objectEpoch;
+    CS::objectSet(object, "name", Value::number(3.0), clock, dead);
+    EXPECT_GT(*objectEpoch, before) << "objectSet: новый ключ";
+
+    before = *objectEpoch;
+    CS::objectSet(object, "name", Value::number(4.0), clock, dead);
+    EXPECT_GT(*objectEpoch, before) << "objectSet: существующий ключ";
+}
+
+TEST(BoxEpoch, AFailedArraySetLeavesTheEpochAlone) {
+    // Запись за границей — не запись: ничего не изменилось, значит и ответ
+    // «изменилось» давать не за что.
+    CS::Store store;
+    CS::Deferred dead;
+    const Value array = CS::makeArray(4, store.clock(), dead);
+    const CS::Epoch before = *CS::epochAddressOf(array);
+
+    EXPECT_FALSE(CS::arraySet(array, 7, Value::number(1.0), store.clock(), dead));
+
+    EXPECT_EQ(*CS::epochAddressOf(array), before);
+}
+
+TEST(BoxEpoch, APopFromAnEmptyArrayLeavesTheEpochAlone) {
+    CS::Store store;
+    CS::Deferred dead;
+    const Value array = CS::makeArray(0, store.clock(), dead);
+    const CS::Epoch before = *CS::epochAddressOf(array);
+
+    EXPECT_FALSE(CS::arrayPop(array, nullptr, store.clock(), dead));
+
+    EXPECT_EQ(*CS::epochAddressOf(array), before);
+}
+
+TEST(BoxEpoch, TouchingOneAggregateDoesNotMoveAnother) {
+    // То, ради чего схема с коробками стоит своих денег (спека §3.2): правка
+    // соседнего элемента не задевает читателя нулевого.
+    CS::Store store;
+    CS::Deferred dead;
+    const Value first = CS::makeObject(store.keys(), 1, store.clock(), dead);
+    const Value second = CS::makeObject(store.keys(), 1, store.clock(), dead);
+    const CS::Epoch untouched = *CS::epochAddressOf(first);
+
+    CS::objectSet(second, "name", Value::number(1.0), store.clock(), dead);
+
+    EXPECT_EQ(*CS::epochAddressOf(first), untouched);
+}
+
+}  // namespace

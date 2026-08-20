@@ -222,8 +222,8 @@ TEST(ContextMemory, ArrayHandedOutOutlivesTheContext) {
     // Контекста нет, хранилища нет, таблицы имён у него нет. Массив есть.
     const CS::detail::ArrayBox *node =
         static_cast<const CS::detail::ArrayBox *>(escaped.box());
-    ASSERT_EQ(node->items.size(), 3u);
-    EXPECT_EQ(node->items[2].numberValue(), 3.0);
+    ASSERT_EQ(node->size(), 3u);
+    EXPECT_EQ(node->at(2).numberValue(), 3.0);
     CS::detail::release(escaped.box());
 }
 
@@ -240,9 +240,9 @@ TEST(ContextMemory, ObjectHandedOutKeepsItsKeysPastTheContext) {
     }
     const CS::detail::ObjectBox *node =
         static_cast<const CS::detail::ObjectBox *>(escaped.box());
-    ASSERT_EQ(node->entries.size(), 1u);
+    ASSERT_EQ(node->size(), 1u);
     // Таблица имён пережила своё хранилище, потому что её держит коробка.
-    EXPECT_EQ(node->keys->bytes(node->entries[0].key), "name");
+    EXPECT_EQ(node->keys->bytes(node->at(0).key), "name");
     CS::detail::release(escaped.box());
 }
 

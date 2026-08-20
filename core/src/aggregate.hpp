@@ -33,8 +33,7 @@ namespace CS {
 /// Предусловие: a.kind() == Value::Kind::Array.
 [[nodiscard]] inline std::uint32_t arrayCount(Value a) noexcept {
     assert(a.kind() == Value::Kind::Array);
-    return static_cast<std::uint32_t>(
-        static_cast<const detail::ArrayBox *>(a.box())->items.size());
+    return static_cast<const detail::ArrayBox *>(a.box())->size();
 }
 
 /// Элемент либо null за границей (docs/semantics.md §6.1).
@@ -42,17 +41,16 @@ namespace CS {
 [[nodiscard]] inline Value arrayAt(Value a, std::uint32_t index) noexcept {
     assert(a.kind() == Value::Kind::Array);
     const detail::ArrayBox *box = static_cast<const detail::ArrayBox *>(a.box());
-    if (index >= box->items.size()) { return Value::null(); }
+    if (index >= box->size()) { return Value::null(); }
     // Ссылка не берётся: значение живо, пока его держит сам массив, а массив
     // держит тот, кто его читает. Кадр скролла к счётчику не обращается.
-    return box->items[index];
+    return box->at(index);
 }
 
 /// Предусловие: o.kind() == Value::Kind::Object.
 [[nodiscard]] inline std::uint32_t objectCount(Value o) noexcept {
     assert(o.kind() == Value::Kind::Object);
-    return static_cast<std::uint32_t>(
-        static_cast<const detail::ObjectBox *>(o.box())->entries.size());
+    return static_cast<const detail::ObjectBox *>(o.box())->size();
 }
 
 /// Значение либо null, если ключа нет (docs/semantics.md §6.2).
@@ -63,7 +61,7 @@ namespace CS {
     bool found = false;
     const std::uint32_t at = detail::findEntry(box, key, &found);
     if (!found) { return Value::null(); }
-    return box.entries[at].value;
+    return box.at(at).value;
 }
 
 /// Есть ли ключ. Отличает записанный null от отсутствия — иначе их не
@@ -83,8 +81,8 @@ namespace CS {
                                                   std::uint32_t i) noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectBox &box = *static_cast<const detail::ObjectBox *>(o.box());
-    if (i >= box.entries.size()) { return {}; }
-    return box.keys->bytes(box.entries[i].key);
+    if (i >= box.size()) { return {}; }
+    return box.keys->bytes(box.at(i).key);
 }
 
 /// Значение по порядковому номеру либо null за границей.
@@ -92,8 +90,8 @@ namespace CS {
 [[nodiscard]] inline Value objectValueAt(Value o, std::uint32_t i) noexcept {
     assert(o.kind() == Value::Kind::Object);
     const detail::ObjectBox &box = *static_cast<const detail::ObjectBox *>(o.box());
-    if (i >= box.entries.size()) { return Value::null(); }
-    return box.entries[i].value;
+    if (i >= box.size()) { return Value::null(); }
+    return box.at(i).value;
 }
 
 // ─── создание ───
@@ -160,10 +158,10 @@ inline bool arraySet(Value a, std::uint32_t index, Value v,
                      Deferred &dead) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
-    if (index >= box->items.size()) { return false; }
+    if (index >= box->size()) { return false; }
     detail::retainValue(v);
-    dead.take(box->items[index]);
-    box->items[index] = v;
+    dead.take(box->at(index));
+    box->set(index, v);
     return true;
 }
 
@@ -173,7 +171,7 @@ inline bool arraySet(Value a, std::uint32_t index, Value v,
 inline void arrayPush(Value a, Value v) {
     assert(a.kind() == Value::Kind::Array);
     detail::retainValue(v);
-    static_cast<detail::ArrayBox *>(a.box())->items.push_back(v);
+    static_cast<detail::ArrayBox *>(a.box())->push(v);
 }
 
 /// Снимает последний элемент в *out. false на пустом массиве; выходной
@@ -182,9 +180,8 @@ inline void arrayPush(Value a, Value v) {
 inline bool arrayPop(Value a, Value *out, Deferred &dead) noexcept {
     assert(a.kind() == Value::Kind::Array);
     detail::ArrayBox *box = static_cast<detail::ArrayBox *>(a.box());
-    if (box->items.empty()) { return false; }
-    const Value last = box->items.back();
-    box->items.pop_back();
+    if (box->size() == 0) { return false; }
+    const Value last = box->pop();
     if (out != nullptr) { *out = last; }
     // Ссылка ячейки уходит в список, а не в release: вызывающий читает снятое
     // значение сразу после возврата.
@@ -205,15 +202,14 @@ inline void objectSet(Value o, std::string_view key, Value v, Deferred &dead) {
     const std::uint32_t at = detail::findEntry(box, key, prefix, &found);
     detail::retainValue(v);
     if (found) {
-        dead.take(box.entries[at].value);
-        box.entries[at].value = v;
+        dead.take(box.at(at).value);
+        box.setValue(at, v);
         return;
     }
     // Интернируется только тот ключ, который правда заводится: чтение
     // отсутствующего имени таблицу не засоряет — за этим следит findEntry,
     // который сравнивает байты и в таблицу не пишет.
-    box.entries.insert(box.entries.begin() + at,
-                       detail::Entry{box.keys->intern(key), prefix, v});
+    box.insert(at, detail::Entry{box.keys->intern(key), prefix, v});
 }
 
 }  // namespace CS

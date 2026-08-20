@@ -43,17 +43,46 @@ TEST(Box, EmptyStringNodeHasEmptyView) {
 
 TEST(Box, ArrayBoxStartsEmpty) {
     ArrayBox *a = CS::detail::makeArrayBox(4);
-    EXPECT_TRUE(a->items.empty());
-    EXPECT_GE(a->items.capacity(), 4u);
+    EXPECT_EQ(a->size(), 0u);
+    EXPECT_GE(a->cap, 4u);
     CS::detail::release(a);
 }
+
+#ifndef NDEBUG
+/// A literal aggregate costs one allocation, not two: the elements live in the
+/// tail right behind the header, the way StringBox's bytes already do.
+TEST(Box, LiteralAggregateIsOneAllocation) {
+    ArrayBox *a = CS::detail::makeArrayBox(3);
+    const char *header = reinterpret_cast<const char *>(a);
+    const char *elements = reinterpret_cast<const char *>(a->data);
+    EXPECT_EQ(elements, header + sizeof(ArrayBox));
+    CS::detail::release(a);
+}
+
+/// Outgrowing the tail moves the ELEMENTS, never the box: every Value pointing
+/// at this box keeps pointing at it. Growing the box itself would invalidate
+/// all of them at once.
+TEST(Box, BoxAddressSurvivesOutgrowingTheTail) {
+    ArrayBox *a = CS::detail::makeArrayBox(1);
+    const ArrayBox *before = a;
+    a->push(Value::number(1));
+    a->push(Value::number(2));
+    a->push(Value::number(3));
+    EXPECT_EQ(a, before);
+    EXPECT_EQ(a->size(), 3u);
+    EXPECT_EQ(a->at(2).numberValue(), 3.0);
+    EXPECT_NE(reinterpret_cast<const char *>(a->data),
+              reinterpret_cast<const char *>(a) + sizeof(ArrayBox));
+    CS::detail::release(a);
+}
+#endif
 
 #ifndef NDEBUG
 TEST(Box, ReleaseOfArrayReleasesElements) {
     const std::size_t before = CS::detail::liveBoxCount();
     StringBox *s = CS::detail::makeStringBox("x");
     ArrayBox *a = CS::detail::makeArrayBox(1);
-    a->items.push_back(Value::string(s));
+    a->push(Value::string(s));
     CS::detail::retain(s);   // ссылка ячейки массива
     CS::detail::release(s);  // ссылка создателя ушла, держит массив
     EXPECT_EQ(s->rc, 1u);
@@ -78,9 +107,9 @@ TEST(Box, ReleaseOfObjectReleasesValues) {
     ObjectBox *o = CS::detail::makeObjectBox(t, 1);
     KeyTable::release(t);
     ArrayBox *a = CS::detail::makeArrayBox(0);
-    o->entries.push_back(CS::detail::Entry{o->keys->intern("rows"),
-                                                CS::detail::keyPrefix("rows"),
-                                                Value::array(a)});
+    o->insert(0, CS::detail::Entry{o->keys->intern("rows"),
+                                   CS::detail::keyPrefix("rows"),
+                                   Value::array(a)});
     CS::detail::retain(a);
     CS::detail::release(a);
     EXPECT_EQ(CS::detail::liveBoxCount(), before + 2);

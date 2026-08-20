@@ -62,25 +62,78 @@ StringBox *makeStringBox(std::string_view bytes) {
     return box;
 }
 
+namespace {
+
+/// Next capacity for an aggregate that has run out of room. Doubling, with a
+/// floor of four: an array grown through push takes elements one at a time,
+/// and a floor keeps the first few pushes from reallocating on every step.
+std::uint32_t grownCapacity(std::uint32_t cap) noexcept {
+    if (cap < 4) { return 4u; }
+    // The clamp is not decoration: cap * 2 wraps to zero at 2^31, and a zero
+    // capacity would make push write past the end of a zero-sized buffer.
+    // An aggregate that large is a different problem, and it fails loudly.
+    assert(cap <= 0x7fffffffu && "aggregate outgrew uint32 capacity");
+    return cap * 2u;
+}
+
+}  // namespace
+
 ArrayBox *makeArrayBox(std::uint32_t capacity) {
-    ArrayBox *box = new ArrayBox();
+    void *raw = ::operator new(sizeof(ArrayBox) + capacity * sizeof(Value));
+    ArrayBox *box = new (raw) ArrayBox;
     box->rc = 1;
     box->kind = Value::Kind::Array;
-    if (capacity > 0) { box->items.reserve(capacity); }
+    box->len = 0;
+    box->cap = capacity;
+    box->data = box->tail();
     CHUPA_COUNT_BOX_BORN();
     return box;
 }
 
+void ArrayBox::push(Value v) {
+    if (len == cap) {
+        const std::uint32_t grown = grownCapacity(cap);
+        Value *moved = static_cast<Value *>(::operator new(grown * sizeof(Value)));
+        // Value is trivially copyable, so moving the elements is a copy of the
+        // bytes and no reference counts change hands.
+        std::memcpy(moved, data, len * sizeof(Value));
+        if (data != tail()) { ::operator delete(static_cast<void *>(data)); }
+        data = moved;
+        cap = grown;
+    }
+    data[len++] = v;
+}
+
 ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity) {
     assert(keys != nullptr);
-    ObjectBox *box = new ObjectBox();
+    void *raw = ::operator new(sizeof(ObjectBox) + capacity * sizeof(Entry));
+    ObjectBox *box = new (raw) ObjectBox;
     box->rc = 1;
     box->kind = Value::Kind::Object;
     box->keys = keys;
     KeyTable::retain(keys);
-    if (capacity > 0) { box->entries.reserve(capacity); }
+    box->len = 0;
+    box->cap = capacity;
+    box->data = box->tail();
     CHUPA_COUNT_BOX_BORN();
     return box;
+}
+
+void ObjectBox::insert(std::uint32_t at, const Entry &entry) {
+    assert(at <= len);
+    if (len == cap) {
+        const std::uint32_t grown = grownCapacity(cap);
+        Entry *moved = static_cast<Entry *>(::operator new(grown * sizeof(Entry)));
+        std::memcpy(moved, data, len * sizeof(Entry));
+        if (data != tail()) { ::operator delete(static_cast<void *>(data)); }
+        data = moved;
+        cap = grown;
+    }
+    // memmove, not memcpy: the source and destination ranges overlap by
+    // everything but one slot.
+    std::memmove(data + at + 1, data + at, (len - at) * sizeof(Entry));
+    data[at] = entry;
+    ++len;
 }
 
 std::uint32_t keyPrefix(std::string_view key) noexcept {
@@ -109,10 +162,10 @@ std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
     // читается. До байт дело доходит лишь когда первые четыре совпали.
     assert(want == keyPrefix(key));
     std::uint32_t low = 0;
-    std::uint32_t high = static_cast<std::uint32_t>(box.entries.size());
+    std::uint32_t high = box.size();
     while (low < high) {
         const std::uint32_t mid = low + (high - low) / 2;
-        const Entry &entry = box.entries[mid];
+        const Entry &entry = box.at(mid);
         if (entry.prefix != want) {
             if (entry.prefix < want) { low = mid + 1; } else { high = mid; }
             continue;
@@ -147,15 +200,23 @@ void release(Box *box) noexcept {
         }
         case Value::Kind::Array: {
             ArrayBox *a = static_cast<ArrayBox *>(box);
-            for (Value v : a->items) { releaseValue(v); }
-            delete a;
+            for (std::uint32_t i = 0; i < a->len; ++i) { releaseValue(a->data[i]); }
+            if (a->data != a->tail()) {
+                ::operator delete(static_cast<void *>(a->data));
+            }
+            a->~ArrayBox();
+            ::operator delete(static_cast<void *>(a));
             return;
         }
         case Value::Kind::Object: {
             ObjectBox *o = static_cast<ObjectBox *>(box);
-            for (const Entry &e : o->entries) { releaseValue(e.value); }
+            for (std::uint32_t i = 0; i < o->len; ++i) { releaseValue(o->data[i].value); }
             KeyTable::release(o->keys);
-            delete o;
+            if (o->data != o->tail()) {
+                ::operator delete(static_cast<void *>(o->data));
+            }
+            o->~ObjectBox();
+            ::operator delete(static_cast<void *>(o));
             return;
         }
         default:

@@ -391,45 +391,45 @@ void chupa_value_string(const ChupaValue* v, const char** bytes, size_t* len) {
 }
 
 size_t chupa_array_count(const ChupaValue* v) {
-    return asArray(fromC(v))->items.size();
+    return asArray(fromC(v))->size();
 }
 
 void chupa_array_at(const ChupaValue* v, size_t i, ChupaValue* out) {
     const CS::detail::ArrayBox* box = asArray(fromC(v));
-    if (i >= box->items.size()) {
+    if (i >= box->size()) {
         toC(CS::Value::null(), out);
         return;
     }
     // Ссылка не берётся: элемент держит сам массив, а массив держит хост.
-    toC(box->items[i], out);
+    toC(box->at(static_cast<std::uint32_t>(i)), out);
 }
 
 size_t chupa_object_count(const ChupaValue* v) {
-    return asObject(fromC(v))->entries.size();
+    return asObject(fromC(v))->size();
 }
 
 void chupa_object_key_at(const ChupaValue* v, size_t i, const char** bytes,
                          size_t* len) {
     const CS::detail::ObjectBox* box = asObject(fromC(v));
-    if (i >= box->entries.size()) {
+    if (i >= box->size()) {
         *bytes = nullptr;
         *len = 0;
         return;
     }
     // Имя берётся из таблицы коробки, а не из чьего-то хранилища: она и есть то,
     // что делает объект читаемым после смерти контекста.
-    const std::string_view key = box->keys->bytes(box->entries[i].key);
+    const std::string_view key = box->keys->bytes(box->at(static_cast<std::uint32_t>(i)).key);
     *bytes = key.data();
     *len = key.size();
 }
 
 void chupa_object_value_at(const ChupaValue* v, size_t i, ChupaValue* out) {
     const CS::detail::ObjectBox* box = asObject(fromC(v));
-    if (i >= box->entries.size()) {
+    if (i >= box->size()) {
         toC(CS::Value::null(), out);
         return;
     }
-    toC(box->entries[i].value, out);
+    toC(box->at(static_cast<std::uint32_t>(i)).value, out);
 }
 
 bool chupa_object_get(const ChupaValue* v, const char* key, size_t key_len,
@@ -439,7 +439,7 @@ bool chupa_object_get(const ChupaValue* v, const char* key, size_t key_len,
     const std::uint32_t at =
         CS::detail::findEntry(*box, std::string_view(key, key_len), &found);
     if (!found) { return false; }
-    toC(box->entries[at].value, out);
+    toC(box->at(at).value, out);
     return true;
 }
 

@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
-#include <vector>
 
 #include "value.hpp"
 
@@ -55,8 +54,46 @@ struct StringBox : Box {
     [[nodiscard]] std::string_view view() const noexcept;
 };
 
+/// An array: header and elements in one allocation, elements right behind the
+/// header.
+///
+///   ArrayBox                              one allocation
+///  ┌──────────────────────────────┐
+///  │ rc, kind                     │ Box
+///  │ len, cap                     │
+///  │ data ──────────┐             │      points into the tail while cap
+///  ├────────────────▼─────────────┤      suffices; at a separate buffer after
+///  │ Value  Value  Value  ...     │      the array outgrows it
+///  └──────────────────────────────┘      tail, cap slots
+///
+/// THE BOX'S ADDRESS NEVER CHANGES, not even once the array has outgrown the
+/// tail: only data moves. Every Value pointing at this box therefore stays
+/// correct — which is what growing the box itself could not offer.
+///
+/// A literal fits the tail exactly: its size is known before the box is made,
+/// and makeArray is already called with the exact capacity. Growth happens
+/// only to an array grown through push (docs/semantics.md §8.5).
 struct ArrayBox : Box {
-    std::vector<Value> items;
+    std::uint32_t len;
+    std::uint32_t cap;
+    Value *data;
+
+    [[nodiscard]] std::uint32_t size() const noexcept { return len; }
+    [[nodiscard]] const Value &at(std::uint32_t i) const noexcept {
+        assert(i < len);
+        return data[i];
+    }
+    void set(std::uint32_t i, Value v) noexcept { assert(i < len); data[i] = v; }
+    void push(Value v);
+    /// Precondition: len > 0.
+    Value pop() noexcept { assert(len > 0); return data[--len]; }
+
+    /// The tail's address. data equals it until the array outgrows the tail;
+    /// after that the tail is dead space and data points at a separate buffer.
+    [[nodiscard]] Value *tail() noexcept {
+        return reinterpret_cast<Value *>(reinterpret_cast<char *>(this) +
+                                         sizeof(ArrayBox));
+    }
 };
 
 /// Первые до четырёх байт имени, упакованные big-endian и добитые нулями.
@@ -89,9 +126,39 @@ struct Entry {
     Value value;
 };
 
+/// An object: header and pairs in one allocation, the same shape ArrayBox
+/// uses.
+///
+///   ObjectBox                             one allocation
+///  ┌──────────────────────────────┐
+///  │ rc, kind                     │ Box
+///  │ keys ── KeyTable *           │      held by reference
+///  │ len, cap                     │
+///  │ data ──────────┐             │
+///  ├────────────────▼─────────────┤
+///  │ Entry  Entry  Entry  ...     │      tail, cap slots, sorted by key bytes
+///  └──────────────────────────────┘
 struct ObjectBox : Box {
     KeyTable *keys;              // удерживается ссылкой
-    std::vector<Entry> entries;  // упорядочены по байтам ключа
+    std::uint32_t len;
+    std::uint32_t cap;
+    Entry *data;
+
+    [[nodiscard]] std::uint32_t size() const noexcept { return len; }
+    [[nodiscard]] const Entry &at(std::uint32_t i) const noexcept {
+        assert(i < len);
+        return data[i];
+    }
+    void setValue(std::uint32_t i, Value v) noexcept {
+        assert(i < len);
+        data[i].value = v;
+    }
+    /// Inserts a pair at position `at`, keeping the pairs sorted by key bytes.
+    void insert(std::uint32_t at, const Entry &entry);
+    [[nodiscard]] Entry *tail() noexcept {
+        return reinterpret_cast<Entry *>(reinterpret_cast<char *>(this) +
+                                         sizeof(ObjectBox));
+    }
 };
 
 /// Номер пары с этим ключом, а если ключа нет — место, куда её вставить,

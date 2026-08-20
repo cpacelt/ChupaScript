@@ -123,8 +123,11 @@ extension Optional: CSConvertible where Wrapped: CSConvertible {
 /// Коробка передаётся в `user_data` через `Unmanaged.passRetained`, а
 /// `release` в дескрипторе снимает удержание. Массив коробок полем `Context`
 /// не заведён: владение выражено самим дескриптором `ChupaFunction`, а не
-/// тем, что кто-то не забыл сложить коробку в поле, — ровно на этом уже
-/// споткнулось ядро (см. `HostFunction.swift`, README задачи 11).
+/// тем, что кто-то не забыл сложить коробку в поле — ровно на этом уже
+/// споткнулось ядро C++ этой же ветки: `setHosts()` завели отдельным
+/// действием и не позвали ниоткуда (`core/src/execution.hpp`, коммит
+/// c71c22f), проводка переехала в конструктор ровно затем, чтобы забыть
+/// её означало не собрать объект вовсе.
 final class HostBox {
     let body: (UnsafePointer<ChupaValue>?, Int,
               OpaquePointer, UnsafeMutablePointer<ChupaValue>?) throws -> Void

@@ -162,12 +162,18 @@ TEST(Script, RefusesToEvaluateOnAnotherStore) {
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    ASSERT_EQ(CS::Script::compile("x.n = 1;", home, &script, diags, 1), 0u);
+    // Assigns a value different from the field's current one, so a run that
+    // slipped through despite the refusal would be visible below.
+    ASSERT_EQ(CS::Script::compile("x.n = 2;", home, &script, diags, 1), 0u);
 
     CS::Execution elsewhere(foreign);
     CS::Diagnostic failure;
     EXPECT_FALSE(script.run(elsewhere, failure));
     EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
+
+    // The refused run must not have written through to home's variable.
+    const CS::Value x = home.global("x");
+    EXPECT_DOUBLE_EQ(CS::objectGet(x, "n").numberValue(), 1.0);
 }
 
 }  // namespace

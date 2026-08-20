@@ -85,14 +85,24 @@ TEST(ValueLayout, SixteenBytesGoesToABox) {
 }
 
 /// A short string costs no box at all — the point of the whole change.
-TEST(ValueLayout, ShortStringAllocatesNothing) {
+TEST(ValueLayout, ShortStringMaterializesInline) {
+    CS::Deferred dead;
+    const Value v = CS::materialize("center", dead);
+    EXPECT_EQ(CS::stringBytes(v), "center");
+}
+
+// Whole-test wrap, not a body wrap: liveBoxCount() is a debug-only counter,
+// and a body wrapped in #ifndef NDEBUG would leave this test registered but
+// empty in a release build — passing vacuously instead of not running at
+// all. The whole-test wrap is honest about what did not run.
 #ifndef NDEBUG
+TEST(ValueLayout, ShortStringAllocatesNothing) {
     CS::Deferred dead;
     const std::size_t before = CS::detail::liveBoxCount();
     const Value v = CS::materialize("center", dead);
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
     EXPECT_EQ(CS::stringBytes(v), "center");
-#endif
 }
+#endif
 
 }  // namespace

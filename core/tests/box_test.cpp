@@ -11,6 +11,7 @@
 #include "keytable.hpp"
 #include "store.hpp"
 #include "aggregate.hpp"
+#include "context.hpp"
 
 namespace {
 
@@ -77,15 +78,28 @@ TEST(Box, BoxAddressSurvivesOutgrowingTheTail) {
 }
 #endif
 
-#ifndef NDEBUG
-TEST(Box, ReleaseOfArrayReleasesElements) {
-    const std::size_t before = CS::detail::liveBoxCount();
+// Assertion about reference counting kept unconditional: this branch's whole
+// subject is the refcount, and it must run in a release build too, not only
+// when liveBoxCount() (a debug-only counter) is available to check alongside
+// it.
+TEST(Box, ReleaseOfArrayReleasesElement) {
     StringBox *s = CS::detail::makeStringBox("x");
     ArrayBox *a = CS::detail::makeArrayBox(1);
     a->push(Value::string(s));
     CS::detail::retain(s);   // ссылка ячейки массива
     CS::detail::release(s);  // ссылка создателя ушла, держит массив
     EXPECT_EQ(s->rc, 1u);
+    CS::detail::release(a);  // массив отпускает элемент вместе с собой
+}
+
+#ifndef NDEBUG
+TEST(Box, ReleaseOfArrayReleasesElementsLiveCount) {
+    const std::size_t before = CS::detail::liveBoxCount();
+    StringBox *s = CS::detail::makeStringBox("x");
+    ArrayBox *a = CS::detail::makeArrayBox(1);
+    a->push(Value::string(s));
+    CS::detail::retain(s);   // ссылка ячейки массива
+    CS::detail::release(s);  // ссылка создателя ушла, держит массив
     EXPECT_EQ(CS::detail::liveBoxCount(), before + 2);
     CS::detail::release(a);  // массив отпускает элемент вместе с собой
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
@@ -145,10 +159,15 @@ TEST(Box, LiveCountSurvivesTwoContextsOnTwoThreads) {
     constexpr int kPerThread = 2000;
     const std::size_t before = CS::detail::liveBoxCount();
 
+    // Each thread owns its own Context, and each write goes through
+    // setGlobalString — the boxed path (materialize sees a string longer
+    // than Value::kInlineCapacity) — so the churn exercises two Stores'
+    // worth of box creation and release concurrently, the contract
+    // chupascript.h states for two threads each with their own Context.
     auto churn = [] {
+        CS::Context ctx;
         for (int i = 0; i < kPerThread; ++i) {
-            StringBox *s = CS::detail::makeStringBox("payload");
-            CS::detail::release(s);
+            ctx.setGlobalString("s", "payload longer than fifteen bytes");
         }
     };
 

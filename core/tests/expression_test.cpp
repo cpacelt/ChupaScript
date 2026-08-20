@@ -307,10 +307,11 @@ TEST(Expression, RefusesToEvaluateOnAnotherStore) {
     ASSERT_EQ(CS::Expression::compile("x", home, &expr, diags, 1), 0u);
 
     CS::Execution elsewhere(foreign);
-    CS::Value out = CS::Value::null();
+    CS::Value out = CS::Value::number(99.0);  // sentinel: not the eval result
     CS::Diagnostic failure;
     EXPECT_FALSE(expr.eval(elsewhere, &out, failure));
     EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
+    EXPECT_EQ(out.numberValue(), 99.0);  // *out untouched on refusal
 }
 
 #ifndef NDEBUG

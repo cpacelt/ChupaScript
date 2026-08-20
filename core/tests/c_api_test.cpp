@@ -1043,11 +1043,12 @@ TEST(CApi, RefusesAUnitFromAnotherContext) {
     ChupaExpression* e = chupa_compile_expression(home, "x", 1);
     ASSERT_NE(e, nullptr);
 
-    double out = 0.0;
+    double out = 99.0;  // sentinel: not the value 'x' would evaluate to
     EXPECT_FALSE(chupa_eval_number(other, e, &out));
     ChupaError err;
     chupa_context_error(other, &err);
     EXPECT_EQ(err.code, CHUPA_ERR_USAGE);
+    EXPECT_EQ(out, 99.0);  // *out untouched on refusal
 
     chupa_expression_destroy(e);
     chupa_context_destroy(other);

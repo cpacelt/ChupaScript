@@ -9,6 +9,7 @@ add_executable(chupascript_tests
     context_test.cpp
     store_test.cpp
     data_test.cpp
+    epoch_test.cpp
     eval_test.cpp
     execution_test.cpp
     expression_test.cpp

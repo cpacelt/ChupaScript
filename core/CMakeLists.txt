@@ -8,6 +8,7 @@ add_library(chupascript STATIC
     src/context.cpp
     src/store.cpp
     src/data.cpp
+    src/epoch.cpp
     src/eval.cpp
     src/host.cpp
     src/keytable.cpp

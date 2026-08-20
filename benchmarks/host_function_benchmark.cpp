@@ -1,37 +1,59 @@
-// LAYOUT — three benchmarks, one register call each, same eval-and-deliver
+// LAYOUT — five benchmarks, one register call each, same eval-and-deliver
 // shape as benchmarks/host_benchmark.cpp's block 3: compile once, outside the
 // loop; evaluate and consume the result inside it, because that is what a
-// host actually does with an expression prop.
+// host actually does with an expression prop. They answer THREE separate
+// questions, and each pair below is labelled with the one it answers — do
+// not average across pairs, they are not measuring the same thing.
 //
-// What is measured and why THIS shape:
+// Q1. WHAT DOES DISPATCH THROUGH A POINTER COST, ISOLATED FROM WORK?
+//   BM_Host_Builtin_Abs   abs(x) — one numeric argument, one global lookup,
+//                         one trivial fabs. Dispatched by a compile-time
+//                         index into the builtin table.
+//   BM_Host_CallNumber    hostAbs(x) — the same shape exactly: one numeric
+//                         argument, the same global, the same fabs, done
+//                         inside the callback instead. The only thing that
+//                         differs between this pair is the dispatch
+//                         mechanism (index vs function pointer) plus the C
+//                         API boundary — argument count, argument kind and
+//                         the amount of work are held equal, so the gap is
+//                         the pointer-call price and nothing else.
 //
-//   BM_Host_Builtin_Count  count(items) — the cheapest arithmetic builtin,
-//                          dispatched by a compile-time index, no pointer
-//                          indirection and no host-side argument marshalling.
-//   BM_Host_CallVoid       a host function taking NO arguments, returning a
-//                          number through the C ABI. The gap to Count is the
-//                          price of going through a function pointer at all:
-//                          the indirect call itself plus whatever the C API
-//                          boundary costs on a call with nothing to marshal.
-//   BM_Host_CallString     the same host mechanism, one string argument
-//                          added. The gap to CallVoid isolates the cost of
-//                          handing a BOXED argument across that boundary —
-//                          a number rides in the ChupaValue's own bytes, a
-//                          string does not.
+//   Rejected basis: count(items). It also isolates a host-vs-builtin gap,
+//   but count takes an argument hostConst() (its old opposite number) did
+//   not, and walks a whole array besides — two effects of opposite sign
+//   (dispatch mechanism, and extra work) land in one number, which answers
+//   neither question honestly. abs/hostAbs is the pair that isolates only
+//   dispatch: same arity, same argument kind, same triviality of the work.
 //
-// Rejected pairing for BM_Host_Builtin_Count: no builtin in this language
-// takes zero arguments (core/src/builtin.cpp — every entry has minArgs >= 1),
-// so there is no zero-argument builtin to pair CallVoid against honestly.
-// count(items) is the next best thing — the cheapest builtin that returns a
-// number — and it is asked to translate one argument that CallVoid does not
-// have, which understates the pointer-call price rather than flattering it.
+// Q2. WHAT DOES A HOST FUNCTION COST AGAINST A TYPICAL BUILTIN IN USE?
+//   BM_Host_Builtin_Count count(items) — a builtin doing real, typical work:
+//                         reads a global, walks an aggregate.
+//   BM_Host_CallVoid      hostConst() — a host function with nothing to do
+//                         and nothing to marshal. NOT a fair dispatch-only
+//                         pair with Count (see Q1's rejected basis) — this
+//                         pair answers a different, still useful question:
+//                         when a prop is a typical builtin call today, is a
+//                         host function that replaced it with a no-op look
+//                         cheaper or costlier in absolute terms? It is not
+//                         "the price of the pointer" and is not labelled as
+//                         such below or in the docs.
 //
-// Both host functions are CHUPA_FN_PURE: docs/semantics.md §3.2 forbids
-// calling anything else inside an Expression tree, and an expression — not a
-// script statement — is what every other block in host_benchmark.cpp
-// measures, so this file keeps the same mode for the same reason.
+// Q3. WHAT DOES ONE STRING ARGUMENT ADD, ON TOP OF THE HOST MECHANISM?
+//   BM_Host_CallString    hostLen(s) — the same host mechanism as
+//                         BM_Host_CallVoid, one string argument added. The
+//                         gap to CallVoid isolates the cost of handing a
+//                         BOXED argument across the boundary — a number
+//                         rides in the ChupaValue's own bytes, a string does
+//                         not, and chupa_value_string has to read it out.
+//
+// Both host functions used in Q1/Q3 (hostAbs, hostLen) and hostConst are
+// CHUPA_FN_PURE: docs/semantics.md §3.2 forbids calling anything else inside
+// an Expression tree, and an expression — not a script statement — is what
+// every other block in host_benchmark.cpp measures, so this file keeps the
+// same mode for the same reason.
 #include <benchmark/benchmark.h>
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -55,6 +77,15 @@ bool hostConstCall(ChupaContext * /*ctx*/, const ChupaValue * /*args*/,
                    std::size_t /*argc*/, ChupaValue *out,
                    void * /*userData*/) {
     chupa_make_number(out, 42.0);
+    return true;
+}
+
+/// hostAbs(x): one numeric argument, fabs of it out — same shape as abs(x),
+/// so the gap to abs(x) is dispatch alone (see Q1 above).
+bool hostAbsCall(ChupaContext * /*ctx*/, const ChupaValue *args,
+                 std::size_t /*argc*/, ChupaValue *out, void * /*userData*/) {
+    const double n = chupa_value_number(&args[0]);
+    chupa_make_number(out, std::fabs(n));
     return true;
 }
 
@@ -94,6 +125,42 @@ void runEvalNumber(benchmark::State &state, ChupaContext *ctx,
     chupa_context_destroy(ctx);
 }
 
+// ─── Q1: dispatch price, isolated — abs(x) vs hostAbs(x) ───
+
+void BM_Host_Builtin_Abs(benchmark::State &state) {
+    ChupaContext *ctx = chupa_context_create();
+    if (ctx == nullptr || !chupa_context_set_number(ctx, "x", 1, -5.5)) {
+        state.SkipWithError("furnish failed");
+        return;
+    }
+    runEvalNumber(state, ctx, "abs(x)");
+}
+BENCHMARK(BM_Host_Builtin_Abs);
+
+void BM_Host_CallNumber(benchmark::State &state) {
+    ChupaContext *ctx = chupa_context_create();
+    if (ctx == nullptr || !chupa_context_set_number(ctx, "x", 1, -5.5)) {
+        state.SkipWithError("furnish failed");
+        return;
+    }
+    ChupaFunction fn{};
+    fn.name = "hostAbs";
+    fn.name_len = 7;
+    fn.min_args = 1;
+    fn.max_args = 1;
+    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_PURE;
+    fn.call = hostAbsCall;
+    if (!chupa_register(ctx, &fn)) {
+        state.SkipWithError(errorMessage(ctx));
+        chupa_context_destroy(ctx);
+        return;
+    }
+    runEvalNumber(state, ctx, "hostAbs(x)");
+}
+BENCHMARK(BM_Host_CallNumber);
+
+// ─── Q2: host function vs a typical builtin doing real work ───
+
 void BM_Host_Builtin_Count(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr ||
@@ -126,6 +193,8 @@ void BM_Host_CallVoid(benchmark::State &state) {
     runEvalNumber(state, ctx, "hostConst()");
 }
 BENCHMARK(BM_Host_CallVoid);
+
+// ─── Q3: what one string argument adds on top of the host mechanism ───
 
 void BM_Host_CallString(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();

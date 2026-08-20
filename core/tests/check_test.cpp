@@ -411,15 +411,16 @@ TEST(CheckHostFunctions, VariadicHostFunctionAcceptsAnyCountAboveMinimum) {
     EXPECT_EQ(checkExpr(store, "joinAll()", 8, &hosts).size(), 1u);
 }
 
-/// Грязная функция в выражении — ошибка компиляции. Это и есть та проверка,
-/// которой docs/grammar.md §6.3 раньше не требовал: он ВЫВОДИЛ чистоту из
-/// «грязное не возвращает значения», а хост-функция вправе эту посылку
-/// нарушить — объявить и RETURNS_VALUE, и отсутствие PURE.
-TEST(CheckHostFunctions, ImpureFunctionIsRefusedInAnExpression) {
+/// Функция с эффектами в выражении — ошибка компиляции. Это и есть та
+/// проверка, которой docs/grammar.md §6.3 раньше не требовал: он ВЫВОДИЛ
+/// отсутствие эффектов из «меняющее данные не возвращает значения», а
+/// хост-функция вправе эту посылку нарушить — объявить и RETURNS_VALUE, и
+/// отсутствие EFFECT_FREE.
+TEST(CheckHostFunctions, FunctionWithEffectsIsRefusedInAnExpression) {
     Store store;
     CS::HostTable hosts;
     ChupaFunction fn = healthyFunction("track");
-    fn.flags = CHUPA_FN_RETURNS_VALUE;   // возвращает значение и грязная
+    fn.flags = CHUPA_FN_RETURNS_VALUE;   // возвращает значение и с эффектом
     ASSERT_EQ(hosts.add(fn), CS::RegisterOutcome::Ok);
 
     const auto found = checkExpr(store, "track(1)", 8, &hosts);
@@ -427,7 +428,7 @@ TEST(CheckHostFunctions, ImpureFunctionIsRefusedInAnExpression) {
     EXPECT_EQ(found[0].code, CS::ErrorCode::Usage);
 }
 
-TEST(CheckHostFunctions, ImpureFunctionIsAllowedInAScript) {
+TEST(CheckHostFunctions, FunctionWithEffectsIsAllowedInAScript) {
     Store store;
     put(store, "x", "{'n': 0}");
     CS::HostTable hosts;
@@ -438,10 +439,10 @@ TEST(CheckHostFunctions, ImpureFunctionIsAllowedInAScript) {
     EXPECT_TRUE(checkScript(store, "x.n = track(1);", 8, &hosts).empty());
 }
 
-/// push и pop грязные, но новая диагностика их не касается: их случай уже
-/// закрыт правилом «результат Void употреблять нельзя», и вторая жалоба на тот
-/// же факт удвоила бы вывод компилятора.
-TEST(CheckHostFunctions, ImpureBuiltinKeepsItsOldSingleDiagnostic) {
+/// push и pop меняют данные, но новая диагностика их не касается: их случай
+/// уже закрыт правилом «результат Void употреблять нельзя», и вторая жалоба на
+/// тот же факт удвоила бы вывод компилятора.
+TEST(CheckHostFunctions, BuiltinWithEffectsKeepsItsOldSingleDiagnostic) {
     Store store;
     put(store, "items", "[1, 2, 3]");
     EXPECT_EQ(checkExpr(store, "push(items, 1)").size(), 1u);

@@ -61,13 +61,13 @@ TEST(HostTable, AcceptsVariadicArity) {
     EXPECT_EQ(table.add(fn), CS::RegisterOutcome::Ok);
 }
 
-/// Детерминированность обещает, что вызов можно пропустить, взяв результат из
-/// кэша; грязная функция зовётся ради побочного эффекта, и пропуск его
-/// отменяет. Объявить оба — попросить движок пропускать непропускаемое.
-TEST(HostTable, RefusesDeterministicWithoutPure) {
+/// Кэшируемость обещает, что вызов можно пропустить, взяв результат из кэша;
+/// функция с эффектом зовётся ради этого эффекта, и пропуск его отменяет.
+/// Объявить одну без другой — попросить движок пропускать непропускаемое.
+TEST(HostTable, RefusesCacheableWithoutEffectFree) {
     CS::HostTable table;
     ChupaFunction fn = healthyFunction("track");
-    fn.flags = CHUPA_FN_DETERMINISTIC;
+    fn.flags = CHUPA_FN_CACHEABLE;
     EXPECT_EQ(table.add(fn), CS::RegisterOutcome::BadFlags);
 }
 

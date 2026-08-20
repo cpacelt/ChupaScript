@@ -27,7 +27,7 @@ ChupaFunction described(const char *name, std::uint8_t minArgs,
     fn.name_len = std::char_traits<char>::length(name);
     fn.min_args = minArgs;
     fn.max_args = maxArgs;
-    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_PURE | CHUPA_FN_DETERMINISTIC;
+    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_EFFECT_FREE | CHUPA_FN_CACHEABLE;
     fn.call = call;
     fn.user_data = userData;
     return fn;

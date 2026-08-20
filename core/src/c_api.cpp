@@ -243,7 +243,7 @@ CS::Diagnostic errorFor(CS::RegisterOutcome outcome) {
                    "fn->min_args must not exceed fn->max_args"};
         case CS::RegisterOutcome::BadFlags:
             return {CS::ErrorCode::Usage, 0,
-                   "CHUPA_FN_DETERMINISTIC requires CHUPA_FN_PURE"};
+                   "CHUPA_FN_CACHEABLE requires CHUPA_FN_EFFECT_FREE"};
         case CS::RegisterOutcome::TableFull:
             // Usage, not Range: Range in this engine belongs to the language's
             // own value space (an array index past the end), and every other

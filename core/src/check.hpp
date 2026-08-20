@@ -12,8 +12,9 @@ class HostTable;
 
 /// Which of the two modes a tree is compiled in (docs/semantics.md §3.1).
 ///
-/// check needs it for one rule and one only: an impure host function may be
-/// called from a script and may not be called from an expression.
+/// check needs it for one rule and one only: a host function that is not
+/// effect-free may be called from a script and may not be called from an
+/// expression.
 ///
 /// NOT a parameter of the compile entry points: the door decides it.
 /// compileExpression is the expression mode and compileScript is the script

@@ -36,7 +36,7 @@ void registerEcho(CS::Context &ctx, std::ostream &out) {
     desc.name_len = 4;
     desc.min_args = 1;
     desc.max_args = 1;
-    // Нет RETURNS_VALUE — значит Void; нет PURE — значит грязная.
+    // Нет RETURNS_VALUE — значит Void; нет EFFECT_FREE — значит с эффектом.
     desc.flags = CHUPA_FN_NONE;
     desc.call = echoCallback;
     desc.user_data = &out;

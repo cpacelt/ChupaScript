@@ -90,7 +90,7 @@ enum class RegisterOutcome : std::uint8_t {
     NameTaken,   ///< a builtin has it, or it is already registered
     NoCallback,  ///< call == nullptr
     BadArity,    ///< minArgs > maxArgs
-    BadFlags,    ///< DETERMINISTIC without PURE
+    BadFlags,    ///< CACHEABLE without EFFECT_FREE
     TableFull,   ///< kMaxHostFunctions already registered
     TooLate,     ///< a compileExpression/compileScript already ran on this Context
     Reentrant,   ///< called from inside a host callback

@@ -2,7 +2,7 @@ import ChupaScriptC
 
 /// Флаги хост-функции — Swift-зеркало `ChupaFunctionFlags`.
 ///
-/// Умолчание на `register` ниже — `[.returnsValue, .pure, .deterministic]` —
+/// Умолчание на `register` ниже — `[.returnsValue, .effectFree, .cacheable]` —
 /// не расходится с тем, что в C нулевой флаг значит противоположное
 /// («ничего»): в C ноль получает тот, кто поле не заполнил, а в Swift
 /// умолчание пишет автор обвязки осознанно, значит и с чистой совестью
@@ -14,10 +14,14 @@ public struct FunctionFlags: OptionSet, Sendable {
     /// Без него функция ничего не возвращает — вызываема только из скрипта
     /// (`docs/semantics.md` §2.2).
     public static let returnsValue  = FunctionFlags(rawValue: 1 << 0)
-    /// Без него функцию нельзя позвать из выражения — только из скрипта.
-    public static let pure          = FunctionFlags(rawValue: 1 << 1)
-    /// Разрешает движку не звать функцию повторно с теми же аргументами.
-    public static let deterministic = FunctionFlags(rawValue: 1 << 2)
+    /// Вызов ничего не меняет за пределами движка: пропустить его или
+    /// повторить — не ошибка. Без него функцию нельзя позвать из выражения,
+    /// только из скрипта.
+    public static let effectFree    = FunctionFlags(rawValue: 1 << 1)
+    /// На тех же аргументах тот же ответ — движку разрешено ответить из
+    /// кэша вместо вызова. Требует `.effectFree`: ответ из кэша и есть
+    /// пропущенный вызов.
+    public static let cacheable     = FunctionFlags(rawValue: 1 << 2)
 }
 
 /// Перевод одного значения через C-границу в обе стороны.
@@ -257,7 +261,7 @@ extension Context {
     /// Типизированная перегрузка обязана быть объявлена с `.returnsValue`.
     ///
     /// Тип `R` с флагами не связан ничем, поэтому
-    /// `register("f", flags: [.pure]) { 1.0 }` компилируется — а движок звал
+    /// `register("f", flags: [.effectFree]) { 1.0 }` компилируется — а движок звал
     /// бы такую функцию с `out == nullptr` (`chupascript.h`,
     /// `ChupaHostFunction`), и класть результат было бы некуда. Отказ
     /// поднимается здесь, на регистрации, рядом со всеми прочими отказами
@@ -305,7 +309,7 @@ extension Context {
     /// в `chupascript.h`). Здесь, и только здесь, прикладной код видит
     /// `ChupaValue`.
     public func register(_ name: String, minArgs: UInt8, maxArgs: UInt8,
-                         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+                         flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
                          raw body: @escaping (UnsafeBufferPointer<ChupaValue>,
                                               OpaquePointer,
                                               UnsafeMutablePointer<ChupaValue>?) throws -> Void) throws {
@@ -317,7 +321,7 @@ extension Context {
     /// Зарегистрировать функцию хоста без аргументов.
     public func register<R: CSConvertible>(
         _ name: String,
-        flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+        flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
         _ body: @escaping () throws -> R
     ) throws {
         try requireReturnsValue(name, flags)
@@ -329,7 +333,7 @@ extension Context {
     /// Зарегистрировать функцию хоста с одним аргументом.
     public func register<A: CSConvertible, R: CSConvertible>(
         _ name: String,
-        flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+        flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
         _ body: @escaping (A) throws -> R
     ) throws {
         try requireReturnsValue(name, flags)
@@ -344,7 +348,7 @@ extension Context {
     /// Зарегистрировать функцию хоста с двумя аргументами.
     public func register<A: CSConvertible, B: CSConvertible, R: CSConvertible>(
         _ name: String,
-        flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+        flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
         _ body: @escaping (A, B) throws -> R
     ) throws {
         try requireReturnsValue(name, flags)
@@ -362,7 +366,7 @@ extension Context {
     /// Зарегистрировать функцию хоста с тремя аргументами.
     public func register<A: CSConvertible, B: CSConvertible, C: CSConvertible, R: CSConvertible>(
         _ name: String,
-        flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+        flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
         _ body: @escaping (A, B, C) throws -> R
     ) throws {
         try requireReturnsValue(name, flags)
@@ -383,7 +387,7 @@ extension Context {
     /// Зарегистрировать функцию хоста с четырьмя аргументами.
     public func register<A: CSConvertible, B: CSConvertible, C: CSConvertible, D: CSConvertible, R: CSConvertible>(
         _ name: String,
-        flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
+        flags: FunctionFlags = [.returnsValue, .effectFree, .cacheable],
         _ body: @escaping (A, B, C, D) throws -> R
     ) throws {
         try requireReturnsValue(name, flags)

@@ -1328,7 +1328,7 @@ TEST(EvalHostCall, VoidFunctionReceivesNullOut) {
     ChupaContext *ctx = chupa_context_create();
     g_voidWasCalled = false;
     ChupaFunction fn = described("sideEffect", 0, 0, assertsOutIsNull);
-    fn.flags = 0;  // no CHUPA_FN_RETURNS_VALUE, no CHUPA_FN_PURE
+    fn.flags = 0;  // no CHUPA_FN_RETURNS_VALUE, no CHUPA_FN_EFFECT_FREE
     ASSERT_TRUE(chupa_register(ctx, &fn));
 
     ChupaScript *s = chupa_compile_script(ctx, "sideEffect();", 13);

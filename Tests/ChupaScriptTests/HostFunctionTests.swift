@@ -42,8 +42,9 @@ final class HostFunctionTests: XCTestCase {
         }
     }
 
-    /// Грязная функция в выражении отвергается компиляцией, а в скрипте нет.
-    func testImpureFunctionIsRefusedInAnExpression() throws {
+    /// Функция с эффектами в выражении отвергается компиляцией, а в скрипте
+    /// нет.
+    func testFunctionWithEffectsIsRefusedInAnExpression() throws {
         let context = Context()
         try context.register("track", flags: [.returnsValue]) { (_: Double) -> Double in 0 }
         XCTAssertThrowsError(try context.compile(expression: "track(1)") as ChupaScript.Expression<Double>)
@@ -57,7 +58,7 @@ final class HostFunctionTests: XCTestCase {
     func testTypedOverloadWithoutReturnsValueIsRefusedAtRegistration() {
         let context = Context()
         XCTAssertThrowsError(
-            try context.register("silent", flags: [.pure]) { (_: Double) -> Double in 0 }
+            try context.register("silent", flags: [.effectFree]) { (_: Double) -> Double in 0 }
         ) { error in
             XCTAssertEqual((error as? ChupaScript.Error)?.code, .usage)
         }

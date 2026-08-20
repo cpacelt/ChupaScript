@@ -21,22 +21,22 @@ inline constexpr std::uint8_t kMaxFixedArgs = 2;
 
 /// Что проходу и вычислителю нужно знать о функции, не вызывая её.
 ///
-/// pure and deterministic are declared, not derived from returnsValue.
+/// effectFree and cacheable are declared, not derived from returnsValue.
 ///
 /// Today the two coincide: push and pop are the only builtins that mutate,
 /// and they are also the only ones returning Void. That coincidence IS
 /// docs/grammar.md §6.3 — the proof that an expression cannot change data.
 /// Deriving one from the other in code would hold only while the proof
 /// holds, and the first builtin that both mutates and returns a value would
-/// silently mark itself pure, surfacing as a wrong answer in the props cache
-/// (docs/backlog.md B29) rather than as a compile error here.
+/// silently mark itself effect-free, surfacing as a wrong answer in the props
+/// cache (docs/backlog.md B29) rather than as a compile error here.
 struct BuiltinInfo {
     std::string_view name;
     std::uint8_t minArgs;
     std::uint8_t maxArgs;   ///< kVariadic — без верхней границы
     bool returnsValue;      ///< false — Void (§2.2): результат использовать нельзя
-    bool pure;              ///< false — меняет данные (docs/grammar.md §6.3)
-    bool deterministic;     ///< задел под кэш props (docs/backlog.md B29)
+    bool effectFree;        ///< false — меняет данные (docs/grammar.md §6.3)
+    bool cacheable;         ///< задел под кэш props (docs/backlog.md B29)
 };
 
 /// Находит функцию по имени. false — такой функции нет.

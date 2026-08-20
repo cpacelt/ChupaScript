@@ -30,9 +30,9 @@ RegisterOutcome HostTable::add(const ChupaFunction &desc) {
     if (desc.call == nullptr) { return RegisterOutcome::NoCallback; }
     if (desc.min_args > desc.max_args) { return RegisterOutcome::BadArity; }
 
-    const bool pure = (desc.flags & CHUPA_FN_PURE) != 0;
-    const bool deterministic = (desc.flags & CHUPA_FN_DETERMINISTIC) != 0;
-    if (deterministic && !pure) { return RegisterOutcome::BadFlags; }
+    const bool effectFree = (desc.flags & CHUPA_FN_EFFECT_FREE) != 0;
+    const bool cacheable = (desc.flags & CHUPA_FN_CACHEABLE) != 0;
+    if (cacheable && !effectFree) { return RegisterOutcome::BadFlags; }
 
     if (functions_.size() >= kMaxHostFunctions) {
         return RegisterOutcome::TableFull;

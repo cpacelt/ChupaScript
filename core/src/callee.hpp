@@ -18,7 +18,7 @@ class HostTable;
 ///   minArgs       from BuiltinInfo or from the registration
 ///   maxArgs       kVariadic — no upper bound
 ///   returnsValue  false — Void (docs/semantics.md §2.2)
-///   pure          false — may not be called from an expression
+///   effectFree    false — may not be called from an expression
 ///   call          the callback; set only when isHostCallee(ref)
 ///   userData      the host's receiver; set only when isHostCallee(ref)
 ///
@@ -36,7 +36,7 @@ struct Callee {
     std::uint8_t      minArgs = 0;
     std::uint8_t      maxArgs = 0;
     bool              returnsValue = false;
-    bool              pure = false;
+    bool              effectFree = false;
     ChupaHostFunction call = nullptr;
     void             *userData = nullptr;
 };

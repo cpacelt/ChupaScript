@@ -15,7 +15,7 @@ Callee fromBuiltin(Builtin id) noexcept {
     out.minArgs = info.minArgs;
     out.maxArgs = info.maxArgs;
     out.returnsValue = info.returnsValue;
-    out.pure = info.pure;
+    out.effectFree = info.effectFree;
     return out;
 }
 
@@ -25,7 +25,7 @@ Callee fromHost(const HostFunction &fn, std::uint8_t index) noexcept {
     out.minArgs = fn.minArgs;
     out.maxArgs = fn.maxArgs;
     out.returnsValue = (fn.flags & CHUPA_FN_RETURNS_VALUE) != 0;
-    out.pure = (fn.flags & CHUPA_FN_PURE) != 0;
+    out.effectFree = (fn.flags & CHUPA_FN_EFFECT_FREE) != 0;
     out.call = fn.call;
     out.userData = fn.userData;
     return out;

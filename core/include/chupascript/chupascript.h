@@ -252,16 +252,23 @@ CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 typedef enum ChupaFunctionFlags {
     CHUPA_FN_NONE          = 0,
     CHUPA_FN_RETURNS_VALUE = 1u << 0,  /* without it — Void (docs/semantics.md 2.2) */
-    CHUPA_FN_PURE          = 1u << 1,  /* permits skipping, repeating or reordering the
-                                         * call — nothing outside the engine notices.
-                                         * Without it — callable from a script only. */
-    CHUPA_FN_DETERMINISTIC = 1u << 2   /* permits answering a repeat call from a cache
-                                         * instead of calling again — the value stays
-                                         * correct. A function reading mutable host
-                                         * state MUST NOT be declared deterministic;
-                                         * the engine cannot check this, so it is on
-                                         * the host, same as UTF-8 above. Room for a
-                                         * props cache; not read yet. */
+    CHUPA_FN_EFFECT_FREE   = 1u << 1,  /* the call changes nothing observable outside
+                                         * the engine, so the engine may skip it —
+                                         * a short-circuited operand is never
+                                         * evaluated — and may call it again on the
+                                         * next layout pass. Without it — callable
+                                         * from a script only, where a call happens
+                                         * exactly once. */
+    CHUPA_FN_CACHEABLE     = 1u << 2   /* the same arguments give the same answer, so
+                                         * a repeat call may be answered from a cache
+                                         * instead of being made. Requires
+                                         * CHUPA_FN_EFFECT_FREE: answering from a
+                                         * cache IS skipping the call. A function
+                                         * reading mutable host state — a clock, a
+                                         * feature flag — MUST NOT be declared
+                                         * cacheable; the engine cannot check this,
+                                         * so it is on the host, same as UTF-8 above.
+                                         * Room for a props cache; not read yet. */
 } ChupaFunctionFlags;
 
 /* No upper bound on argument count — as format has. */

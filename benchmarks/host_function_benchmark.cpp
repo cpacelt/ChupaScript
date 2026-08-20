@@ -47,8 +47,8 @@
 //                         not, and chupa_value_string has to read it out.
 //
 // Both host functions used in Q1/Q3 (hostAbs, hostLen) and hostConst are
-// CHUPA_FN_PURE: docs/semantics.md §3.2 forbids calling anything else inside
-// an Expression tree, and an expression — not a script statement — is what
+// CHUPA_FN_EFFECT_FREE: docs/semantics.md §3.2 forbids calling anything else
+// inside an Expression tree, and an expression — not a script statement — is what
 // every other block in host_benchmark.cpp measures, so this file keeps the
 // same mode for the same reason.
 #include <benchmark/benchmark.h>
@@ -150,7 +150,7 @@ void BM_Host_CallNumber(benchmark::State &state) {
     fn.name_len = 7;
     fn.min_args = 1;
     fn.max_args = 1;
-    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_PURE;
+    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_EFFECT_FREE;
     fn.call = hostAbsCall;
     if (!chupa_register(ctx, &fn)) {
         state.SkipWithError(errorMessage(ctx));
@@ -186,7 +186,7 @@ void BM_Host_CallVoid(benchmark::State &state) {
     fn.name_len = 9;
     fn.min_args = 0;
     fn.max_args = 0;
-    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_PURE;
+    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_EFFECT_FREE;
     fn.call = hostConstCall;
     if (!chupa_register(ctx, &fn)) {
         state.SkipWithError(errorMessage(ctx));
@@ -210,7 +210,7 @@ void BM_Host_CallString(benchmark::State &state) {
     fn.name_len = 7;
     fn.min_args = 1;
     fn.max_args = 1;
-    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_PURE;
+    fn.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_EFFECT_FREE;
     fn.call = hostLenCall;
     if (!chupa_register(ctx, &fn)) {
         state.SkipWithError(errorMessage(ctx));

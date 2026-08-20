@@ -64,15 +64,16 @@ struct Checker {
             return;
         }
 
-        // Грязный вызов в выражении. Спрашивается только у хост-функций: у
+        // Вызов с эффектами в выражении. Спрашивается только у хост-функций: у
         // билтинов тот же факт уже закрыт правилом §6.2 «результат Void
         // употреблять нельзя», и это правило и есть доказательство §6.3.
         // Вторая жалоба на один факт удвоила бы вывод компилятора, а первым
         // сообщением осталось бы менее точное.
-        if (isHostCallee(callee.ref) && !callee.pure &&
+        if (isHostCallee(callee.ref) && !callee.effectFree &&
             mode == CompileMode::Expression) {
             report(node, ErrorCode::Usage,
-                   "impure function cannot be called from an expression");
+                   "a function with side effects cannot be called from an "
+                   "expression");
             return;
         }
 

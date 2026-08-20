@@ -1,6 +1,7 @@
 add_executable(chupascript_tests
     ast_test.cpp
     builtin_test.cpp
+    host_test.cpp
     c_api_test.cpp
     check_test.cpp
     keytable_test.cpp

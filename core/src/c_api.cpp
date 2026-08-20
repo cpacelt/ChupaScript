@@ -507,20 +507,25 @@ bool chupa_make_string(ChupaContext* ctx, const char* bytes, size_t len,
 
 // ─── Eval ───
 //
-// One clearing order for the whole section: clearError() runs BEFORE the
-// core call. On Ok the core leaves diag untouched entirely (docblock on
-// Expression::eval, core/src/expression.hpp), so without clearing first a
-// successful evaluation would leak the previous call's diagnostic.
+// clearError() runs twice around the core call, not once: BEFORE it, so a
+// successful evaluation does not leak the previous call's diagnostic (core
+// leaves diag untouched entirely on Ok — docblock on Expression::eval,
+// core/src/expression.hpp) — and again on the SUCCESS path, right after the
+// call returns.
 //
-// The core call is always handed a LOCAL Diagnostic, never c->lastError
-// directly: a callback reached mid-walk can refuse a closed door, and that
-// refusal writes through refuseWhileEvaluating into whatever slot it was
-// given. Handing it c->lastError would let a callback's refusal overwrite
-// the very slot this call is about to report success through — the walk
-// finishes Ok, core leaves diag untouched by contract, and the refusal from
-// three frames down is left standing as if it were this call's own outcome.
-// A local scratch diagnostic is thrown away on success and copied over only
-// on failure, so the door a callback knocked on can never outlive the call.
+// The second clear is the one this section used to be missing. The core
+// call is handed a LOCAL Diagnostic, never c->lastError directly: a
+// callback reached mid-walk can refuse a closed door, and that refusal
+// writes through refuseWhileEvaluating STRAIGHT into c->lastError, bypassing
+// diag entirely. The local diag keeps that refusal from being copied over as
+// this call's own outcome on failure — but if the walk still finishes Ok,
+// c->lastError is left holding the refusal from three frames down, and
+// nothing about the local diag touches it. Only an explicit clearError()
+// on the Ok path wipes it. Forbidding the guard from writing to
+// c->lastError at all was rejected: the refusal is addressed to the host that
+// called the closed door from inside its own callback, and that host reads
+// it through this same context's error state — there is nowhere else for it
+// to go.
 
 bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
@@ -534,6 +539,11 @@ bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
         c->setError(diag);
         return false;
     }
+    // A callback reached mid-walk may have refused a closed door of its own
+    // and written that refusal straight into c->lastError; the walk itself
+    // still finished Ok, so that refusal is not this call's outcome and is
+    // wiped here, on the success path — see the section comment above.
+    c->clearError();
     // Null is a kind, not an outcome: the value says so itself, and a separate
     // return code for it existed only because a double * had nowhere to put
     // "it came out null".
@@ -552,7 +562,10 @@ bool chupa_eval_number(ChupaContext* ctx, ChupaExpression* e, double* out) {
     // the outcome itself.
     CS::Diagnostic diag;
     const bool ok = c->impl.evalNumber(expr->impl, out, diag) == CS::EvalStatus::Ok;
-    if (!ok) { c->setError(diag); }
+    // See chupa_eval above: Ok still needs an explicit clear, because a
+    // nested callback may have dirtied c->lastError with a refusal of its
+    // own without failing this call.
+    if (ok) { c->clearError(); } else { c->setError(diag); }
     return ok;
 }
 
@@ -563,7 +576,8 @@ bool chupa_eval_bool(ChupaContext* ctx, ChupaExpression* e, bool* out) {
     c->clearError();
     CS::Diagnostic diag;
     const bool ok = c->impl.evalBool(expr->impl, out, diag) == CS::EvalStatus::Ok;
-    if (!ok) { c->setError(diag); }
+    // See chupa_eval above: same reason for the explicit clear on Ok.
+    if (ok) { c->clearError(); } else { c->setError(diag); }
     return ok;
 }
 
@@ -580,6 +594,12 @@ bool chupa_eval_string(ChupaContext* ctx, ChupaExpression* e,
         c->setError(diag);
         return false;
     }
+    // See chupa_eval above: the walk finished Ok, so any refusal a nested
+    // callback wrote into c->lastError along the way belongs to that door,
+    // not to this call, and is wiped before this call reports its own
+    // outcome — Null included, which is why the comment below can still
+    // promise NONE.
+    c->clearError();
     if (value.kind() == CS::Value::Kind::Null) { return false; }  // error stays NONE
     if (value.kind() != CS::Value::Kind::String) {
         c->setError({CS::ErrorCode::Type, 0, "expression is not a string"});

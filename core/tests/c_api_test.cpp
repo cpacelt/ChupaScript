@@ -1412,6 +1412,53 @@ bool probesClosedDoors(ChupaContext *ctx, const ChupaValue *, size_t,
     return true;
 }
 
+/// Стучится в закрытую дверь (set_number) и игнорирует её собственный
+/// отказ — колбэк не смотрит на результат, ему важно только, что дверь
+/// вообще потрогали. Дверь, в которую стучимся, при этом пишет
+/// CHUPA_ERR_USAGE прямо в c->lastError (refuseWhileEvaluating,
+/// c_api.cpp), в обход того diag, что видит chupa_eval*.
+void knocksOnAClosedDoor(ChupaContext *ctx) {
+    // Отказ намеренно проигнорирован: этому колбэку важно только, что дверь
+    // потрогали, а не что она ему ответила.
+    (void)chupa_context_set_number(ctx, "x", 1, 1.0);
+}
+
+/// Успешный конец: стучится и всё равно возвращает true. Без явного
+/// clearError() на пути успеха у chupa_eval* (c_api.cpp) отказ двери
+/// остался бы висеть в c->lastError, хотя сам вызов дошёл до конца.
+bool knocksAndSucceedsNumber(ChupaContext *ctx, const ChupaValue *, size_t,
+                             ChupaValue *out, void *) {
+    knocksOnAClosedDoor(ctx);
+    chupa_make_number(out, 1.0);
+    return true;
+}
+
+bool knocksAndSucceedsBool(ChupaContext *ctx, const ChupaValue *, size_t,
+                           ChupaValue *out, void *) {
+    knocksOnAClosedDoor(ctx);
+    chupa_make_bool(out, true);
+    return true;
+}
+
+bool knocksAndSucceedsString(ChupaContext *ctx, const ChupaValue *, size_t,
+                             ChupaValue *out, void *) {
+    knocksOnAClosedDoor(ctx);
+    const char text[] = "ok";
+    return chupa_make_string(ctx, text, sizeof text - 1, out);
+}
+
+/// Конец отказа: стучится, но сам колбэк тоже отказывает (без chupa_fail).
+/// Отказ двери, в которую постучались, не должен ни подмениться пустотой,
+/// ни всплыть вместо настоящей причины — настоящая причина в том, что сам
+/// колбэк отказал, и это CHUPA_ERR_HOST с фиксированным сообщением
+/// (RefusalWithoutFailGetsErrHost выше проверяет то же самое без стука в
+/// дверь; здесь — что стук по пути ничего не портит).
+bool knocksAndFails(ChupaContext *ctx, const ChupaValue *, size_t, ChupaValue *,
+                    void *) {
+    knocksOnAClosedDoor(ctx);
+    return false;
+}
+
 /// Читать значения изнутри коллбэка можно: чтение контекста не касается.
 bool readsItsArgument(ChupaContext *, const ChupaValue *args, size_t,
                       ChupaValue *out, void *) {
@@ -1660,6 +1707,114 @@ TEST(CApiHostFailure, FailOutsideACallbackIsUsage) {
     ChupaError err;
     chupa_context_error(ctx, &err);
     EXPECT_EQ(err.code, CHUPA_ERR_USAGE);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Оба конца для chupa_eval: колбэк стучится в закрытую дверь и либо всё
+/// равно завершается успехом (тогда ошибка обязана быть NONE — иначе отказ
+/// той двери подменил бы исход этого, успешного, вызова), либо отказывает
+/// сам (тогда ошибка обязана быть осмысленной причиной, а не пустотой и не
+/// той же двери, куда стучались).
+TEST(CApiClosedContext, EvalSuccessLeavesErrorClearAndFailureReportsReason) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction succeeds = described("knocksOk", 0, 0, knocksAndSucceedsNumber);
+    ChupaFunction fails = described("knocksFail", 0, 0, knocksAndFails);
+    ASSERT_TRUE(chupa_register(ctx, &succeeds));
+    ASSERT_TRUE(chupa_register(ctx, &fails));
+
+    ChupaValue out{};
+    EXPECT_TRUE(evalText(ctx, "knocksOk()", &out));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NONE);
+
+    EXPECT_FALSE(evalText(ctx, "knocksFail()", &out));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiClosedContext, EvalNumberSuccessLeavesErrorClearAndFailureReportsReason) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction succeeds = described("knocksOk", 0, 0, knocksAndSucceedsNumber);
+    ChupaFunction fails = described("knocksFail", 0, 0, knocksAndFails);
+    ASSERT_TRUE(chupa_register(ctx, &succeeds));
+    ASSERT_TRUE(chupa_register(ctx, &fails));
+
+    ChupaExpression *okExpr = chupa_compile_expression(ctx, "knocksOk()", 10);
+    ASSERT_NE(okExpr, nullptr);
+    double number = 0.0;
+    EXPECT_TRUE(chupa_eval_number(ctx, okExpr, &number));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NONE);
+    chupa_expression_destroy(okExpr);
+
+    ChupaExpression *failExpr = chupa_compile_expression(ctx, "knocksFail()", 12);
+    ASSERT_NE(failExpr, nullptr);
+    EXPECT_FALSE(chupa_eval_number(ctx, failExpr, &number));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+    chupa_expression_destroy(failExpr);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiClosedContext, EvalBoolSuccessLeavesErrorClearAndFailureReportsReason) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction succeeds = described("knocksOk", 0, 0, knocksAndSucceedsBool);
+    ChupaFunction fails = described("knocksFail", 0, 0, knocksAndFails);
+    ASSERT_TRUE(chupa_register(ctx, &succeeds));
+    ASSERT_TRUE(chupa_register(ctx, &fails));
+
+    ChupaExpression *okExpr = chupa_compile_expression(ctx, "knocksOk()", 10);
+    ASSERT_NE(okExpr, nullptr);
+    bool boolean = false;
+    EXPECT_TRUE(chupa_eval_bool(ctx, okExpr, &boolean));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NONE);
+    chupa_expression_destroy(okExpr);
+
+    ChupaExpression *failExpr = chupa_compile_expression(ctx, "knocksFail()", 12);
+    ASSERT_NE(failExpr, nullptr);
+    EXPECT_FALSE(chupa_eval_bool(ctx, failExpr, &boolean));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+    chupa_expression_destroy(failExpr);
+
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiClosedContext, EvalStringSuccessLeavesErrorClearAndFailureReportsReason) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction succeeds = described("knocksOk", 0, 0, knocksAndSucceedsString);
+    ChupaFunction fails = described("knocksFail", 0, 0, knocksAndFails);
+    ASSERT_TRUE(chupa_register(ctx, &succeeds));
+    ASSERT_TRUE(chupa_register(ctx, &fails));
+
+    ChupaExpression *okExpr = chupa_compile_expression(ctx, "knocksOk()", 10);
+    ASSERT_NE(okExpr, nullptr);
+    const char *bytes = nullptr;
+    size_t len = 0;
+    EXPECT_TRUE(chupa_eval_string(ctx, okExpr, &bytes, &len));
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_NONE);
+    chupa_expression_destroy(okExpr);
+
+    ChupaExpression *failExpr = chupa_compile_expression(ctx, "knocksFail()", 12);
+    ASSERT_NE(failExpr, nullptr);
+    EXPECT_FALSE(chupa_eval_string(ctx, failExpr, &bytes, &len));
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+    chupa_expression_destroy(failExpr);
 
     chupa_context_destroy(ctx);
 }

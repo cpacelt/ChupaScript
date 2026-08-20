@@ -43,7 +43,7 @@ TEST(Box, EmptyStringNodeHasEmptyView) {
 }
 
 TEST(Box, ArrayBoxStartsEmpty) {
-    ArrayBox *a = CS::detail::makeArrayBox(4);
+    ArrayBox *a = CS::detail::makeArrayBox(4, 1);
     EXPECT_EQ(a->size(), 0u);
     EXPECT_GE(a->cap, 4u);
     CS::detail::release(a);
@@ -53,7 +53,7 @@ TEST(Box, ArrayBoxStartsEmpty) {
 /// A literal aggregate costs one allocation, not two: the elements live in the
 /// tail right behind the header, the way StringBox's bytes already do.
 TEST(Box, LiteralAggregateIsOneAllocation) {
-    ArrayBox *a = CS::detail::makeArrayBox(3);
+    ArrayBox *a = CS::detail::makeArrayBox(3, 1);
     const char *header = reinterpret_cast<const char *>(a);
     const char *elements = reinterpret_cast<const char *>(a->data);
     EXPECT_EQ(elements, header + sizeof(ArrayBox));
@@ -64,7 +64,7 @@ TEST(Box, LiteralAggregateIsOneAllocation) {
 /// at this box keeps pointing at it. Growing the box itself would invalidate
 /// all of them at once.
 TEST(Box, BoxAddressSurvivesOutgrowingTheTail) {
-    ArrayBox *a = CS::detail::makeArrayBox(1);
+    ArrayBox *a = CS::detail::makeArrayBox(1, 1);
     const ArrayBox *before = a;
     a->push(Value::number(1));
     a->push(Value::number(2));
@@ -84,7 +84,7 @@ TEST(Box, BoxAddressSurvivesOutgrowingTheTail) {
 // it.
 TEST(Box, ReleaseOfArrayReleasesElement) {
     StringBox *s = CS::detail::makeStringBox("x");
-    ArrayBox *a = CS::detail::makeArrayBox(1);
+    ArrayBox *a = CS::detail::makeArrayBox(1, 1);
     a->push(Value::string(s));
     CS::detail::retain(s);   // ссылка ячейки массива
     CS::detail::release(s);  // ссылка создателя ушла, держит массив
@@ -96,7 +96,7 @@ TEST(Box, ReleaseOfArrayReleasesElement) {
 TEST(Box, ReleaseOfArrayReleasesElementsLiveCount) {
     const std::size_t before = CS::detail::liveBoxCount();
     StringBox *s = CS::detail::makeStringBox("x");
-    ArrayBox *a = CS::detail::makeArrayBox(1);
+    ArrayBox *a = CS::detail::makeArrayBox(1, 1);
     a->push(Value::string(s));
     CS::detail::retain(s);   // ссылка ячейки массива
     CS::detail::release(s);  // ссылка создателя ушла, держит массив
@@ -108,7 +108,7 @@ TEST(Box, ReleaseOfArrayReleasesElementsLiveCount) {
 
 TEST(Box, ObjectBoxHoldsKeyTable) {
     KeyTable *t = KeyTable::create();
-    ObjectBox *o = CS::detail::makeObjectBox(t, 2);
+    ObjectBox *o = CS::detail::makeObjectBox(t, 2, 1);
     KeyTable::release(t);  // ссылка создателя ушла, держит объект
     EXPECT_EQ(o->keys->intern("name"), 0u);
     CS::detail::release(o);
@@ -118,9 +118,9 @@ TEST(Box, ObjectBoxHoldsKeyTable) {
 TEST(Box, ReleaseOfObjectReleasesValues) {
     const std::size_t before = CS::detail::liveBoxCount();
     KeyTable *t = KeyTable::create();
-    ObjectBox *o = CS::detail::makeObjectBox(t, 1);
+    ObjectBox *o = CS::detail::makeObjectBox(t, 1, 1);
     KeyTable::release(t);
-    ArrayBox *a = CS::detail::makeArrayBox(0);
+    ArrayBox *a = CS::detail::makeArrayBox(0, 1);
     o->insert(0, CS::detail::Entry{o->keys->intern("rows"),
                                    CS::detail::keyPrefix("rows"),
                                    Value::array(a)});
@@ -135,7 +135,7 @@ TEST(Box, ReleaseOfObjectReleasesValues) {
 #ifndef NDEBUG
 TEST(Box, LiveCountReturnsToWhereItStarted) {
     const std::size_t before = CS::detail::liveBoxCount();
-    ArrayBox *a = CS::detail::makeArrayBox(0);
+    ArrayBox *a = CS::detail::makeArrayBox(0, 1);
     EXPECT_EQ(CS::detail::liveBoxCount(), before + 1);
     CS::detail::release(a);
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
@@ -143,7 +143,7 @@ TEST(Box, LiveCountReturnsToWhereItStarted) {
 #endif
 
 TEST(Box, RetainKeepsNodeAlivePastFirstRelease) {
-    ArrayBox *a = CS::detail::makeArrayBox(0);
+    ArrayBox *a = CS::detail::makeArrayBox(0, 1);
     CS::detail::retain(a);
     CS::detail::release(a);
     EXPECT_EQ(a->rc, 1u);
@@ -180,6 +180,64 @@ TEST(Box, LiveCountSurvivesTwoContextsOnTwoThreads) {
 }
 #endif
 
+// См. box.cpp: ArrayBox/ObjectBox формально не standard-layout (Box-база и
+// сама коробка обе несут поля), поэтому offsetof здесь честно предупреждает
+// -Winvalid-offsetof, хоть раскладка и корректна для обоих компиляторов.
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+TEST(BoxEpoch, BothAggregatesKeepTheEpochAtTheSameOffset) {
+    // Одинаковое смещение — не совпадение, а требование: epochAddressOf
+    // отвечает одной строкой на оба вида, и от вида коробки ответ не зависит.
+    EXPECT_EQ(offsetof(CS::detail::ArrayBox, epoch),
+              offsetof(CS::detail::ObjectBox, epoch));
+}
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
+
+TEST(BoxEpoch, ANewBoxTakesItsNumberFromTheClock) {
+    CS::Store store;
+    CS::Deferred dead;
+    const CS::Epoch before = store.clock().now();
+
+    const Value a = CS::makeArray(0, store.clock(), dead);
+
+    EXPECT_GT(*CS::epochAddressOf(a), before);
+}
+
+TEST(BoxEpoch, ABoxBornLaterCarriesAStrictlyGreaterNumber) {
+    // Это и закрывает переиспользование адреса (спека §4.4): коробка, севшая
+    // на адрес умершей, приносит номер больше всего, что читатель мог видеть.
+    CS::Store store;
+    CS::Deferred dead;
+    const Value first = CS::makeArray(0, store.clock(), dead);
+    const Value second = CS::makeObject(store.keys(), 0, store.clock(), dead);
+
+    EXPECT_GT(*CS::epochAddressOf(second), *CS::epochAddressOf(first));
+}
+
+TEST(BoxEpoch, ADeadBoxAddressReusedCannotLookUnchanged) {
+    CS::Store store;
+    CS::Deferred dead;
+    CS::Epoch seen = 0;
+    const void *address = nullptr;
+    {
+        CS::Deferred scoped;
+        const Value doomed = CS::makeArray(0, store.clock(), scoped);
+        seen = *CS::epochAddressOf(doomed);
+        address = doomed.box();
+    }  // scoped слит — коробка освобождена
+
+    const Value fresh = CS::makeArray(0, store.clock(), dead);
+    if (fresh.box() == address) {
+        EXPECT_GT(*CS::epochAddressOf(fresh), seen);
+    } else {
+        GTEST_SKIP() << "аллокатор отдал другой адрес — проверять нечего";
+    }
+}
+
 }  // namespace
 
 namespace {
@@ -190,7 +248,7 @@ namespace {
 /// — ссылка создателя, и слить список здесь значило бы убить его на возврате.
 CS::Value objectWith(CS::Store &store, CS::Deferred &dead,
                      std::initializer_list<std::string_view> keys) {
-    CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), dead);
+    CS::Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys.size()), store.clock(), dead);
     double n = 0.0;
     for (std::string_view key : keys) { CS::objectSet(o, key, CS::Value::number(n++), dead); }
     return o;

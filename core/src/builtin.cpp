@@ -233,7 +233,7 @@ bool applyBuiltin(Builtin id, Execution &exec, const Value *args,
             }
             const std::uint32_t size = CS::objectCount(args[0]);
             // Точное выделение: длина известна заранее.
-            Value result = CS::makeArray(size, exec.deferred());
+            Value result = CS::makeArray(size, exec.clock(), exec.deferred());
             for (std::uint32_t i = 0; i < size; ++i) {
                 // Порядок наружу не обещан (§8.2); мы отдаём тот, в котором
                 // ключи лежат, и обещанием это не становится.

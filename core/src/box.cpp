@@ -79,11 +79,12 @@ std::uint32_t grownCapacity(std::uint32_t cap) noexcept {
 
 }  // namespace
 
-ArrayBox *makeArrayBox(std::uint32_t capacity) {
+ArrayBox *makeArrayBox(std::uint32_t capacity, Epoch birth) {
     void *raw = ::operator new(sizeof(ArrayBox) + capacity * sizeof(Value));
     ArrayBox *box = new (raw) ArrayBox;
     box->rc = 1;
     box->kind = Value::Kind::Array;
+    box->epoch = birth;
     box->len = 0;
     box->cap = capacity;
     box->data = box->tail();
@@ -105,12 +106,13 @@ void ArrayBox::push(Value v) {
     data[len++] = v;
 }
 
-ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity) {
+ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity, Epoch birth) {
     assert(keys != nullptr);
     void *raw = ::operator new(sizeof(ObjectBox) + capacity * sizeof(Entry));
     ObjectBox *box = new (raw) ObjectBox;
     box->rc = 1;
     box->kind = Value::Kind::Object;
+    box->epoch = birth;
     box->keys = keys;
     KeyTable::retain(keys);
     box->len = 0;
@@ -119,6 +121,24 @@ ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity) {
     CHUPA_COUNT_BOX_BORN();
     return box;
 }
+
+// ArrayBox и ObjectBox не standard-layout формально: и у Box (базы), и у них
+// самих есть нестатические поля данных, а стандарт требует, чтобы поля были
+// только у одного класса в иерархии. -Winvalid-offsetof предупреждает
+// поэтому честно — но раскладка здесь одиночным наследованием без
+// виртуальных функций, и оба компилятора (Itanium ABI, MSVC ABI) кладут базу
+// первым подобъектом одинаково что для ArrayBox, что для ObjectBox. Смещение
+// вычисляется корректно; предупреждение снимается точечно, а не глобально.
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+static_assert(offsetof(detail::ArrayBox, epoch) ==
+                  offsetof(detail::ObjectBox, epoch),
+              "epochAddressOf читает эпоху одним смещением на оба вида");
+#if defined(__GNUC__) || defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
 
 void ObjectBox::insert(std::uint32_t at, const Entry &entry) {
     assert(at <= len);

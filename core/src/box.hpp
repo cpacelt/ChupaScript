@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "epoch.hpp"
 #include "value.hpp"
 
 namespace CS {
@@ -74,6 +75,16 @@ struct StringBox : Box {
 /// and makeArray is already called with the exact capacity. Growth happens
 /// only to an array grown through push (docs/semantics.md §8.5).
 struct ArrayBox : Box {
+    /// Эпоха коробки — первым членом после общего заголовка, и в ObjectBox
+    /// тоже первым: смещения совпадают намеренно и сторожатся static_assert
+    /// в box.cpp, а читает эпоху разбор по виду в epochAddressOf (box.hpp) —
+    /// не единый каст в ArrayBox, который был бы UB для ObjectBox.
+    ///
+    /// Наружу смещение не объявляется: адрес эпохи уезжает к читателю
+    /// готовым, в Dep::epoch, и считать его хосту незачем. Так раскладка
+    /// коробки остаётся приватной на всех трёх платформах.
+    Epoch epoch;
+
     std::uint32_t len;
     std::uint32_t cap;
     Value *data;
@@ -132,6 +143,7 @@ struct Entry {
 ///   ObjectBox                             one allocation
 ///  ┌──────────────────────────────┐
 ///  │ rc, kind                     │ Box
+///  │ epoch                        │      same offset as ArrayBox::epoch
 ///  │ keys ── KeyTable *           │      held by reference
 ///  │ len, cap                     │
 ///  │ data ──────────┐             │
@@ -139,6 +151,10 @@ struct Entry {
 ///  │ Entry  Entry  Entry  ...     │      tail, cap slots, sorted by key bytes
 ///  └──────────────────────────────┘
 struct ObjectBox : Box {
+    /// See ArrayBox::epoch: first member after Box in both aggregates, on
+    /// purpose, so epochAddressOf's kind-dispatch answers with one offset.
+    Epoch epoch;
+
     KeyTable *keys;              // удерживается ссылкой
     std::uint32_t len;
     std::uint32_t cap;
@@ -181,10 +197,11 @@ std::uint32_t findEntry(const ObjectBox &box, std::string_view key,
                         std::uint32_t prefix, bool *found) noexcept;
 
 /// Счётчик у новорождённого — 1, и эта ссылка принадлежит создателю.
+/// birth — номер с ленты контекста: рождение берёт из неё так же, как мутация.
 StringBox *makeStringBox(std::string_view bytes);
-ArrayBox *makeArrayBox(std::uint32_t capacity);
+ArrayBox *makeArrayBox(std::uint32_t capacity, Epoch birth);
 /// Ссылку на таблицу коробка берёт сама.
-ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity);
+ObjectBox *makeObjectBox(KeyTable *keys, std::uint32_t capacity, Epoch birth);
 
 /// Коробка, которой значение владеет, либо nullptr, если не владеет ничем.
 ///
@@ -248,5 +265,22 @@ inline void retainValue(Value v) noexcept {
 /// expression while the slice was still being read. Bind it to a named
 /// const Value & instead.
 std::string_view stringBytes(Value &&) = delete;
+
+/// Адрес эпохи агрегата — то, что уезжает читателю зависимостью.
+///
+/// Предусловие: v.kind() — Array либо Object. У скаляра и у строки эпохи нет
+/// и быть не может: скаляру не за что зацепиться, а строку в языке нечем
+/// изменить (спека §2.8).
+[[nodiscard]] inline const Epoch *epochAddressOf(const Value &v) noexcept {
+    assert(v.kind() == Value::Kind::Array || v.kind() == Value::Kind::Object);
+    // Разбор по виду, а не единый каст в ArrayBox: смещения у обеих коробок
+    // совпадают (static_assert в box.cpp это сторожит), но каст объекта к
+    // неродственному типу — UB, и UBSan на нём срабатывает. Цена разбора —
+    // один предсказуемый переход, и только на пути промаха.
+    if (v.kind() == Value::Kind::Array) {
+        return &static_cast<const detail::ArrayBox *>(v.box())->epoch;
+    }
+    return &static_cast<const detail::ObjectBox *>(v.box())->epoch;
+}
 
 }  // namespace CS

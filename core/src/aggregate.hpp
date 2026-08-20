@@ -4,6 +4,7 @@
 
 #include "box.hpp"
 #include "deferred.hpp"
+#include "epoch.hpp"
 #include "keytable.hpp"
 #include "value.hpp"
 
@@ -125,10 +126,17 @@ namespace CS {
 /// Создаёт пустой массив. capacity — сколько элементов выделить заранее; на
 /// длину не влияет, элементы добавляет только arrayPush.
 ///
+/// clock — лента контекста: рождение берёт номер оттуда же, откуда мутация.
+/// Параметром, а не из хранилища: коробке хранилище не нужно ни для чего, и
+/// это свойство здесь ценится — прочитать агрегат вправе кто угодно, в том
+/// числе когда контекста уже нет. Лента нужна только на запись, а записи
+/// снаружи контекста в языке не существует.
+///
 /// Ссылка создателя уходит в dead: агрегат, который никто не удержал, умрёт на
 /// ближайшей границе операции, а не повиснет.
-[[nodiscard]] inline Value makeArray(std::uint32_t capacity, Deferred &dead) {
-    detail::ArrayBox *box = detail::makeArrayBox(capacity);
+[[nodiscard]] inline Value makeArray(std::uint32_t capacity, EpochClock &clock,
+                                     Deferred &dead) {
+    detail::ArrayBox *box = detail::makeArrayBox(capacity, clock.tick());
     dead.take(box);  // ссылка создателя — до ближайшей границы
     return Value::array(box);
 }
@@ -138,9 +146,11 @@ namespace CS {
 /// keys — таблица, в которую коробка будет интернировать имена своих полей и
 /// которую удержит своей ссылкой. Даёт её тот, кто таблицей владеет, —
 /// постоянное хранилище контекста.
+///
+/// clock — та же лента, что и у makeArray: см. её обоснование там.
 [[nodiscard]] inline Value makeObject(KeyTable *keys, std::uint32_t capacity,
-                                      Deferred &dead) {
-    detail::ObjectBox *box = detail::makeObjectBox(keys, capacity);
+                                      EpochClock &clock, Deferred &dead) {
+    detail::ObjectBox *box = detail::makeObjectBox(keys, capacity, clock.tick());
     dead.take(box);  // ссылка создателя — до ближайшей границы
     return Value::object(box);
 }

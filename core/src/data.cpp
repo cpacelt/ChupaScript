@@ -69,7 +69,7 @@ bool buildValue(const Ast &ast, std::string_view source, NodeId node,
             const std::uint32_t count = ast.childCount(node);
             // Размер известен заранее, поэтому ёмкость выделяется точно и
             // построение не оставляет мусора.
-            const Value array = CS::makeArray(count, dead);
+            const Value array = CS::makeArray(count, store.clock(), dead);
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
                 if (!buildValue(ast, source, ast.child(node, i), store, dead, &element, diag)) {
@@ -84,7 +84,7 @@ bool buildValue(const Ast &ast, std::string_view source, NodeId node,
         case NodeKind::Object: {
             // Дети чередуются: ключ, значение, ключ, значение.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = CS::makeObject(store.keys(), count / 2, dead);
+            const Value object = CS::makeObject(store.keys(), count / 2, store.clock(), dead);
             std::string scratch;
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();

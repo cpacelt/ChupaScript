@@ -61,7 +61,7 @@ TEST(StoreMetrics, ReservedCoversUsed) {
 TEST(StoreArray, EmptyArrayHasNoElements) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     EXPECT_EQ(a.kind(), Value::Kind::Array);
     EXPECT_EQ(CS::arrayCount(a), 0u);
 }
@@ -69,13 +69,13 @@ TEST(StoreArray, EmptyArrayHasNoElements) {
 TEST(StoreArray, CapacityDoesNotCreateElements) {
     Store store;
     Deferred dead;
-    EXPECT_EQ(CS::arrayCount(CS::makeArray(16, dead)), 0u);
+    EXPECT_EQ(CS::arrayCount(CS::makeArray(16, store.clock(), dead)), 0u);
 }
 
 TEST(StoreArray, ReadBeyondEndGivesNull) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     // semantics.md §6.1: чтение за границей — штатная ситуация.
     EXPECT_EQ(CS::arrayAt(a, 0).kind(), Value::Kind::Null);
     EXPECT_EQ(CS::arrayAt(a, 1000).kind(), Value::Kind::Null);
@@ -84,7 +84,7 @@ TEST(StoreArray, ReadBeyondEndGivesNull) {
 TEST(StoreArray, WriteBeyondEndIsRefused) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(8, dead);
+    const Value a = CS::makeArray(8, store.clock(), dead);
     // semantics.md §7.2: запись за границу — ошибка, ёмкость её не оправдывает.
     EXPECT_FALSE(CS::arraySet(a, 0, Value::number(1.0), dead));
 }
@@ -92,13 +92,13 @@ TEST(StoreArray, WriteBeyondEndIsRefused) {
 TEST(StoreArray, TwoEmptyArraysAreDistinct) {
     Store store;
     Deferred dead;
-    EXPECT_FALSE(CS::makeArray(0, dead).sameAggregate(CS::makeArray(0, dead)));
+    EXPECT_FALSE(CS::makeArray(0, store.clock(), dead).sameAggregate(CS::makeArray(0, store.clock(), dead)));
 }
 
 TEST(StoreArray, CopyOfValueIsTheSameArray) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     const Value b = a;
     EXPECT_TRUE(a.sameAggregate(b));
 }
@@ -106,7 +106,7 @@ TEST(StoreArray, CopyOfValueIsTheSameArray) {
 TEST(StoreArrayMutation, PushAppendsInOrder) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(a, Value::number(1.0));
     CS::arrayPush(a, Value::number(2.0));
     ASSERT_EQ(CS::arrayCount(a), 2u);
@@ -117,7 +117,7 @@ TEST(StoreArrayMutation, PushAppendsInOrder) {
 TEST(StoreArrayMutation, SetReplacesExistingElement) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(a, Value::number(1.0));
     EXPECT_TRUE(CS::arraySet(a, 0, Value::boolean(true), dead));
     EXPECT_TRUE(CS::arrayAt(a, 0).booleanValue());
@@ -126,7 +126,7 @@ TEST(StoreArrayMutation, SetReplacesExistingElement) {
 TEST(StoreArrayMutation, PopReturnsLastAndShrinks) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(a, Value::number(1.0));
     CS::arrayPush(a, Value::number(2.0));
 
@@ -140,7 +140,7 @@ TEST(StoreArrayMutation, PopOnEmptyIsRefused) {
     Store store;
     Deferred dead;
     Value taken = Value::number(7.0);
-    EXPECT_FALSE(CS::arrayPop(CS::makeArray(0, dead), &taken, dead));
+    EXPECT_FALSE(CS::arrayPop(CS::makeArray(0, store.clock(), dead), &taken, dead));
     // Отказ не трогает выходной параметр.
     EXPECT_EQ(taken.numberValue(), 7.0);
 }
@@ -148,7 +148,7 @@ TEST(StoreArrayMutation, PopOnEmptyIsRefused) {
 TEST(StoreArrayMutation, AliasSurvivesGrowth) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     const Value alias = a;
 
     // Рост через все удвоения: 4, 8, 16, 32 — данные переезжают четырежды.
@@ -166,7 +166,7 @@ TEST(StoreArrayMutation, AliasSurvivesGrowth) {
 TEST(StoreArrayMutation, WriteThroughAliasIsSeenByOriginal) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(a, Value::number(1.0));
     const Value alias = a;
 
@@ -177,8 +177,8 @@ TEST(StoreArrayMutation, WriteThroughAliasIsSeenByOriginal) {
 TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
     Store store;
     Deferred dead;
-    const Value outer = CS::makeArray(0, dead);
-    const Value inner = CS::makeArray(0, dead);
+    const Value outer = CS::makeArray(0, store.clock(), dead);
+    const Value inner = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(outer, inner);
     CS::arrayPush(inner, Value::number(1.0));
 
@@ -190,7 +190,7 @@ TEST(StoreArrayMutation, NestedArrayKeepsIdentity) {
 TEST(StoreArrayMutation, ArrayMayContainItself) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(a, a);
     // semantics.md §2.3: цикл допустим, рекурсивного обхода в слое нет.
     EXPECT_TRUE(CS::arrayAt(a, 0).sameAggregate(a));
@@ -203,7 +203,7 @@ TEST(StoreArrayMutation, ArrayMayContainItself) {
 TEST(StoreArrayMutation, PreallocatedCapacityGrowsNothing) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(64, dead);
+    const Value a = CS::makeArray(64, store.clock(), dead);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 64; ++i) {
         CS::arrayPush(a, Value::number(static_cast<double>(i)));
@@ -222,7 +222,7 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
     // ничего: его метрика байт про элементы не знает вовсе.
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(0, dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     const std::size_t before = store.bytesUsed();
     const std::size_t nodes = CS::detail::liveBoxCount();
     for (int i = 0; i < 64; ++i) {
@@ -238,7 +238,7 @@ TEST(StoreArrayMutation, GrowthLeavesNoGarbageBehind) {
 TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
     Store store;
     Deferred dead;
-    const Value a = CS::makeArray(100, dead);
+    const Value a = CS::makeArray(100, store.clock(), dead);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 100; ++i) {
         CS::arrayPush(a, Value::number(static_cast<double>(i)));
@@ -250,7 +250,7 @@ TEST(StoreArrayMutation, RequestedCapacityIsAllocatedExactly) {
 TEST(StoreObject, EmptyObjectHasNoKeys) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     EXPECT_EQ(o.kind(), Value::Kind::Object);
     EXPECT_EQ(CS::objectCount(o), 0u);
 }
@@ -258,7 +258,7 @@ TEST(StoreObject, EmptyObjectHasNoKeys) {
 TEST(StoreObject, MissingKeyReadsAsNull) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     // semantics.md §6.2: отсутствующий ключ читается как null.
     EXPECT_EQ(CS::objectGet(o, "нет").kind(), Value::Kind::Null);
     EXPECT_FALSE(CS::objectHas(o, "нет"));
@@ -267,7 +267,7 @@ TEST(StoreObject, MissingKeyReadsAsNull) {
 TEST(StoreObject, StoredValueIsFound) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "count", Value::number(3.0), dead);
     EXPECT_TRUE(CS::objectHas(o, "count"));
     EXPECT_EQ(CS::objectGet(o, "count").numberValue(), 3.0);
@@ -277,7 +277,7 @@ TEST(StoreObject, StoredValueIsFound) {
 TEST(StoreObject, NullValueIsDistinctFromAbsence) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "key", Value::null(), dead);
     // semantics.md §6.2: отличить одно от другого можно только через has.
     EXPECT_EQ(CS::objectGet(o, "key").kind(), Value::Kind::Null);
@@ -287,7 +287,7 @@ TEST(StoreObject, NullValueIsDistinctFromAbsence) {
 TEST(StoreObject, FindsKeyAmongMany) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     const char *keys[] = {"zeta", "alpha", "mu", "beta", "omega", "kappa", "iota"};
     for (int i = 0; i < 7; ++i) {
         CS::objectSet(o, keys[i], Value::number(static_cast<double>(i)), dead);
@@ -301,7 +301,7 @@ TEST(StoreObject, FindsKeyAmongMany) {
 TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "item", Value::number(1.0), dead);
     CS::objectSet(o, "items", Value::number(2.0), dead);
     EXPECT_EQ(CS::objectGet(o, "item").numberValue(), 1.0);
@@ -311,7 +311,7 @@ TEST(StoreObject, PrefixKeyIsNotConfusedWithLongerOne) {
 TEST(StoreObject, NonAsciiKeyIsFound) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "имя", CS::materialize("Вася", dead), dead);
     const Value name = CS::objectGet(o, "имя");
     EXPECT_EQ(CS::stringBytes(name), "Вася");
@@ -320,7 +320,7 @@ TEST(StoreObject, NonAsciiKeyIsFound) {
 TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "", Value::number(1.0), dead);
     EXPECT_TRUE(CS::objectHas(o, ""));
     EXPECT_EQ(CS::objectGet(o, "").numberValue(), 1.0);
@@ -329,7 +329,7 @@ TEST(StoreObject, EmptyKeyIsAKeyLikeAnyOther) {
 TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "", Value::number(1.0), dead);
     CS::objectSet(o, "другой", Value::number(2.0), dead);
 
@@ -344,7 +344,7 @@ TEST(StoreObject, EmptyKeyIsDistinguishableFromAbsentOne) {
 TEST(StoreObject, EnumerationYieldsEveryKey) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "b", Value::number(2.0), dead);
     CS::objectSet(o, "a", Value::number(1.0), dead);
 
@@ -363,7 +363,7 @@ TEST(StoreObject, EnumerationYieldsEveryKey) {
 TEST(StoreObject, EnumerationBeyondEndIsEmpty) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     EXPECT_TRUE(CS::objectKeyAt(o, 0).empty());
     EXPECT_EQ(CS::objectValueAt(o, 0).kind(), Value::Kind::Null);
 }
@@ -371,13 +371,13 @@ TEST(StoreObject, EnumerationBeyondEndIsEmpty) {
 TEST(StoreObject, TwoEmptyObjectsAreDistinct) {
     Store store;
     Deferred dead;
-    EXPECT_FALSE(CS::makeObject(store.keys(), 0, dead).sameAggregate(CS::makeObject(store.keys(), 0, dead)));
+    EXPECT_FALSE(CS::makeObject(store.keys(), 0, store.clock(), dead).sameAggregate(CS::makeObject(store.keys(), 0, store.clock(), dead)));
 }
 
 TEST(StoreObjectMutation, RepeatedKeyReplacesValue) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "k", Value::number(1.0), dead);
     CS::objectSet(o, "k", Value::number(2.0), dead);
     EXPECT_EQ(CS::objectCount(o), 1u);
@@ -387,7 +387,7 @@ TEST(StoreObjectMutation, RepeatedKeyReplacesValue) {
 TEST(StoreObjectMutation, ReplacementCopiesNoKeyBytes) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "k", Value::number(1.0), dead);
     const std::size_t before = store.bytesUsed();
     CS::objectSet(o, "k", Value::number(2.0), dead);
@@ -397,7 +397,7 @@ TEST(StoreObjectMutation, ReplacementCopiesNoKeyBytes) {
 TEST(StoreObjectMutation, InsertionKeepsSortedOrder) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     const char *keys[] = {"delta", "alpha", "charlie", "bravo", "echo"};
     for (const char *key : keys) { CS::objectSet(o, key, Value::null(), dead); }
 
@@ -412,7 +412,7 @@ TEST(StoreObjectMutation, InsertionKeepsSortedOrder) {
 TEST(StoreObjectMutation, EveryKeySurvivesGrowth) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     // Тридцать ключей — рост через 4, 8, 16, 32: пары переезжают четырежды.
     for (int i = 0; i < 30; ++i) {
         CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), dead);
@@ -427,7 +427,7 @@ TEST(StoreObjectMutation, EveryKeySurvivesGrowth) {
 TEST(StoreObjectMutation, AliasSeesNewKey) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     const Value alias = o;
     for (int i = 0; i < 30; ++i) {
         CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), dead);
@@ -441,7 +441,7 @@ TEST(StoreObjectMutation, AliasSeesNewKey) {
 TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     const Value keyValue = CS::materialize("динамический", dead);
     // The key is a string Value, not a literal spelled inline: the same shape
     // obj[k] uses.
@@ -452,7 +452,7 @@ TEST(StoreObjectMutation, KeyTakenFromTheSameStoreWorks) {
 TEST(StoreObjectMutation, ObjectMayContainItself) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(o, "self", o, dead);
     // semantics.md §2.3: obj['self'] = obj — корректная программа.
     EXPECT_TRUE(CS::objectGet(o, "self").sameAggregate(o));
@@ -465,8 +465,8 @@ TEST(StoreObjectMutation, ObjectMayContainItself) {
 TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
-    const Value a = CS::makeArray(0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::objectSet(o, "items", a, dead);
     CS::arrayPush(a, o);
 
@@ -481,8 +481,8 @@ TEST(StoreObjectMutation, ObjectHoldsArrayAndArrayHoldsObject) {
 TEST(StoreObjectMutation, PushIntoStoredArrayIsSeenThroughTheObject) {
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 0, dead);
-    const Value a = CS::makeArray(0, dead);
+    const Value o = CS::makeObject(store.keys(), 0, store.clock(), dead);
+    const Value a = CS::makeArray(0, store.clock(), dead);
     CS::objectSet(o, "items", a, dead);
 
     for (int i = 0; i < 20; ++i) {
@@ -497,7 +497,7 @@ TEST(StoreObjectMutation, KeyBytesLiveInTheTableNotInTheStore) {
     // таблице интернирования, а хранилище о нём не знает.
     Store store;
     Deferred dead;
-    const Value o = CS::makeObject(store.keys(), 8, dead);
+    const Value o = CS::makeObject(store.keys(), 8, store.clock(), dead);
     const std::size_t afterReserve = store.bytesUsed();
     for (int i = 0; i < 8; ++i) {
         CS::objectSet(o, "k" + std::to_string(i), Value::null(), dead);
@@ -512,7 +512,7 @@ TEST(StoreObjectMutation, RepeatedKeyIsInternedOnce) {
     Store store;
     Deferred dead;
     for (int i = 0; i < 1000; ++i) {
-        const Value o = CS::makeObject(store.keys(), 1, dead);
+        const Value o = CS::makeObject(store.keys(), 1, store.clock(), dead);
         CS::objectSet(o, "name", Value::number(i), dead);
     }
     EXPECT_EQ(store.keys()->count(), 1u);
@@ -559,7 +559,7 @@ TEST(StoreGlobals, RepeatedSetReplacesValueWithoutAddingName) {
 TEST(StoreGlobals, GlobalHoldsAggregate) {
     Store store;
     Deferred dead;
-    const Value items = CS::makeArray(0, dead);
+    const Value items = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(items, Value::number(1.0));
     store.setGlobal("items", items, dead);
 
@@ -570,7 +570,7 @@ TEST(StoreGlobals, GlobalHoldsAggregate) {
 TEST(StoreGlobals, MutationThroughGlobalIsSeenThroughTheOriginal) {
     Store store;
     Deferred dead;
-    const Value items = CS::makeArray(0, dead);
+    const Value items = CS::makeArray(0, store.clock(), dead);
     store.setGlobal("items", items, dead);
     for (int i = 0; i < 30; ++i) {
         CS::arrayPush(store.global("items"), Value::number(static_cast<double>(i)));

@@ -387,7 +387,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // the new array takes a reference, not a copy, and every value it
             // can hold is already a self-contained box.
             // Размер известен заранее — точное выделение, без переездов.
-            const Value array = CS::makeArray(count, exec.deferred());
+            const Value array = CS::makeArray(count, exec.clock(), exec.deferred());
             for (std::uint32_t i = 0; i < count; ++i) {
                 Value element = Value::null();
                 if (!eval(ast, source, ast.child(node, i), exec, &element, diag)) {
@@ -403,7 +403,7 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
             // Дети чередуются: ключ, значение. Ключ — строковый литерал по
             // грамматике, приведение §4 к нему не применяется.
             const std::uint32_t count = ast.childCount(node);
-            const Value object = CS::makeObject(exec.keys(), count / 2, exec.deferred());
+            const Value object = CS::makeObject(exec.keys(), count / 2, exec.clock(), exec.deferred());
             for (std::uint32_t i = 0; i + 1 < count; i += 2) {
                 Value value = Value::null();
                 if (!eval(ast, source, ast.child(node, i + 1), exec, &value, diag)) {

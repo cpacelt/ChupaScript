@@ -65,12 +65,13 @@ TEST(OperatorUnary, BangNegatesBoolean) {
 }
 
 TEST(OperatorUnary, BangRequiresBoolean) {
+    Store store;
     CS::Deferred dead;
     EXPECT_EQ(unaryError(TokenKind::Bang, number(1.0)).code, CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Bang, Value::null()).code, CS::ErrorCode::Type);
     EXPECT_EQ(unaryError(TokenKind::Bang, CS::materialize("a", dead)).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(unaryError(TokenKind::Bang, CS::makeArray(0, dead)).code,
+    EXPECT_EQ(unaryError(TokenKind::Bang, CS::makeArray(0, store.clock(), dead)).code,
               CS::ErrorCode::Type);
 }
 
@@ -107,6 +108,7 @@ TEST(OperatorArithmetic, FourOperationsWork) {
 }
 
 TEST(OperatorArithmetic, RequiresNumbersOnBothSides) {
+    Store store;
     CS::Deferred dead;
     const Value text = CS::materialize("1", dead);
     EXPECT_EQ(binaryError(TokenKind::Plus, number(1.0), text).code,
@@ -117,7 +119,7 @@ TEST(OperatorArithmetic, RequiresNumbersOnBothSides) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Plus, number(1.0), Value::boolean(true)).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Star, CS::makeArray(0, dead), number(2.0)).code,
+    EXPECT_EQ(binaryError(TokenKind::Star, CS::makeArray(0, store.clock(), dead), number(2.0)).code,
               CS::ErrorCode::Type);
 }
 
@@ -167,6 +169,7 @@ TEST(OperatorOrdering, FourOperatorsWork) {
 }
 
 TEST(OperatorOrdering, RequiresNumbers) {
+    Store store;
     CS::Deferred dead;
     // docs/semantics.md §5.3: строки, логические значения и агрегаты
     // сравнивать нельзя. Побайтовый порядок строк не соответствует
@@ -178,7 +181,7 @@ TEST(OperatorOrdering, RequiresNumbers) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Less, Value::null(), number(1.0)).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Greater, CS::makeArray(0, dead), CS::makeArray(0, dead)).code,
+    EXPECT_EQ(binaryError(TokenKind::Greater, CS::makeArray(0, store.clock(), dead), CS::makeArray(0, store.clock(), dead)).code,
               CS::ErrorCode::Type);
     // Смешанная пара: число со строкой. Числа здесь достаточно, чтобы соблазн
     // «привести второй операнд» выглядел естественным, — приведения нет.
@@ -241,7 +244,7 @@ TEST(OperatorEquality, DifferentTypesAreAnError) {
               CS::ErrorCode::Type);
     EXPECT_EQ(binaryError(TokenKind::Equal, Value::boolean(true), number(1.0)).code,
               CS::ErrorCode::Type);
-    EXPECT_EQ(binaryError(TokenKind::Equal, CS::makeArray(0, dead), CS::makeObject(store.keys(), 0, dead)).code,
+    EXPECT_EQ(binaryError(TokenKind::Equal, CS::makeArray(0, store.clock(), dead), CS::makeObject(store.keys(), 0, store.clock(), dead)).code,
               CS::ErrorCode::Type);
 }
 
@@ -290,10 +293,10 @@ TEST(OperatorEquality, BooleansCompareByValue) {
 TEST(OperatorEquality, AggregatesCompareByIdentity) {
     CS::Deferred dead;
     Store store;
-    const Value items = CS::makeArray(0, dead);
+    const Value items = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(items, number(1.0));
     const Value alias = items;
-    const Value other = CS::makeArray(0, dead);
+    const Value other = CS::makeArray(0, store.clock(), dead);
     CS::arrayPush(other, number(1.0));
 
     // docs/semantics.md §5.4: равны тогда и только тогда, когда это один и тот
@@ -303,10 +306,10 @@ TEST(OperatorEquality, AggregatesCompareByIdentity) {
 
     // Объекты идут по той же ветке switch, что и массивы, но проверены до сих
     // пор были только массивы.
-    const Value box = CS::makeObject(store.keys(), 0, dead);
+    const Value box = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(box, "k", number(1.0), dead);
     const Value boxAlias = box;
-    const Value otherBox = CS::makeObject(store.keys(), 0, dead);
+    const Value otherBox = CS::makeObject(store.keys(), 0, store.clock(), dead);
     CS::objectSet(otherBox, "k", number(1.0), dead);
     EXPECT_TRUE(binary(TokenKind::Equal, box, boxAlias).booleanValue());
     EXPECT_FALSE(binary(TokenKind::Equal, box, otherBox).booleanValue());

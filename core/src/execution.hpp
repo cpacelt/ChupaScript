@@ -113,6 +113,10 @@ class Execution {
     /// кто создаёт объект (CS::makeObject); владеет ею хранилище.
     [[nodiscard]] KeyTable *keys() const noexcept { return store_.keys(); }
 
+    /// Лента контекста, через хранилище: мутаторы и создатели агрегатов
+    /// принимают её параметром (aggregate.hpp).
+    [[nodiscard]] EpochClock &clock() noexcept { return store_.clock(); }
+
     /// Rejects a compiled unit that belongs to another Store.
     ///
     /// The check is unconditional, not an assert: a release build is exactly

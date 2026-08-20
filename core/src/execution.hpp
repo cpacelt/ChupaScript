@@ -237,7 +237,10 @@ class ArgFrame {
     /// time this was taken. Taking this pointer is safe exactly once — after
     /// every argument of this call has been evaluated, when no nested frame
     /// is left alive and nothing can push again, because a host callback
-    /// runs on a closed frame.
+    /// runs on a closed frame — true today only because reentrant calls into
+    /// this same Context are caught by an assert in EvaluationGuard
+    /// (context.cpp), compiled out under NDEBUG; task 10 closes every C API
+    /// door instead, which is what makes the claim true unconditionally.
     [[nodiscard]] const Value *data() const noexcept {
         return exec_.argStack_.data() + base_;
     }

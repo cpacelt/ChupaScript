@@ -92,10 +92,11 @@ bool failHostCall(const Ast &ast, NodeId node, Execution &exec,
 /// Calls one host function.
 ///
 /// The arguments are evaluated left to right into a frame on the Execution's
-/// stack; the callback then sees them as one contiguous block. Nothing
-/// retains them: each is held by the reference its own sub-expression left in
-/// the deferred list, and that list is drained at the operation boundary,
-/// which is after this whole evaluation returns to the host.
+/// stack; the callback then sees them as one contiguous block. Each argument
+/// is held by whoever produced it — the Store, for a global read; the
+/// deferred list, for a freshly built box — and neither releases it before
+/// the operation boundary, which is after this whole evaluation returns to
+/// the host. A literal needs no holder at all.
 bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
                   Execution &exec, Value *out, Diagnostic &diag) {
     const Callee callee = calleeOf(exec.hosts(), ast.callee(node));
@@ -116,23 +117,21 @@ bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
         frame[i] = argument;
     }
 
-    // out передаётся только тем, кто объявил, что возвращает значение:
-    // иначе Void-функция записала бы в него мусор, а вызывающий стейтмент
-    // прочитал бы его как результат.
+    // out is handed only to a callback that declared it returns a value:
+    // otherwise a Void function would write garbage into it, and the calling
+    // statement would read that garbage back as a result.
     Value produced = Value::null();
-    ChupaValue *slot =
-        callee.returnsValue ? reinterpret_cast<ChupaValue *>(&produced)
-                            : nullptr;
+    ChupaValue *slot = callee.returnsValue ? asC(&produced) : nullptr;
 
-    // frame.data() пересчитывается ЗДЕСЬ, после того как каждый аргумент уже
-    // вычислен: аргумент внешнего вызова сам мог быть вложенным вызовом, и
-    // его собственный ArgFrame мог вырастить общий стек и переселить буфер.
-    // Кэшировать адрес раньше — читать через указатель, который вложенный
-    // вызов уже сделал висячим.
-    const bool ok = callee.call(
-        exec.hostHandle(),
-        reinterpret_cast<const ChupaValue *>(frame.data()),
-        count, slot, callee.userData);
+    // frame.data() is recomputed HERE, after every argument has already been
+    // evaluated: an outer call's own argument may itself be a call, and its
+    // ArgFrame may have grown the shared stack and moved the buffer.
+    // Caching the address any earlier would read through a pointer the
+    // nested call already made dangling. asC's static_asserts in host.hpp
+    // (size and alignment) are what license viewing this block, one Value
+    // wide each, as a block of ChupaValue.
+    const bool ok = callee.call(exec.hostHandle(), asC(frame.data()), count,
+                                slot, callee.userData);
 
     if (!ok) { return failHostCall(ast, node, exec, diag); }
     *out = produced;

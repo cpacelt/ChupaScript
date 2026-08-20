@@ -1187,6 +1187,17 @@ bool alwaysRefuses(ChupaContext *, const ChupaValue *, size_t, ChupaValue *,
     return false;
 }
 
+bool g_voidWasCalled = false;
+
+/// A Void function: no CHUPA_FN_RETURNS_VALUE, so evalHostCall must hand it
+/// out == nullptr rather than a slot for garbage to land in.
+bool assertsOutIsNull(ChupaContext *, const ChupaValue *, size_t,
+                      ChupaValue *out, void *) {
+    EXPECT_EQ(out, nullptr);
+    g_voidWasCalled = true;
+    return true;
+}
+
 /// Компилирует и вычисляет одно выражение, отдавая значение наружу.
 /// Единица разрушается здесь же: результат — скаляр либо значение, чьи байты
 /// принадлежат не ей.
@@ -1305,6 +1316,25 @@ TEST(EvalHostCall, NestedHostCallsBothGetTheirOwnArguments) {
     ChupaValue out{};
     ASSERT_TRUE(evalText(ctx, "addUp(addUp(1, 2), 3)", &out));
     EXPECT_EQ(chupa_value_number(&out), 6.0);
+
+    chupa_context_destroy(ctx);
+}
+
+/// Void — no CHUPA_FN_RETURNS_VALUE — is reachable only in statement
+/// position (requireVoid, check.cpp), so this goes through chupa_run rather
+/// than evalText: an expression path never resolves to a Void callee.
+TEST(EvalHostCall, VoidFunctionReceivesNullOut) {
+    ChupaContext *ctx = chupa_context_create();
+    g_voidWasCalled = false;
+    ChupaFunction fn = described("sideEffect", 0, 0, assertsOutIsNull);
+    fn.flags = 0;  // no CHUPA_FN_RETURNS_VALUE, no CHUPA_FN_PURE
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaScript *s = chupa_compile_script(ctx, "sideEffect();", 13);
+    ASSERT_NE(s, nullptr);
+    ASSERT_TRUE(chupa_run(ctx, s));
+    EXPECT_TRUE(g_voidWasCalled);
+    chupa_script_destroy(s);
 
     chupa_context_destroy(ctx);
 }

@@ -50,8 +50,11 @@ namespace CS {
 ///                 this Context until it is destroyed. Registration after
 ///                 that point is refused (docs/backlog.md B23).
 ///   evaluating_   true for the duration of one eval() or run(), including
-///                 the host callbacks they invoke. Every door of the C API
-///                 refuses while it is up.
+///                 the host callbacks they invoke. Nothing reads it yet: no
+///                 door of the C API refuses while it is up — task 10 adds
+///                 those guards. Today the flag only feeds an assert in
+///                 EvaluationGuard (context.cpp) that catches a reentrant
+///                 call in debug builds and is compiled out under NDEBUG.
 class Context {
    public:
     Context() = default;

@@ -21,9 +21,10 @@ namespace CS {
 // ArgFrame's contiguous block without copying it first.
 //
 // Defined once, here, because host.hpp is already included on both sides of
-// the boundary — c_api.cpp for HostTable, eval.cpp for calleeOf's Callee.
-// Two definitions in two files would be the "two truths about one thing"
-// defect task 1 already fixed once.
+// the boundary — c_api.cpp transitively, through context.hpp's HostTable
+// field, eval.cpp directly, for calleeOf's Callee. Two definitions in two
+// files would be the "two truths about one thing" defect task 1 already
+// fixed once.
 
 static_assert(sizeof(ChupaValue) == sizeof(CS::Value),
               "ChupaValue обязан совпадать с CS::Value байт в байт");
@@ -36,6 +37,21 @@ static_assert(alignof(ChupaValue) >= alignof(CS::Value),
 /// every slice handed back to the host points into the host's own variable.
 inline const CS::Value &fromC(const ChupaValue *v) {
     return *reinterpret_cast<const CS::Value *>(v);
+}
+
+/// The forward direction of fromC: a Value's address seen as a ChupaValue's,
+/// in place — no copy. toC cannot stand in for this: it copies one value
+/// into a host slot, and an ArgFrame's block needs a view over many Values
+/// at once, elementwise, with nothing moved. Both static_asserts above are
+/// what license this direction too — size and alignment are exactly what an
+/// elementwise view needs, for one Value or for an array of them alike.
+inline ChupaValue *asC(Value *v) noexcept {
+    return reinterpret_cast<ChupaValue *>(v);
+}
+
+/// const counterpart of asC above — see it for the reasoning.
+inline const ChupaValue *asC(const Value *v) noexcept {
+    return reinterpret_cast<const ChupaValue *>(v);
 }
 
 /// Copies a CS::Value into a host-owned output slot. The reverse of fromC:

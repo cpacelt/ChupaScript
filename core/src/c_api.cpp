@@ -383,14 +383,26 @@ const CS::detail::ObjectBox* asObject(const CS::Value& v) {
 }  // namespace
 
 // ─── Making values ───
+//
+// out == nullptr is refused, not dereferenced: a Void host function that
+// forgot CHUPA_FN_RETURNS_VALUE is called with slot == nullptr
+// (core/src/eval.cpp evalHostCall) and may still reach for one of these —
+// the whole family refuses the same way chupa_make_string already did,
+// rather than three of four crashing on the one path chupa_make_string was
+// written to survive.
 
-void chupa_make_null(ChupaValue* out) { toC(CS::Value::null(), out); }
+void chupa_make_null(ChupaValue* out) {
+    if (out == nullptr) { return; }
+    toC(CS::Value::null(), out);
+}
 
 void chupa_make_bool(ChupaValue* out, bool value) {
+    if (out == nullptr) { return; }
     toC(CS::Value::boolean(value), out);
 }
 
 void chupa_make_number(ChupaValue* out, double value) {
+    if (out == nullptr) { return; }
     toC(CS::Value::number(value), out);
 }
 

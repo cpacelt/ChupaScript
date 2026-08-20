@@ -1,7 +1,7 @@
 // C API boundary — a thin wrapper over the core entities.
 //
 // The public C header declares the full API surface; this translation unit
-// implements it by forwarding to CS::Store, CS::Expression and CS::Script.
+// implements it by forwarding to CS::Context.
 #include "chupascript/chupascript.h"
 
 #include <cstdint>
@@ -286,6 +286,17 @@ const CS::Value& fromC(const ChupaValue* v) {
 void toC(CS::Value v, ChupaValue* out) {
     std::memcpy(out, &v, sizeof(*out));
 }
+
+// CS::Value::Kind and ChupaKind deliberately do NOT match for Object/Array:
+// CS::Value::Kind puts Object before Array (value.hpp), ChupaKind puts Array
+// before Object (chupascript.h) for its own historical reasons. toKind below
+// maps explicitly, never casts, and these asserts exist so a future
+// "simplification" into a cast fails to compile instead of silently
+// swapping every array and object crossing the C boundary.
+static_assert(static_cast<int>(CS::Value::Kind::Array) != CHUPA_KIND_ARRAY,
+              "CS::Value::Kind::Array and CHUPA_KIND_ARRAY are meant to differ; toKind must map explicitly");
+static_assert(static_cast<int>(CS::Value::Kind::Object) != CHUPA_KIND_OBJECT,
+              "CS::Value::Kind::Object and CHUPA_KIND_OBJECT are meant to differ; toKind must map explicitly");
 
 ChupaKind toKind(CS::Value::Kind kind) {
     switch (kind) {

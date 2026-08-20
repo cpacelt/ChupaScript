@@ -160,11 +160,19 @@ public final class Context {
     /// the header marks it nullable), so a Swift local of this type has no
     /// zero-argument initializer to pre-fill it with — the struct is read
     /// through an out-param instead, exactly as the C API declares it.
+    ///
+    /// Stack-allocated, not heap-allocated: `CSValue.chupaEval` calls
+    /// `makeError()` — which routes through this method — on every null
+    /// result, and a null-valued expression is an ordinary outcome on a
+    /// BDUI screen, not a cold path. `withUnsafeTemporaryAllocation` gives
+    /// the out-param a home for the duration of this call without a
+    /// malloc/free pair on that warm path.
     private func readError() -> ChupaError {
-        let ptr = UnsafeMutablePointer<ChupaError>.allocate(capacity: 1)
-        defer { ptr.deallocate() }
-        chupa_context_error(handle, ptr)
-        return ptr.pointee
+        withUnsafeTemporaryAllocation(of: ChupaError.self, capacity: 1) { buffer in
+            let ptr = buffer.baseAddress!
+            chupa_context_error(handle, ptr)
+            return ptr.pointee
+        }
     }
 
     private func makeError(from raw: ChupaError) -> Error {

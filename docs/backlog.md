@@ -652,24 +652,39 @@ eval(первое);       // чтение освобождённой памят�
 
 **Где:** `odnoklassniki-ios/ok/sdk/OKBDUI/Tests/Performance/ExpressionEvalBenchmark_Tests.swift`
 **Статус:** обнаружено 20.08.2026 (задача 11 плана
-`2026-08-19-memory-model-redesign`), не разобрано
+`2026-08-19-memory-model-redesign`); харнесс починен 20.08.2026, но замер
+по-прежнему не снят — блокирован новой, отдельной причиной (ниже)
 
-`ExpressionEvalBenchmark_Tests.swift` вызывает `chupa_context_set`,
+`ExpressionEvalBenchmark_Tests.swift` вызывал `chupa_context_set`,
 `CHUPA_OK`, `chupa_eval_string_borrowed` напрямую — поверхность C API,
 отменённую задачами 6–7 того же плана (`chupa_context_set` переименован в
 `chupa_context_set_data`, трёхзначный исход `CHUPA_OK`/… убран из
-`chupa_eval*`, `_borrowed`-вариант снят). Файл написан на
-`feat/cocoapods-two-pods` (`97b78cf`, 2026-08-17) и с тех пор не обновлялся;
-сборка `OKBDUI-Unit-Tests` падает на этапе компиляции Swift, не доходя до
-запуска тестов вовсе. Из-за этого замер BDUI («перестали ли строки быть
-слабым местом») не выполнен ни разу после задач 6–9 — подробности в
-`docs/benchmarks/2026-08-19-bdui-after-memory-model-redesign.md`.
+`chupa_eval*`, `_borrowed`-вариант снят). Файл был написан на
+`feat/cocoapods-two-pods` (`97b78cf`, 2026-08-17) и не обновлялся под новую
+границу. Три места в `BridgeCostBenchmark_Tests` переведены на текущую
+поверхность 1:1 (`chupa_context_set_data`, `chupa_eval_string` с
+`bool`-исходом), без изменения состава или смысла замеров; коммит в
+монорепозитории `b040c8afec7`. Swift-компиляция харнесса подтверждена:
+ошибки `Cannot find 'chupa_context_set' in scope` и соседние больше не
+воспроизводятся. `WidgetPropertyBenchmark_Tests`,
+`PropertyParsingBenchmark_Tests`, `NameLookupBenchmark_Tests` уже были на
+текущей поверхности (типизированная обвязка `CSContext`/`CSExpression`),
+правки не требовали.
 
-Правка — в другом репозитории и вне инструмента `chupa-tools`, поэтому не
-входит в объём задачи 11 (измерить, не чинить чужой харнесс). Нужно
-переписать вызовы в файле под текущую поверхность C API
-(`core/include/chupascript/chupascript.h`) прежде, чем замер станет
-воспроизводимым.
+Замер BDUI («перестали ли строки быть слабым местом») по-прежнему не
+выполнен — теперь по новой причине, вне и харнесса, и движка: сборка
+`OKBDUI-Unit-Tests` падает на линковке `ChupaScriptC`, потому что
+`Pods/AppKit.xcodeproj` монорепозитория (сгенерирован `pod install`
+2026-08-17 23:36) не включает в Sources-фазу цели `ChupaScriptC` файлы
+`aggregate.hpp`, `box.cpp/.hpp`, `context.cpp/.hpp`, `deferred.cpp/.hpp`,
+`execution.hpp`, `keytable.cpp/.hpp` — они появились в `core/src/` этой
+ветки позже последнего `pod install` монорепозитория, хотя и попадают под
+глоб `s.source_files = 'core/src/*.{cpp,hpp}'` подспеки. Исправление —
+`pod install` в `odnoklassniki-ios`, ещё дальше от периметра
+`chupa-tools`, чем изначальная правка харнесса: правка `Podfile.lock` /
+`Pods/` в монорепозитории, не Swift-код одного тестового файла. Подробности
+обеих причин — в `docs/benchmarks/2026-08-19-bdui-after-memory-model-redesign.md`,
+раздел 3, и в `.superpowers/sdd/2026-08-19-memory-model-redesign/bdui-report.md`.
 
 **Признак, что пора:** прежде чем кто-либо снова заявит «строки перестали
 быть слабым местом» с опорой на цифры, а не на микрозамеры. Конкретно два

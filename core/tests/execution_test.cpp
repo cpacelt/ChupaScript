@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "execution.hpp"
+#include "host.hpp"
 #include "store.hpp"
 #include "value.hpp"
 
@@ -49,4 +50,16 @@ TEST(ArgFrame, EmptyFrameIsUsable) {
     CS::Execution exec(store);
     CS::ArgFrame frame(exec, 0);
     EXPECT_EQ(frame.size(), 0u);
+}
+
+/// Проводка таблицы — часть устройства, а не отдельное действие, которое
+/// можно забыть: раньше здесь был сеттер, и его забыли позвать.
+TEST(Execution, CarriesTheHostTableItWasBuiltWith) {
+    CS::Store store;
+    CS::HostTable hosts;
+    CS::Execution wired(store, &hosts);
+    EXPECT_EQ(wired.hosts(), &hosts);
+
+    CS::Execution bare(store);
+    EXPECT_EQ(bare.hosts(), nullptr);
 }

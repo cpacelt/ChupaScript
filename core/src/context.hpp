@@ -206,7 +206,7 @@ class Context {
     HostTable hosts_;
     bool compiled_ = false;
     bool evaluating_ = false;
-    Execution exec_{store_};
+    Execution exec_{store_, &hosts_};
 
     /// The value the last string shortcut borrowed its bytes from.
     ///

@@ -71,6 +71,13 @@ class Execution {
    public:
     explicit Execution(Store &store) noexcept : store_(store) {}
 
+    /// Wires the table in at construction, not through a setter that a
+    /// caller could forget to call: a setter was tried first and dropped —
+    /// nothing forced it to run, so a real Context could build an Execution
+    /// whose hosts_ silently stayed nullptr forever.
+    Execution(Store &store, const HostTable *hosts) noexcept
+        : store_(store), hosts_(hosts) {}
+
     Execution(const Execution &) = delete;
     Execution &operator=(const Execution &) = delete;
     Execution(Execution &&) = delete;
@@ -85,14 +92,6 @@ class Execution {
 
     /// The host functions this evaluation may call, or nullptr for none.
     [[nodiscard]] const HostTable *hosts() const noexcept { return hosts_; }
-
-    /// Wires the table in. Separate from the constructor rather than a
-    /// second constructor argument: a second argument would force every one
-    /// of the 169 existing `Execution(store)` call sites in tests and the
-    /// benchmark to add it for no new assertion of theirs (see
-    /// task-7-brief.md's controller note) — a setter costs nothing at any
-    /// of them.
-    void setHosts(const HostTable *hosts) noexcept { hosts_ = hosts; }
 
     /// The opaque handle a host callback receives as its first argument.
     [[nodiscard]] ChupaContext *hostHandle() const noexcept {

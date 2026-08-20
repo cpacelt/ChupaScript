@@ -44,6 +44,11 @@ enum class CompileMode : std::uint8_t { Expression, Script };
 /// (possibly none) the caller passed in, and mode is fixed by which door it
 /// is. A default here would let a fifth caller silently pick "no hosts,
 /// expression mode" instead of saying so.
+///
+/// The doors above check DO default hosts to nullptr (compile.hpp), and the
+/// two rules live together on purpose: those doors are reached by tools and
+/// tests that genuinely own no HostTable, while this one is reached only by
+/// them, where a silent wrong answer would be the end of the line.
 std::uint32_t check(Ast &ast, std::string_view source, const Store &store,
                     Diagnostic *out, std::uint32_t capacity,
                     const HostTable *hosts, CompileMode mode);

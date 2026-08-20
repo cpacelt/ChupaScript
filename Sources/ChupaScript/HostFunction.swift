@@ -33,8 +33,12 @@ public protocol CSConvertible {
     /// (спека §10.2), поэтому она здесь: движок знает только арность вызова.
     static func fromChupa(_ value: ChupaValue) -> Self?
 
-    /// false — создать значение не удалось; ошибка уже в контексте
-    /// (`chupa_make_string` сама зовёт `chupa_fail` через код `.memory`).
+    /// false — создать значение не удалось. Причина уже лежит в ошибке
+    /// контекста (`chupa_make_string` пишет туда `CHUPA_ERR_MEMORY` при
+    /// нехватке памяти и `CHUPA_ERR_USAGE`, если выходного слота нет), но
+    /// отказом вызова это само по себе не становится: `chupa_fail` изнутри
+    /// `chupa_make_string` не зовётся, и поднять отказ обязан тот, кто получил
+    /// false, — трамплин ниже делает это броском.
     func intoChupa(_ handle: OpaquePointer,
                    _ out: UnsafeMutablePointer<ChupaValue>) -> Bool
 }
@@ -70,17 +74,26 @@ extension Bool: CSConvertible {
 }
 
 extension String: CSConvertible {
+    /// Всё чтение — внутри `withUnsafePointer`, и это обязательно: правило 2
+    /// заголовка говорит, что байты принадлежат той `ChupaValue`, чей адрес
+    /// передали, а у строки короче шестнадцати байт они лежат ВНУТРИ неё.
+    /// Прежний `var v = value; chupa_value_string(&v, …)` отдавал указатель на
+    /// временную переменную, действительный только на время самого вызова, —
+    /// и это горячий путь: короткий строковый аргумент как раз то, что меряет
+    /// бенчмарк. `String` собирается здесь же, до выхода из замыкания, потому
+    /// что дальше указателя уже нет.
     public static func fromChupa(_ value: ChupaValue) -> String? {
-        var v = value
-        guard chupa_value_kind(&v) == CHUPA_KIND_STRING else { return nil }
-        var bytes: UnsafePointer<CChar>?
-        var length = 0
-        chupa_value_string(&v, &bytes, &length)
-        // Байты пришли из значения, которое отдал сам движок хосту — тем же
-        // путём, что и результат `chupa_eval_string`, так что предусловие
-        // `chupaFromValidUTF8` (`Sources/ChupaScript/UTF8.swift`) держится
-        // ровно как там.
-        return String.chupaFromValidUTF8(bytes, count: length)
+        withUnsafePointer(to: value) { v -> String? in
+            guard chupa_value_kind(v) == CHUPA_KIND_STRING else { return nil }
+            var bytes: UnsafePointer<CChar>?
+            var length = 0
+            chupa_value_string(v, &bytes, &length)
+            // Байты пришли из значения, которое отдал сам движок хосту — тем
+            // же путём, что и результат `chupa_eval_string`, так что
+            // предусловие `chupaFromValidUTF8`
+            // (`Sources/ChupaScript/UTF8.swift`) держится ровно как там.
+            return String.chupaFromValidUTF8(bytes, count: length)
+        }
     }
 
     public func intoChupa(_ handle: OpaquePointer,
@@ -143,7 +156,12 @@ final class HostBox {
 /// `.unrecognized` пришёл бы только с чужого движка, чего здесь быть не может.
 private func chupaRawErrorCode(for code: ErrorCode) -> ChupaErrorCode {
     switch code {
-    case .none:               return CHUPA_ERR_NONE
+    // .none в CHUPA_ERR_NONE не переводится: «ошибки нет» — не причина
+    // отказа, и `chupa_fail` этот код отвергает (`chupascript.h`), потеряв
+    // вместе с ним сообщение. Брошенная ошибка с кодом `.none` — ошибка
+    // прикладного кода, и HOST сохраняет хотя бы её текст; отвергнутая
+    // альтернатива — пропустить код как есть — не сохраняет ничего.
+    case .none:                  return CHUPA_ERR_HOST
     case .syntax:              return CHUPA_ERR_SYNTAX
     case .name:                return CHUPA_ERR_NAME
     case .type:                return CHUPA_ERR_TYPE
@@ -236,6 +254,52 @@ extension Context {
         }
     }
 
+    /// Типизированная перегрузка обязана быть объявлена с `.returnsValue`.
+    ///
+    /// Тип `R` с флагами не связан ничем, поэтому
+    /// `register("f", flags: [.pure]) { 1.0 }` компилируется — а движок звал
+    /// бы такую функцию с `out == nullptr` (`chupascript.h`,
+    /// `ChupaHostFunction`), и класть результат было бы некуда. Отказ
+    /// поднимается здесь, на регистрации, рядом со всеми прочими отказами
+    /// регистрации; отвергнутая альтернатива — прежнее `out!` в трамплине —
+    /// роняла процесс на первом же вызове вместо того, чтобы отказать.
+    private func requireReturnsValue(_ name: String,
+                                     _ flags: FunctionFlags) throws {
+        guard flags.contains(.returnsValue) else {
+            throw Error(code: .usage,
+                        message: "\(name): типизированной перегрузке register нужен флаг .returnsValue",
+                        offset: nil)
+        }
+    }
+
+    /// Кладёт результат тела в слот движка.
+    ///
+    /// Оба отказа бросаются, а не глотаются: `intoChupa` возвращает false,
+    /// когда `chupa_make_string` не смогла выделить память, и вернуть после
+    /// этого `true` с ненаписанным `out` значило бы отдать движку мусор как
+    /// результат. Пустой слот сюда уже не доходит — `requireReturnsValue`
+    /// выше отсекает его на регистрации, — но проверка остаётся полом: она
+    /// стоит одного сравнения и не даёт вернуться `out!`.
+    ///
+    /// Статический метод, а не метод экземпляра: замыкание, в котором он
+    /// зовётся, живёт до разрушения контекста, и ссылка на `self` внутри него
+    /// была бы циклом удержания.
+    private static func deliver<R: CSConvertible>(
+        _ name: String, _ value: R, _ ctx: OpaquePointer,
+        _ out: UnsafeMutablePointer<ChupaValue>?
+    ) throws {
+        guard let out else {
+            throw Error(code: .usage,
+                        message: "\(name): движок не дал слота под результат — функция объявлена без .returnsValue",
+                        offset: nil)
+        }
+        guard value.intoChupa(ctx, out) else {
+            throw Error(code: .memory,
+                        message: "\(name): результат не удалось создать",
+                        offset: nil)
+        }
+    }
+
     /// Сырая регистрация — эскейп-люк для того, что `CSConvertible` не берёт:
     /// массивы, объекты, переменная арность (`maxArgs: 255` — `CHUPA_VARIADIC`
     /// в `chupascript.h`). Здесь, и только здесь, прикладной код видит
@@ -256,8 +320,9 @@ extension Context {
         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
         _ body: @escaping () throws -> R
     ) throws {
+        try requireReturnsValue(name, flags)
         try registerDescriptor(name, minArgs: 0, maxArgs: 0, flags: flags) { _, _, ctx, out in
-            _ = try body().intoChupa(ctx, out!)
+            try Context.deliver(name, body(), ctx, out)
         }
     }
 
@@ -267,11 +332,12 @@ extension Context {
         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
         _ body: @escaping (A) throws -> R
     ) throws {
+        try requireReturnsValue(name, flags)
         try registerDescriptor(name, minArgs: 1, maxArgs: 1, flags: flags) { args, _, ctx, out in
             guard let a = A.fromChupa(args![0]) else {
                 throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
             }
-            _ = try body(a).intoChupa(ctx, out!)
+            try Context.deliver(name, body(a), ctx, out)
         }
     }
 
@@ -281,6 +347,7 @@ extension Context {
         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
         _ body: @escaping (A, B) throws -> R
     ) throws {
+        try requireReturnsValue(name, flags)
         try registerDescriptor(name, minArgs: 2, maxArgs: 2, flags: flags) { args, _, ctx, out in
             guard let a = A.fromChupa(args![0]) else {
                 throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
@@ -288,7 +355,7 @@ extension Context {
             guard let b = B.fromChupa(args![1]) else {
                 throw Error(code: .type, message: "\(name): аргумент 2 не \(B.self)", offset: nil)
             }
-            _ = try body(a, b).intoChupa(ctx, out!)
+            try Context.deliver(name, body(a, b), ctx, out)
         }
     }
 
@@ -298,6 +365,7 @@ extension Context {
         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
         _ body: @escaping (A, B, C) throws -> R
     ) throws {
+        try requireReturnsValue(name, flags)
         try registerDescriptor(name, minArgs: 3, maxArgs: 3, flags: flags) { args, _, ctx, out in
             guard let a = A.fromChupa(args![0]) else {
                 throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
@@ -308,7 +376,7 @@ extension Context {
             guard let c = C.fromChupa(args![2]) else {
                 throw Error(code: .type, message: "\(name): аргумент 3 не \(C.self)", offset: nil)
             }
-            _ = try body(a, b, c).intoChupa(ctx, out!)
+            try Context.deliver(name, body(a, b, c), ctx, out)
         }
     }
 
@@ -318,6 +386,7 @@ extension Context {
         flags: FunctionFlags = [.returnsValue, .pure, .deterministic],
         _ body: @escaping (A, B, C, D) throws -> R
     ) throws {
+        try requireReturnsValue(name, flags)
         try registerDescriptor(name, minArgs: 4, maxArgs: 4, flags: flags) { args, _, ctx, out in
             guard let a = A.fromChupa(args![0]) else {
                 throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
@@ -331,7 +400,7 @@ extension Context {
             guard let d = D.fromChupa(args![3]) else {
                 throw Error(code: .type, message: "\(name): аргумент 4 не \(D.self)", offset: nil)
             }
-            _ = try body(a, b, c, d).intoChupa(ctx, out!)
+            try Context.deliver(name, body(a, b, c, d), ctx, out)
         }
     }
 }

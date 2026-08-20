@@ -24,10 +24,24 @@ class HostTable;
 /// смещениями, а не срезами. Но тот же самый текст обязан быть передан
 /// вычислителю (evalExpression, runScript) — иначе смещения укажут не туда.
 ///
-/// hosts defaults to nullptr, meaning no host functions: a compile that was
-/// not handed a table truly has none, and name resolution simply will not
-/// find anything in it. The default exists so every caller that predates the
-/// host table keeps compiling unchanged.
+/// hosts defaults to nullptr, meaning "this caller owns no host functions at
+/// all". The default is safe today for one reason and one only: the sole
+/// owner of a HostTable is CS::Context, and both of its compile doors pass
+/// theirs (context.hpp). Every other caller — the shell, the tests, the
+/// benchmarks — has no table to forget.
+///
+/// It stops being safe the moment a SECOND owner of a HostTable appears: a
+/// tool that has a table and reaches this door without it gets `unknown
+/// function` on every host name, silently and plausibly, because name
+/// resolution simply finds nothing (callee.cpp, resolveCallee). A new caller
+/// that owns a table MUST pass it.
+///
+/// check.hpp one layer down deliberately has no default, and that is not a
+/// contradiction with this one: check is the last layer, called by these four
+/// doors only, and each of them knows the answer without guessing — so the
+/// place where a mistake would be unrecoverable is the place with no default.
+/// Removing the defaults here too was rejected: sixty-seven existing call
+/// sites would have to spell out a nullptr they already mean.
 std::uint32_t compileExpression(const char *source, std::uint32_t length,
                                 Ast &ast, Store &store, Diagnostic *out,
                                 std::uint32_t capacity,

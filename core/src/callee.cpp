@@ -48,7 +48,8 @@ Callee resolveCallee(const HostTable *hosts, std::string_view name) noexcept {
 Callee calleeOf(const HostTable *hosts, CalleeRef ref) noexcept {
     assert(ref != kNoCallee);
     if (!isHostCallee(ref)) { return fromBuiltin(builtinOfCallee(ref)); }
-    assert(hosts != nullptr && "узел ссылается на хост-функцию, а таблицы нет");
+    assert(hosts != nullptr &&
+           "the node names a host function and there is no table");
     const std::uint8_t index = hostIndexOfCallee(ref);
     return fromHost(hosts->at(index), index);
 }

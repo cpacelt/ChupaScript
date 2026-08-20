@@ -140,7 +140,19 @@ bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
     // nested call already made dangling. asC's static_asserts in host.hpp
     // (size and alignment) are what license viewing this block, one Value
     // wide each, as a block of ChupaValue.
-    const bool ok = callee.call(exec.hostHandle(), asC(frame.data()), count,
+    //
+    // With no arguments the frame's block is empty and std::vector::data()
+    // may legitimately answer nullptr — but `args` sits inside the header's
+    // CHUPA_NONNULL_BEGIN region, so a nil-arity call would hand every host a
+    // pointer its own language marked non-null (Swift imports it as
+    // UnsafePointer<ChupaValue>, not an Optional). One immortal empty Value
+    // stands in instead. Rejected alternative — documenting `args` as
+    // nullable at argc == 0 — pushes a branch nobody ever needs into every
+    // callback in every binding, and the Swift trampoline could not even
+    // express it without changing its own signature.
+    static const Value kNoArguments = Value::null();
+    const Value *block = count == 0 ? &kNoArguments : frame.data();
+    const bool ok = callee.call(exec.hostHandle(), asC(block), count,
                                 slot, callee.userData);
 
     // Taken unconditionally, on the Ok path too: a callback that calls

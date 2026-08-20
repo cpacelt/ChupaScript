@@ -285,7 +285,7 @@ bool chupa_register(ChupaContext* ctx, const ChupaFunction* fn) {
     // function from the middle of the current call, deliberately covered by
     // a test, and is not asserted on here.
     assert(outcome == CS::RegisterOutcome::Reentrant &&
-          "chupa_register отказал — см. код ошибки контекста");
+          "chupa_register refused — see the context error for the code");
     c->setError(errorFor(outcome));
     return false;
 }
@@ -371,8 +371,26 @@ void chupa_fail(ChupaContext* ctx, ChupaErrorCode code, const char* msg,
                     "chupa_fail was called outside a host callback"});
         return;
     }
-    c->impl.setHostFailure(fromCode(code),
-                           std::string_view(msg == nullptr ? "" : msg, len));
+    // CHUPA_ERR_NONE is refused rather than stored: None is the sentinel the
+    // Execution uses for "the callback never called chupa_fail" (execution.hpp,
+    // takeHostFailure), so storing it would drop the message on the floor.
+    // Rejected alternative — a separate "was called" flag next to the code —
+    // would keep the message but deliver it with CHUPA_ERR_NONE, which
+    // chupa_context_error reports as success: a worse lie than a refusal.
+    if (code == CHUPA_ERR_NONE) {
+        c->setError({CS::ErrorCode::Usage, 0,
+                    "chupa_fail needs a code other than CHUPA_ERR_NONE"});
+        return;
+    }
+    // A NULL message means NO message, and the length has to say so too: len
+    // is the host's own count, and taking it as given would copy len bytes out
+    // of the one-byte literal below. A JNI host whose GetStringUTFChars
+    // returned NULL under memory pressure has the length already — from the
+    // jstring — and reaches exactly this path in release, which is why the
+    // mismatch is repaired here rather than asserted on.
+    const std::string_view reason =
+        msg == nullptr ? std::string_view() : std::string_view(msg, len);
+    c->impl.setHostFailure(fromCode(code), reason);
 }
 
 // ─── Compile ───
@@ -480,28 +498,69 @@ const CS::detail::ObjectBox* asObject(const CS::Value& v) {
 // the whole family refuses the same way chupa_make_string already did,
 // rather than three of four crashing on the one path chupa_make_string was
 // written to survive.
+//
+// The three scalar makers take no ChupaContext *, so they have no channel to
+// report that refusal through and answer with a debug assert instead: the
+// host bug is a static one — a descriptor's flags and its callback's body
+// disagreeing — and shows up on the developer's first run. Giving them a ctx
+// parameter was rejected: it would cost every caller a parameter for a report
+// nobody can act on at runtime anyway.
 
 void chupa_make_null(ChupaValue* out) {
+    assert(out != nullptr &&
+           "chupa_make_null needs an output slot; a Void function has none");
     if (out == nullptr) { return; }
     toC(CS::Value::null(), out);
 }
 
 void chupa_make_bool(ChupaValue* out, bool value) {
+    assert(out != nullptr &&
+           "chupa_make_bool needs an output slot; a Void function has none");
     if (out == nullptr) { return; }
     toC(CS::Value::boolean(value), out);
 }
 
 void chupa_make_number(ChupaValue* out, double value) {
+    assert(out != nullptr &&
+           "chupa_make_number needs an output slot; a Void function has none");
     if (out == nullptr) { return; }
     toC(CS::Value::number(value), out);
 }
 
 bool chupa_make_string(ChupaContext* ctx, const char* bytes, size_t len,
                        ChupaValue* out) {
-    if (ctx == nullptr || out == nullptr) { return false; }
+    // No ctx, no error channel: false is the whole answer this path can give.
+    if (ctx == nullptr) { return false; }
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    const std::string_view text(bytes == nullptr ? "" : bytes, len);
-    toC(c->impl.makeString(text), out);
+    if (out == nullptr) {
+        // Refusing silently used to leave the host reading CHUPA_ERR_NONE —
+        // "everything is fine" — after a call that wrote nothing. The reason
+        // is spelled out instead: the slot is missing because the function was
+        // declared without CHUPA_FN_RETURNS_VALUE.
+        c->setError({CS::ErrorCode::Usage, 0,
+                    "chupa_make_string was called with no output slot: the "
+                    "function is Void (no CHUPA_FN_RETURNS_VALUE)"});
+        return false;
+    }
+    // NULL bytes mean an empty string, length included — the same repair
+    // chupa_fail makes above, and for the same reason: len is the host's own
+    // count and does not describe the literal standing in for a NULL buffer.
+    const std::string_view text =
+        bytes == nullptr ? std::string_view() : std::string_view(bytes, len);
+    // makeString allocates through the throwing ::operator new (box.cpp,
+    // makeStringBox). The throw is caught HERE, on the engine's own side of
+    // the boundary: letting std::bad_alloc travel out of an extern "C"
+    // function would break, in the engine itself, the very rule the header
+    // puts on the host — no exception crosses the C boundary. Rejected
+    // alternative — a nothrow allocation inside makeStringBox — would spread
+    // a null-box branch through every box user for the sake of one door.
+    try {
+        toC(c->impl.makeString(text), out);
+    } catch (const std::bad_alloc&) {
+        c->setError({CS::ErrorCode::Memory, 0,
+                    "out of memory while making a string"});
+        return false;
+    }
     return true;
 }
 

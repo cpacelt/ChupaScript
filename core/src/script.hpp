@@ -45,7 +45,9 @@ class Script {
     /// адресуют его пулы.
     ///
     /// hosts defaults to nullptr — see compileScript (compile.hpp) for what
-    /// that means.
+    /// that default means, why it is safe only while CS::Context is the
+    /// single owner of a HostTable, and why check.hpp having no default is
+    /// not a contradiction with this one having one.
     static std::uint32_t compile(std::string_view source, Store &store,
                                  Script *out, Diagnostic *diags,
                                  std::uint32_t capacity,

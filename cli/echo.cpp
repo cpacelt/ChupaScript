@@ -8,13 +8,14 @@
 namespace chupa {
 namespace {
 
-/// The callback the engine calls for `echo(x)`.
+/// Коллбэк, который движок зовёт на `echo(x)`.
 ///
-/// ctx is nullptr here: the shell registers through CS::Context::
-/// registerFunction directly (see registerEcho below), which — unlike
-/// chupa_context_create — never sets the opaque C-API pointer. Reading
-/// args[0] needs no context at all, so nullptr is harmless; a callback that
-/// tried to use ctx would not be.
+/// ctx здесь nullptr: оболочка регистрирует напрямую через
+/// CS::Context::registerFunction (см. registerEcho ниже), а тот — в отличие
+/// от chupa_context_create — непрозрачный указатель C API не проставляет.
+/// Чтобы прочитать args[0], контекст не нужен вовсе, поэтому nullptr
+/// безвреден; коллбэку, который попробовал бы ctx употребить, он вреден был
+/// бы очень.
 bool echoCallback(ChupaContext * /*ctx*/, const ChupaValue *args,
                   std::size_t /*argc*/, ChupaValue * /*out*/,
                   void *userData) {
@@ -35,14 +36,16 @@ void registerEcho(CS::Context &ctx, std::ostream &out) {
     desc.name_len = 4;
     desc.min_args = 1;
     desc.max_args = 1;
-    desc.flags = CHUPA_FN_NONE;  // no RETURNS_VALUE -> Void; no PURE -> dirty
+    // Нет RETURNS_VALUE — значит Void; нет PURE — значит грязная.
+    desc.flags = CHUPA_FN_NONE;
     desc.call = echoCallback;
     desc.user_data = &out;
-    desc.release = nullptr;      // out is borrowed, nothing to release
+    desc.release = nullptr;  // out заимствован, освобождать нечего
 
-    // Runs once on a freshly built ctx, before any compilation on it — the
-    // one case registerFunction is documented to refuse (TooLate) cannot
-    // happen here, so the outcome is only worth an assert, not a branch.
+    // Отрабатывает один раз на свежепостроенном ctx, до всякой компиляции на
+    // нём, — единственный случай, в котором registerFunction по описанию
+    // отказывает (TooLate), здесь случиться не может, поэтому исход стоит
+    // утверждения, а не ветки.
     [[maybe_unused]] const CS::RegisterOutcome outcome =
         ctx.registerFunction(desc);
     assert(outcome == CS::RegisterOutcome::Ok);

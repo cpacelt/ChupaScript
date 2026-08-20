@@ -5,27 +5,28 @@
 
 namespace chupa {
 
-/// Registers `echo(x)` on ctx: void, one argument, prints it to `out`.
+/// Регистрирует на ctx функцию `echo(x)`: Void, один аргумент, печатает его
+/// в `out`.
 ///
-/// This is the shell's one demonstration host function — the shell is the
-/// only live host in the repository, so without it the registration
-/// mechanism (docs/superpowers/sdd/2026-08-20-host-functions) has nowhere to
-/// be touched by hand. There is no `:register` command and no way to
-/// register a function from a script, so this call is the only source of a
-/// host function the shell ever has.
+/// Единственная показательная хост-функция оболочки — оболочка и есть
+/// единственный живой хост в репозитории, так что без неё механизм
+/// регистрации (docs/superpowers/sdd/2026-08-20-host-functions) негде
+/// потрогать руками. Команды `:register` нет, из скрипта зарегистрировать
+/// функцию тоже нечем, поэтому этот вызов — единственный источник хост-
+/// функции, какой у оболочки вообще есть.
 ///
-/// Declared WITHOUT CHUPA_FN_PURE: printing is an effect visible outside the
-/// engine, and marking it pure would license the engine to skip or reorder
-/// the call. That also makes it callable only as a script statement, never
-/// inside an expression — `echo('привет');`, not `expr: echo('привет')`.
+/// Объявлена БЕЗ CHUPA_FN_PURE: печать — эффект, видимый снаружи движка, и
+/// пометка «чистая» разрешила бы движку пропустить вызов или переставить его.
+/// Из того же следует, что звать её можно только стейтментом скрипта, но не
+/// внутри выражения — `echo('привет');`, а не `expr: echo('привет')`.
 ///
-/// `out` is borrowed and must outlive every call made through `ctx` — the
-/// shell passes std::cout, a test passes an std::ostringstream to read back
-/// what was printed.
+/// `out` заимствован и обязан пережить всякий вызов, сделанный через `ctx`:
+/// оболочка передаёт сюда std::cout, тест — std::ostringstream, чтобы
+/// прочитать напечатанное обратно.
 ///
-/// Must run before the first compilation on `ctx` (registerFunction's own
-/// rule) — the shell does it once per fresh context, right after
-/// construction, not per line.
+/// Обязана отработать до первой компиляции на `ctx` (собственное правило
+/// registerFunction) — оболочка зовёт её один раз на свежий контекст, сразу
+/// после построения, а не на каждую строку.
 void registerEcho(CS::Context &ctx, std::ostream &out);
 
 }  // namespace chupa

@@ -235,7 +235,11 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
  * with CHUPA_ERR_USAGE, touching no output. The check exists because
  * compilation resolves every global name to a slot in that context's store,
  * and another store's slots address other variables: without it the call would
- * return a neighbouring variable's value and look successful. */
+ * return a neighbouring variable's value and look successful.
+ *
+ * Neither destroy takes a ChupaContext *, so neither can refuse while an
+ * evaluation is in flight. Destroying a unit from inside a host callback is
+ * the host's to avoid — see the block in ChupaHostFunction's docblock. */
 CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
 CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 
@@ -265,13 +269,32 @@ typedef enum ChupaFunctionFlags {
 
 /* args are borrowed and valid only for the duration of the call — rule 2 of
  * this header. Nothing outlives the call except what the host retained
- * through chupa_value_retain.
+ * through chupa_value_retain. args is never NULL, argc == 0 included: a
+ * zero-argument call is handed the address of an empty value it must not
+ * read, rather than a NULL the non-null region above would be lying about.
  *
  * out == NULL when the function was declared without CHUPA_FN_RETURNS_VALUE.
  *
  * ctx is closed: from inside the call only chupa_make_string, chupa_fail and
  * reading the error are allowed on it. Everything else fails with
  * CHUPA_ERR_USAGE.
+ *
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║ DESTROYING A COMPILED UNIT FROM INSIDE THE CALL IS NOT REFUSED.      ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * chupa_expression_destroy and chupa_script_destroy have no guard and cannot
+ * be given one: neither takes a ChupaContext *, so neither can ask whether an
+ * evaluation is in flight. A callback that reaches a ChupaExpression * or
+ * ChupaScript * — through user_data, say, in a host that caches compiled
+ * props — and destroys the very unit being evaluated frees the tree the walk
+ * is standing in the middle of, and the walk continues over freed memory.
+ * Nothing detects this and nothing reports it.
+ *
+ * The obligation is therefore the host's, and it is absolute: from the moment
+ * a callback is entered until it returns, no unit compiled on this ctx may be
+ * destroyed. A host that caches units next to its callbacks must keep the
+ * destruction on the other side of that boundary. See docs/backlog.md B67 for
+ * why the engine cannot enforce it today.
  *
  * Returning false is a refusal; the callback may call chupa_fail before it.
  * The offset is filled in by the engine — the call node. */
@@ -290,7 +313,12 @@ typedef struct ChupaFunction {
     void       *CHUPA_NULLABLE user_data;
     /* Called exactly once for every SUCCESSFULLY registered function, from
      * chupa_context_destroy. NULL — nothing to release. A refused
-     * registration does not call release: the host still holds the box. */
+     * registration does not call release: the host still holds the box.
+     *
+     * Once PER REGISTRATION, not per user_data: the same descriptor
+     * registered on two contexts is two registrations, and release runs twice
+     * on the one user_data they share. A host that hands out one box to
+     * several contexts must count references on it itself. */
     void      (*CHUPA_NULLABLE release)(void *CHUPA_NULLABLE user_data);
 } ChupaFunction;
 
@@ -308,31 +336,53 @@ chupa_register(ChupaContext *ctx, const ChupaFunction *fn);
 /* Sets the reason for a refusal. Only meaningful from inside a host
  * callback; outside one, it does nothing and sets CHUPA_ERR_USAGE.
  *
+ * code MUST NOT be CHUPA_ERR_NONE: "no error" is not a reason for refusing,
+ * and the engine uses that same value to mean "the callback never called
+ * chupa_fail". Passing it does nothing to the refusal and sets
+ * CHUPA_ERR_USAGE, exactly as calling this outside a callback does.
+ *
+ * msg may be NULL, and then len MUST be 0 — there is no message to measure.
+ * A NULL msg with a non-zero len is repaired to the empty message rather than
+ * read: the length a host computed before its own string lookup failed
+ * describes a string that does not exist.
+ *
  * The message bytes are copied immediately, so the caller's own buffer is
  * not needed afterwards. The offset is supplied by the engine — the call
  * site's node — since the host has no way to know it. */
 CHUPA_API void chupa_fail(ChupaContext *ctx, ChupaErrorCode code,
-                          const char *msg, size_t len);
+                          const char *CHUPA_NULLABLE msg, size_t len);
 
 /* ─── Making values ────────────────────────────────────────────────────────
  *
  * A callback needs these to build its result. The first three allocate
  * nothing at all; a string of at most fifteen bytes is inlined into the
- * value the same way. */
+ * value the same way.
+ *
+ * All four are for a function declared with CHUPA_FN_RETURNS_VALUE. A Void
+ * function is called with out == NULL, and passing that NULL on to one of
+ * these is a host bug: the first three have no ctx to report it through and
+ * trap in debug builds, doing nothing in release; chupa_make_string reports
+ * CHUPA_ERR_USAGE and returns false. */
 
 CHUPA_API void chupa_make_null  (ChupaValue *out);
 CHUPA_API void chupa_make_bool  (ChupaValue *out, bool value);
 CHUPA_API void chupa_make_number(ChupaValue *out, double value);
 
 /* bytes MUST be valid UTF-8 — the same obligation as chupa_context_set_string
- * above. Refusal is false, with CHUPA_ERR_MEMORY in the context's error.
+ * above. bytes may be NULL, and then len MUST be 0; a NULL with a non-zero
+ * len is read as the empty string, not as len bytes.
+ *
+ * Refusal is false. The reason is in the context's error: CHUPA_ERR_MEMORY
+ * when the allocation failed, CHUPA_ERR_USAGE when out was NULL. A NULL ctx
+ * is the one refusal with nowhere to report it — there is no context to
+ * report through.
  *
  * The value this produces lives until the next operation boundary on ctx,
  * exactly like any value the engine itself produced; keeping it longer needs
  * chupa_value_retain. */
 CHUPA_API CHUPA_MUST_USE bool
-chupa_make_string(ChupaContext *ctx, const char *bytes, size_t len,
-                  ChupaValue *out);
+chupa_make_string(ChupaContext *ctx, const char *CHUPA_NULLABLE bytes,
+                  size_t len, ChupaValue *out);
 
 /* ─── Evaluation ──────────────────────────────────────────────────────────
  *

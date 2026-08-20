@@ -49,6 +49,42 @@ final class HostFunctionTests: XCTestCase {
         XCTAssertThrowsError(try context.compile(expression: "track(1)") as ChupaScript.Expression<Double>)
     }
 
+    /// Типизированная перегрузка без `.returnsValue` компилируется — `R` с
+    /// флагами не связан ничем, — а движок звал бы такую функцию с
+    /// `out == nullptr`. Прежде трамплин на этом ронял процесс (`out!`);
+    /// теперь регистрация отказывает, как отказывает всякая другая
+    /// неисправная регистрация рядом.
+    func testTypedOverloadWithoutReturnsValueIsRefusedAtRegistration() {
+        let context = Context()
+        XCTAssertThrowsError(
+            try context.register("silent", flags: [.pure]) { (_: Double) -> Double in 0 }
+        ) { error in
+            XCTAssertEqual((error as? ChupaScript.Error)?.code, .usage)
+        }
+    }
+
+    /// Тот же отказ на нуль-арной перегрузке: проверка стоит на каждой из
+    /// пяти, а не на одной из них.
+    func testTypedNullaryOverloadWithoutReturnsValueIsRefusedToo() {
+        let context = Context()
+        XCTAssertThrowsError(
+            try context.register("silent", flags: []) { () -> Double in 0 }
+        )
+    }
+
+    /// Сырая перегрузка — единственная, которой Void разрешён: она получает
+    /// `out` как есть и сама решает, что с ним делать.
+    func testRawOverloadStillAcceptsAVoidFunction() throws {
+        let context = Context()
+        var called = false
+        try context.register("note", minArgs: 0, maxArgs: 0, flags: []) { _, _, out in
+            XCTAssertNil(out)
+            called = true
+        }
+        try context.run(context.compile(script: "note();"))
+        XCTAssertTrue(called)
+    }
+
     /// Замыкание не переживает контекст и не течёт: release снимает удержание.
     func testClosureIsReleasedWithTheContext() throws {
         final class Witness { static var alive = 0; init() { Witness.alive += 1 }

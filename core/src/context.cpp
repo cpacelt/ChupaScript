@@ -31,34 +31,46 @@ class EvaluationGuard {
 }  // namespace
 
 bool Context::eval(const Expression &expr, Value *out, Diagnostic &diag) {
-    beginOperation();
+    // Guard first, boundary second: the guard's assert is what catches a
+    // reentrant evaluation in debug builds, and beginOperation() drains the
+    // deferred list — running it first would do the damage before the assert
+    // could report it.
     EvaluationGuard guard(evaluating_);
+    beginOperation();
     return expr.eval(exec_, out, diag);
 }
 
 EvalStatus Context::evalNumber(const Expression &expr, double *out,
                                Diagnostic &diag) {
-    beginOperation();
     EvaluationGuard guard(evaluating_);
+    beginOperation();
     return expr.evalNumber(exec_, out, diag);
 }
 
 EvalStatus Context::evalBool(const Expression &expr, bool *out,
                              Diagnostic &diag) {
-    beginOperation();
     EvaluationGuard guard(evaluating_);
+    beginOperation();
     return expr.evalBool(exec_, out, diag);
 }
 
 bool Context::setVariableText(std::string_view name, std::string_view text,
                               Diagnostic &diag) {
+    // A refusal, not an assert: this signature has a way to say no, and the
+    // C++ door has to say it in release too — cli/echo.cpp shows registration
+    // going straight through CS::Context, so a callback holding a
+    // CS::Context * reaches here without ever crossing the C API's own guard.
+    if (evaluating_) {
+        diag = Diagnostic{ErrorCode::Usage, 0, kClosedMessage};
+        return false;
+    }
     beginOperation();
     return setVariable(store_, exec_.deferred(), name, text, diag);
 }
 
 bool Context::run(const Script &script, Diagnostic &diag) {
-    beginOperation();
     EvaluationGuard guard(evaluating_);
+    beginOperation();
     return script.run(exec_, diag);
 }
 

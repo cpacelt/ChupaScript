@@ -131,6 +131,7 @@ void BM_Host_Builtin_Abs(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr || !chupa_context_set_number(ctx, "x", 1, -5.5)) {
         state.SkipWithError("furnish failed");
+        chupa_context_destroy(ctx);   // no-op on nullptr; a leak otherwise
         return;
     }
     runEvalNumber(state, ctx, "abs(x)");
@@ -141,6 +142,7 @@ void BM_Host_CallNumber(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr || !chupa_context_set_number(ctx, "x", 1, -5.5)) {
         state.SkipWithError("furnish failed");
+        chupa_context_destroy(ctx);   // no-op on nullptr; a leak otherwise
         return;
     }
     ChupaFunction fn{};
@@ -166,6 +168,7 @@ void BM_Host_Builtin_Count(benchmark::State &state) {
     if (ctx == nullptr ||
         !chupa_context_set_data(ctx, "items", 5, "[1, 2, 3, 4, 5]", 15)) {
         state.SkipWithError("furnish failed");
+        chupa_context_destroy(ctx);   // no-op on nullptr; a leak otherwise
         return;
     }
     runEvalNumber(state, ctx, "count(items)");
@@ -176,7 +179,7 @@ void BM_Host_CallVoid(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr) {
         state.SkipWithError("chupa_context_create failed");
-        return;
+        return;   // nothing was created, so there is nothing to destroy
     }
     ChupaFunction fn{};
     fn.name = "hostConst";
@@ -200,7 +203,7 @@ void BM_Host_CallString(benchmark::State &state) {
     ChupaContext *ctx = chupa_context_create();
     if (ctx == nullptr) {
         state.SkipWithError("chupa_context_create failed");
-        return;
+        return;   // nothing was created, so there is nothing to destroy
     }
     ChupaFunction fn{};
     fn.name = "hostLen";

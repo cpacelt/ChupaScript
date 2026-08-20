@@ -372,12 +372,22 @@ bool Ast::hasStringLiteral(NodeId node) const noexcept {
 CalleeRef Ast::callee(NodeId node) const noexcept {
     assert(node < nodes_.size());
     assert(nodes_[node].kind == NodeKind::Call);
+    // The precondition the docblock states, made catchable: an unresolved
+    // callee is kNoCallee, and calleeOf would read builtinInfo(255) — past
+    // the end of the builtin table. Only a tree that never passed check can
+    // get here, which is why this is an assert and not a branch.
+    assert(nodes_[node].callee != kNoCallee &&
+           "the call name was never resolved — the tree did not pass check");
     return nodes_[node].callee;
 }
 
 void Ast::setCallee(NodeId node, CalleeRef ref) noexcept {
     assert(node < nodes_.size());
     assert(nodes_[node].kind == NodeKind::Call);
+    // kNoCallee is the "unresolved" marker, not a resolution: writing it back
+    // would erase the difference between a name check resolved and one it
+    // never looked at.
+    assert(ref != kNoCallee && "kNoCallee is not a resolution");
     nodes_[node].callee = ref;
 }
 

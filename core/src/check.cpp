@@ -34,7 +34,7 @@ struct Checker {
     void requireValue(NodeId call) {
         if (!ast.hasCallee(call)) { return; }  // уже сообщено
         if (!calleeOf(hosts, ast.callee(call)).returnsValue) {
-            report(call, ErrorCode::Name, "builtin does not return a value");
+            report(call, ErrorCode::Name, "function does not return a value");
         }
     }
 

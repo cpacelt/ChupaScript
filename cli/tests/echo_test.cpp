@@ -42,16 +42,26 @@ TEST(RegisterEcho, EachCallAppendsALine) {
 }
 
 /// echo объявлена без CHUPA_FN_PURE — вызвать её выражением нельзя, только
-/// стейтментом скрипта (docs §2.2). Без CHUPA_FN_PURE compileExpression не
-/// находит echo вовсе: имя есть только среди тех, кого можно звать в script.
+/// стейтментом скрипта (docs §2.2). Отказ приходит НЕ от того, что имя не
+/// нашлось: `echo` находится там же, где и в скрипте (resolveCallee одна на
+/// оба режима), и отвергается двумя правилами разом — §6.3 «грязную функцию
+/// из выражения звать нельзя» и §6.2 «результат Void употреблять нельзя»,
+/// потому что корень выражения и есть его значение. Поэтому сверяются коды и
+/// тексты обоих: проверка на «ошибок не ноль» прошла бы одинаково и при
+/// ненайденном имени, а это другой механизм.
 TEST(RegisterEcho, NotCallableAsAnExpression) {
     CS::Context ctx;
     std::ostringstream out;
     chupa::registerEcho(ctx, out);
 
     CS::Expression expr;
-    CS::Diagnostic diags[1];
-    EXPECT_NE(ctx.compileExpression("echo('привет')", &expr, diags, 1), 0u);
+    CS::Diagnostic diags[2];
+    ASSERT_EQ(ctx.compileExpression("echo('привет')", &expr, diags, 2), 2u);
+    EXPECT_EQ(diags[0].code, CS::ErrorCode::Usage);
+    EXPECT_STREQ(diags[0].message,
+                 "impure function cannot be called from an expression");
+    EXPECT_EQ(diags[1].code, CS::ErrorCode::Name);
+    EXPECT_STREQ(diags[1].message, "function does not return a value");
 }
 
 }  // namespace

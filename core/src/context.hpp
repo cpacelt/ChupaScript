@@ -55,10 +55,17 @@ namespace CS {
 ///                 refuses while it is up, in release builds as much as in
 ///                 debug ones — a callback that reached back into chupa_eval
 ///                 or chupa_run on this same Context would otherwise drain
-///                 the deferred list a tree walk is standing on. The flag
-///                 also feeds an assert in EvaluationGuard (context.cpp) that
-///                 catches the same reentrant call earlier in debug builds,
-///                 compiled out under NDEBUG.
+///                 the deferred list a tree walk is standing on. The C++
+///                 doors of this class answer the same flag, but not all of
+///                 them the same way: setVariableText, compileExpression and
+///                 compileScript can say no in their signatures and refuse
+///                 in release too; setGlobal and setGlobalString return void
+///                 and only assert. That difference is real and is the
+///                 reason B34 is closed by construction on the C side and by
+///                 a debug-only trap on the C++ side (docs/backlog.md B34).
+///                 The flag also feeds an assert in EvaluationGuard
+///                 (context.cpp) that catches a reentrant eval earlier in
+///                 debug builds, compiled out under NDEBUG.
 class Context {
    public:
     Context() = default;
@@ -103,7 +110,16 @@ class Context {
     /// попадает в список отложенного освобождения, и без границы список рос бы
     /// до конца жизни контекста. Хост, который только пишет и ни разу не
     /// вычисляет, — обычное дело на старте экрана.
+    ///
+    /// Утверждение вместо отказа: сигнатура возвращает void, а менять её
+    /// значило бы тронуть всех вызывающих ради пути, на который хост попадает,
+    /// только положив CS::Context * себе в user_data. Отвергнутая
+    /// альтернатива — молча пропустить вызов — оставила бы хосту запись,
+    /// которой не было, без единого признака.
     void setGlobal(std::string_view name, Value v) {
+        assert(!evaluating_ &&
+               "writing a global from inside a host callback drains the "
+               "deferred list the running tree walk stands on");
         // v may be all that is left of a value eval() handed back from an
         // earlier operation: its only reference is the creator reference
         // sitting in exec_.deferred_, and beginOperation() below is about to
@@ -118,7 +134,12 @@ class Context {
     }
 
     /// Строка от хоста: укладывается коробкой, потому что переживёт операцию.
+    ///
+    /// Утверждение о вычислении — то же и по той же причине, что у setGlobal.
     void setGlobalString(std::string_view name, std::string_view text) {
+        assert(!evaluating_ &&
+               "writing a global from inside a host callback drains the "
+               "deferred list the running tree walk stands on");
         beginOperation();
         store_.setGlobal(name, CS::materialize(text, exec_.deferred()),
                          exec_.deferred());
@@ -135,6 +156,9 @@ class Context {
 
     /// Разбор текста от хоста в глобальную переменную. Тоже операция, и по той
     /// же причине: разбор создаёт коробки.
+    ///
+    /// Отказывает, если вычисление уже идёт: сигнатура позволяет сказать это
+    /// вслух, поэтому здесь не утверждение, а отказ — он работает и в релизе.
     bool setVariableText(std::string_view name, std::string_view text,
                          Diagnostic &diag);
 
@@ -149,10 +173,14 @@ class Context {
     /// through a mutable store() could write a global outside setGlobal's
     /// operation-boundary discipline, or hand Expression::compile a Store
     /// this Context does not own).
+    ///
+    /// Refuses while an evaluation is in flight, with a non-zero count and a
+    /// filled diagnostic — the same shape any other compile failure has.
     [[nodiscard]] std::uint32_t compileExpression(std::string_view source,
                                                   Expression *out,
                                                   Diagnostic *diags,
                                                   std::uint32_t capacity) {
+        if (isEvaluating()) { return refuseCompile(diags, capacity); }
         // Set before compiling, not after success: a failed compile still
         // means resolveCallee already read the name set, so gating on the
         // outcome would make registration's window depend on whether this
@@ -166,6 +194,7 @@ class Context {
     [[nodiscard]] std::uint32_t compileScript(std::string_view source, Script *out,
                                               Diagnostic *diags,
                                               std::uint32_t capacity) {
+        if (isEvaluating()) { return refuseCompile(diags, capacity); }
         // compiled_ is set before compiling here too — see compileExpression.
         compiled_ = true;
         return Script::compile(source, store_, out, diags, capacity, &hosts_);
@@ -215,6 +244,22 @@ class Context {
     [[nodiscard]] const Store &store() const noexcept { return store_; }
 
    private:
+    /// The one wording every C++-side refusal of a closed Context uses, so
+    /// the C API's own guard (c_api.cpp, refuseWhileEvaluating) and this one
+    /// do not drift into two different sentences about one rule.
+    static constexpr const char *kClosedMessage =
+        "the context is closed while a host function is running";
+
+    /// Fills the first diagnostic slot with that refusal and answers with the
+    /// error count every compile door speaks in.
+    static std::uint32_t refuseCompile(Diagnostic *diags,
+                                       std::uint32_t capacity) noexcept {
+        if (diags != nullptr && capacity > 0) {
+            diags[0] = Diagnostic{ErrorCode::Usage, 0, kClosedMessage};
+        }
+        return 1;
+    }
+
     /// Operation boundary: drains the deferred-release list.
     ///
     /// Drained at the start of the operation, not at the end: an eval's

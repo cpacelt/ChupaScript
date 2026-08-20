@@ -1818,3 +1818,227 @@ TEST(CApiClosedContext, EvalStringSuccessLeavesErrorClearAndFailureReportsReason
 
     chupa_context_destroy(ctx);
 }
+
+// ─── Времена жизни на границе колбэка (спека §13, под ASan) ───
+
+namespace {
+
+/// Значение, уехавшее к хосту изнутри колбэка. Файловая переменная, а не
+/// локальная: смысл теста в том, что оно переживает и вызов, и контекст.
+ChupaValue g_keptFromCallback{};
+
+/// Удерживает свой аргумент прямо изнутри вызова.
+///
+/// chupa_value_retain — единственное, что колбэк здесь делает с аргументом:
+/// без него аргумент был бы одолжен до границы операции (правило 1
+/// заголовка), а с ним обязан пережить и её, и сам контекст.
+bool keepsItsArgument(ChupaContext *, const ChupaValue *args, size_t,
+                      ChupaValue *out, void *) {
+    g_keptFromCallback = args[0];
+    chupa_value_retain(&g_keptFromCallback);
+    chupa_make_number(out, 1.0);
+    return true;
+}
+
+}  // namespace
+
+/// Оба конца: ссылка берётся ВНУТРИ колбэка, отпускается ПОСЛЕ разрушения
+/// контекста, и между этими двумя точками объект читается целиком — вместе с
+/// именами полей, то есть с таблицей ключей, которую он обязан удерживать
+/// сам. RetainedObjectOutlivesTheContext выше проверяет то же самое для
+/// значения из chupa_eval; здесь значение уезжает к хосту другим путём —
+/// аргументом колбэка, — и путь этот в тестах больше нигде не пройден.
+TEST(CApiValue, ValueRetainedInsideACallbackOutlivesTheContext) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("keep", 1, 1, keepsItsArgument);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    ASSERT_TRUE(setGlobal(ctx, "user",
+                          "{'name': 'Пётр Пафнутьевич', 'age': 41}"));
+
+    ChupaValue out{};
+    ASSERT_TRUE(evalText(ctx, "keep(user)", &out));
+    EXPECT_EQ(chupa_value_number(&out), 1.0);
+
+    chupa_context_destroy(ctx);
+
+    // Контекста больше нет — а объект есть, и читается он теми же функциями.
+    ASSERT_EQ(chupa_value_kind(&g_keptFromCallback), CHUPA_KIND_OBJECT);
+    EXPECT_EQ(chupa_object_count(&g_keptFromCallback), 2u);
+
+    ChupaValue name{};
+    ASSERT_TRUE(chupa_object_get(&g_keptFromCallback, "name", 4, &name));
+    const char *bytes = nullptr;
+    size_t len = 0;
+    chupa_value_string(&name, &bytes, &len);
+    EXPECT_EQ(std::string(bytes, len), "Пётр Пафнутьевич");
+
+    // Имя поля читается из таблицы ключей самой коробки: не удержи её объект,
+    // здесь было бы чтение освобождённой памяти, и ASan сказал бы об этом.
+    const char *key = nullptr;
+    size_t keyLen = 0;
+    chupa_object_key_at(&g_keptFromCallback, 0, &key, &keyLen);
+    EXPECT_FALSE(std::string(key, keyLen).empty());
+
+    chupa_value_release(&g_keptFromCallback);
+    g_keptFromCallback = ChupaValue{};
+}
+
+namespace {
+
+/// Длиннее короткой строковой оптимизации std::string: сообщение покороче
+/// улеглось бы внутри самой строки и ничего бы не двигало, а тест ровно про
+/// то, что движение буфера причины не задевает уже отданные аргументы.
+const char kLongReason[] =
+    "локаль xx_YY не поддерживается: ни одна из установленных раскладок не "
+    "объявляет её ни основной, ни запасной, и подставить вместо неё нечего — "
+    "форматирование даты пришлось бы делать наугад";
+
+/// Читает аргументы, отказывает длинным сообщением и перечитывает их.
+bool failsLongAfterReadingArgs(ChupaContext *ctx, const ChupaValue *args,
+                               size_t argc, ChupaValue *, void *) {
+    EXPECT_EQ(argc, 2u);
+
+    const char *before = nullptr;
+    size_t beforeLen = 0;
+    chupa_value_string(&args[0], &before, &beforeLen);
+    const std::string copy(before, beforeLen);
+    const size_t items = chupa_array_count(&args[1]);
+
+    chupa_fail(ctx, CHUPA_ERR_DATA, kLongReason, std::strlen(kLongReason));
+
+    // Те же байты по тем же адресам: аргументы принадлежат кадру вычисления,
+    // а причина отказа — своей строке в Execution, и общего у них ничего.
+    const char *after = nullptr;
+    size_t afterLen = 0;
+    chupa_value_string(&args[0], &after, &afterLen);
+    EXPECT_EQ(after, before);
+    EXPECT_EQ(std::string(after, afterLen), copy);
+    EXPECT_EQ(chupa_array_count(&args[1]), items);
+    return false;
+}
+
+}  // namespace
+
+/// Сегодняшние тесты отказа нуль-арны, то есть аргументов у них нет вовсе —
+/// и потому не проверяют ничего про них. Здесь аргументов два, оба коробки:
+/// строка длиннее пятнадцати байт и массив.
+TEST(CApiHostFailure, LongReasonDoesNotDisturbTheArgumentsAlreadyHandedOver) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("formats", 2, 2, failsLongAfterReadingArgs);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+    const char *text = "Длинный текст, который не поместится внутрь значения";
+    ASSERT_TRUE(chupa_context_set_string(ctx, "longText", 8, text,
+                                         std::strlen(text)));
+    ASSERT_TRUE(setGlobal(ctx, "items", "[1, 2, 3]"));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "formats(longText, items)", &out));
+
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_DATA);
+    EXPECT_EQ(std::string(err.message, err.message_len), kLongReason);
+
+    chupa_context_destroy(ctx);
+}
+
+// ─── chupa_fail: аргументы, которые сам хост может испортить ───
+
+namespace {
+
+/// Указателя нет, а длина есть — так выходит у хоста, посчитавшего длину
+/// раньше, чем его собственное получение байтов отказало.
+bool failsWithNullMessageAndALyingLength(ChupaContext *ctx, const ChupaValue *,
+                                         size_t, ChupaValue *, void *) {
+    chupa_fail(ctx, CHUPA_ERR_TYPE, nullptr, 42);
+    return false;
+}
+
+/// CHUPA_ERR_NONE — «ошибки нет», причиной отказа быть не может.
+bool failsWithNoneThenRefuses(ChupaContext *ctx, const ChupaValue *, size_t,
+                              ChupaValue *, void *) {
+    chupa_fail(ctx, CHUPA_ERR_NONE, "dropped", 7);
+    return false;
+}
+
+}  // namespace
+
+/// Сорок два байта за концом однобайтового литерала уезжали хосту как
+/// сообщение об ошибке. Теперь длина обязана следовать за указателем.
+TEST(CApiHostFailure, NullMessageMakesTheReasonEmptyWhateverTheLengthSays) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("lies", 0, 0, failsWithNullMessageAndALyingLength);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "lies()", &out));
+
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_TYPE);
+    EXPECT_EQ(err.message_len, 0u);
+
+    chupa_context_destroy(ctx);
+}
+
+/// CHUPA_ERR_NONE отвергается целиком: причина не запоминается, и отказ
+/// колбэка становится обычным молчаливым — CHUPA_ERR_HOST. Прежде код
+/// укладывался как есть, и сообщение пропадало без следа, потому что None —
+/// это признак «chupa_fail не звался» (execution.hpp).
+TEST(CApiHostFailure, NoneIsRefusedAndTheMessageIsNotSilentlyLost) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction fn = described("noneCode", 0, 0, failsWithNoneThenRefuses);
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaValue out{};
+    EXPECT_FALSE(evalText(ctx, "noneCode()", &out));
+
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    EXPECT_EQ(err.code, CHUPA_ERR_HOST);
+    EXPECT_EQ(std::string(err.message, err.message_len), "host function failed");
+
+    chupa_context_destroy(ctx);
+}
+
+// ─── chupa_make_string: отказ, о котором можно узнать ───
+
+namespace {
+
+bool g_makeStringRefused = false;
+bool g_makeStringSaidUsage = false;
+
+/// Void-функция, полезшая за строкой: слота под результат у неё нет.
+bool voidReachesForAString(ChupaContext *ctx, const ChupaValue *, size_t,
+                           ChupaValue *out, void *) {
+    EXPECT_EQ(out, nullptr);
+    const char text[] = "класть некуда";
+    g_makeStringRefused = !chupa_make_string(ctx, text, sizeof text - 1, out);
+    ChupaError err;
+    chupa_context_error(ctx, &err);
+    g_makeStringSaidUsage = err.code == CHUPA_ERR_USAGE;
+    return true;
+}
+
+}  // namespace
+
+/// Отказ без причины хост читал как CHUPA_ERR_NONE, то есть «всё хорошо».
+/// Теперь у отказа есть код и текст, и прочитать их можно не выходя из
+/// колбэка.
+TEST(CApiMake, StringWithoutASlotRefusesWithUsage) {
+    ChupaContext *ctx = chupa_context_create();
+    g_makeStringRefused = false;
+    g_makeStringSaidUsage = false;
+    ChupaFunction fn = described("voidGrabs", 0, 0, voidReachesForAString);
+    fn.flags = 0;  // ни RETURNS_VALUE, ни PURE — значит Void и стейтментом
+    ASSERT_TRUE(chupa_register(ctx, &fn));
+
+    ChupaScript *s = chupa_compile_script(ctx, "voidGrabs();", 12);
+    ASSERT_NE(s, nullptr);
+    ASSERT_TRUE(chupa_run(ctx, s));
+    EXPECT_TRUE(g_makeStringRefused);
+    EXPECT_TRUE(g_makeStringSaidUsage);
+    chupa_script_destroy(s);
+
+    chupa_context_destroy(ctx);
+}

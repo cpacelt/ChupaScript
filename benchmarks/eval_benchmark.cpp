@@ -697,7 +697,11 @@ void BM_Eval_String_New(benchmark::State &state, std::string_view value) {
         state.SkipWithError("chupa_context_create failed");
         return;
     }
-    chupa_context_set_string(ctx, "s", 1, value.data(), value.size());
+    if (!chupa_context_set_string(ctx, "s", 1, value.data(), value.size())) {
+        state.SkipWithError("chupa_context_set_string failed");
+        chupa_context_destroy(ctx);
+        return;
+    }
     ChupaExpression *expr = chupa_compile_expression(ctx, "s", 1);
     if (expr == nullptr) {
         state.SkipWithError("chupa_compile_expression failed");

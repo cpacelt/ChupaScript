@@ -384,4 +384,84 @@ TEST(ContextHostFunctions, EvaluatingFlagClearsAfterFailure) {
     EXPECT_FALSE(ctx.isEvaluating());
 }
 
+// ─── Двери C++-слоя, закрытые на время вызова ───
+
+namespace {
+
+/// Что колбэк успел выяснить о закрытых дверях. Файловые переменные, а не
+/// поля: коллбэк — свободная функция с C-соглашением, поля ей взять негде,
+/// кроме user_data, а туда уже уехал сам CS::Context.
+bool g_textRefused = false;
+bool g_expressionRefused = false;
+bool g_scriptRefused = false;
+CS::ErrorCode g_textCode = CS::ErrorCode::None;
+
+/// Колбэк, добравшийся до CS::Context напрямую.
+///
+/// Так выглядит хост, зарегистрировавший функцию через
+/// CS::Context::registerFunction, минуя C API (cli/echo.cpp — ровно этот
+/// путь), и положивший контекст себе в user_data. Стража C API на этом пути
+/// нет вовсе: она стоит на дверях c_api.cpp, а сюда никто из них не заходил.
+bool knocksOnTheCppDoors(ChupaContext *, const ChupaValue *, std::size_t,
+                         ChupaValue *out, void *userData) {
+    auto *ctx = static_cast<CS::Context *>(userData);
+
+    CS::Diagnostic diag{};
+    g_textRefused = !ctx->setVariableText("y", "1", diag);
+    g_textCode = diag.code;
+
+    CS::Expression expr;
+    CS::Diagnostic exprDiag{};
+    g_expressionRefused =
+        ctx->compileExpression("1 + 1", &expr, &exprDiag, 1) != 0u &&
+        exprDiag.code == CS::ErrorCode::Usage;
+
+    CS::Script script;
+    CS::Diagnostic scriptDiag{};
+    g_scriptRefused =
+        ctx->compileScript("y = 1;", &script, &scriptDiag, 1) != 0u &&
+        scriptDiag.code == CS::ErrorCode::Usage;
+
+    chupa_make_number(out, 1.0);
+    return true;
+}
+
+}  // namespace
+
+/// Оба конца: признак поднят входом в Context::eval и снят его выходом, а
+/// внутри — между этими двумя точками — все три двери, чья сигнатура
+/// позволяет сказать «нет», говорят его и в релизе.
+///
+/// setGlobal и setGlobalString сюда не входят: они возвращают void, ловятся
+/// только утверждением отладочной сборки, и тест, проверяющий assert,
+/// пришлось бы писать смертью процесса (docs/backlog.md B34).
+TEST(ContextHostFunctions, CppDoorsRefuseFromInsideACallback) {
+    CS::Context ctx;
+    g_textRefused = false;
+    g_expressionRefused = false;
+    g_scriptRefused = false;
+    g_textCode = CS::ErrorCode::None;
+
+    ChupaFunction fn = described("knocks", 0, 0, knocksOnTheCppDoors, &ctx);
+    ASSERT_EQ(ctx.registerFunction(fn), CS::RegisterOutcome::Ok);
+
+    CS::Expression expr;
+    CS::Diagnostic diag{};
+    ASSERT_EQ(ctx.compileExpression("knocks()", &expr, &diag, 1), 0u)
+        << diag.message;
+
+    CS::Value out = CS::Value::null();
+    ASSERT_TRUE(ctx.eval(expr, &out, diag)) << diag.message;
+
+    EXPECT_TRUE(g_textRefused);
+    EXPECT_EQ(g_textCode, CS::ErrorCode::Usage);
+    EXPECT_TRUE(g_expressionRefused);
+    EXPECT_TRUE(g_scriptRefused);
+    EXPECT_FALSE(ctx.isEvaluating());
+
+    // Дверь снова открыта, и отказ ничего в контексте не испортил.
+    CS::Diagnostic after{};
+    EXPECT_TRUE(ctx.setVariableText("y", "1", after)) << after.message;
+}
+
 }  // namespace

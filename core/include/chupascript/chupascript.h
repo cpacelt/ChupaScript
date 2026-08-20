@@ -58,10 +58,15 @@ typedef struct ChupaContext    ChupaContext;
 typedef struct ChupaExpression ChupaExpression;
 typedef struct ChupaScript     ChupaScript;
 
-/* Forward-declared here, defined in full in the Evaluation section below:
- * ChupaHostFunction (Функции хоста: типы, above Evaluation) takes ChupaValue
- * only by pointer, so the incomplete type is enough for it. */
-typedef struct ChupaValue ChupaValue;
+/* Defined here, ahead of the Evaluation section that documents it below: the
+ * host-function types just above Evaluation take ChupaValue by pointer, and
+ * a second typedef of the same name — one here as a forward declaration, one
+ * there as the definition — is only valid from C11 on. This project builds
+ * as C99 (see the iOS pod spec), where a repeated typedef of an identical
+ * type is a compiler extension, not a language guarantee, and
+ * -pedantic-errors turns the resulting warning into a hard failure. One
+ * definition, moved up, has no such split. */
+typedef struct ChupaValue { uint64_t _bits[2]; } ChupaValue;
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
  * ║ OWNERSHIP — three rules, and this header holds nothing else.         ║
@@ -222,33 +227,34 @@ chupa_compile_script(ChupaContext *ctx, const char *source, size_t len);
 CHUPA_API void chupa_expression_destroy(ChupaExpression *CHUPA_NULLABLE e);
 CHUPA_API void chupa_script_destroy(ChupaScript *CHUPA_NULLABLE s);
 
-/* ─── Функции хоста: типы ────────────────────────────────────────────────
+/* ─── Host functions: types ──────────────────────────────────────────────
  *
- * Регистрирует их chupa_register; здесь только состав описания, потому что
- * ядро включает этот заголовок и заводить в нём параллельные копии этих
- * типов значило бы держать две правды об одном. */
+ * chupa_register does the registering; only the shape of the descriptor
+ * lives here, because the core includes this header, and a parallel copy of
+ * these types inside the core would hold two truths about one thing. */
 
 typedef enum ChupaFunctionFlags {
     CHUPA_FN_NONE          = 0,
-    CHUPA_FN_RETURNS_VALUE = 1u << 0,  /* без него — Void (docs/semantics.md 2.2) */
-    CHUPA_FN_PURE          = 1u << 1,  /* без него — вызов только в скрипте */
-    CHUPA_FN_DETERMINISTIC = 1u << 2   /* задел под кэш props; пока не читается */
+    CHUPA_FN_RETURNS_VALUE = 1u << 0,  /* without it — Void (docs/semantics.md 2.2) */
+    CHUPA_FN_PURE          = 1u << 1,  /* without it — callable from a script only */
+    CHUPA_FN_DETERMINISTIC = 1u << 2   /* room for a props cache; not read yet */
 } ChupaFunctionFlags;
 
-/* Без верхней границы числа аргументов — как у format. */
+/* No upper bound on argument count — as format has. */
 #define CHUPA_VARIADIC 255
 
-/* args заимствованы и действительны только на время вызова — правило 2
- * заголовка. Пережить вызов может лишь то, что хост удержал через
- * chupa_value_retain.
+/* args are borrowed and valid only for the duration of the call — rule 2 of
+ * this header. Nothing outlives the call except what the host retained
+ * through chupa_value_retain.
  *
- * out == NULL, если функция объявлена без CHUPA_FN_RETURNS_VALUE.
+ * out == NULL when the function was declared without CHUPA_FN_RETURNS_VALUE.
  *
- * ctx закрыт: изнутри вызова на нём разрешены только chupa_make_string,
- * chupa_fail и чтение ошибки. Всё прочее отказывает с CHUPA_ERR_USAGE.
+ * ctx is closed: from inside the call only chupa_make_string, chupa_fail and
+ * reading the error are allowed on it. Everything else fails with
+ * CHUPA_ERR_USAGE.
  *
- * Возврат false — отказ; перед ним коллбэк вправе позвать chupa_fail.
- * Смещение подставляет движок — узел вызова. */
+ * Returning false is a refusal; the callback may call chupa_fail before it.
+ * The offset is filled in by the engine — the call node. */
 typedef bool (*ChupaHostFunction)(ChupaContext *ctx,
                                   const ChupaValue *args, size_t argc,
                                   ChupaValue *CHUPA_NULLABLE out,
@@ -258,13 +264,13 @@ typedef struct ChupaFunction {
     const char *name;
     size_t      name_len;
     uint8_t     min_args;
-    uint8_t     max_args;   /* CHUPA_VARIADIC — без верхней границы */
+    uint8_t     max_args;   /* CHUPA_VARIADIC — no upper bound */
     uint32_t    flags;      /* ChupaFunctionFlags */
     ChupaHostFunction call;
     void       *CHUPA_NULLABLE user_data;
-    /* Зовётся ровно один раз на каждую УСПЕШНО зарегистрированную функцию из
-     * chupa_context_destroy. NULL — освобождать нечего. Отказавшая
-     * регистрация release не зовёт: коробку хост ещё держит сам. */
+    /* Called exactly once for every SUCCESSFULLY registered function, from
+     * chupa_context_destroy. NULL — nothing to release. A refused
+     * registration does not call release: the host still holds the box. */
     void      (*CHUPA_NULLABLE release)(void *CHUPA_NULLABLE user_data);
 } ChupaFunction;
 
@@ -292,7 +298,6 @@ typedef struct ChupaFunction {
  * same, because compiling discards what the unit held before.
  * chupa_value_retain covers this case exactly as it covers every other
  * borrowed value. */
-typedef struct ChupaValue { uint64_t _bits[2]; } ChupaValue;
 
 CHUPA_API CHUPA_MUST_USE bool
 chupa_eval(ChupaContext *ctx, ChupaExpression *e, ChupaValue *out);

@@ -613,4 +613,56 @@ TEST(Store, AcceptsItsOwnNameSliceBack) {
     EXPECT_EQ(store.global("long").numberValue(), 2.0);
 }
 
+TEST(StoreEpoch, WritingAGlobalMovesItsEpoch) {
+    Store store;
+    CS::Deferred dead;
+    store.setGlobal("width", Value::number(320.0), dead);
+    const CS::GlobalSlot slot = store.globalSlot("width");
+    const CS::Epoch before = store.epochAt(slot);
+
+    store.setGlobal("width", Value::number(375.0), dead);
+
+    EXPECT_GT(store.epochAt(slot), before);
+}
+
+TEST(StoreEpoch, AddressOfACellSurvivesLaterNames) {
+    // Ровно тот случай, ради которого эпохи лежат кусками: OKBDUI заводит
+    // переменные по мере разбора дерева виджетов, и адрес, отданный обёртке
+    // раньше, обязан пережить всякое следующее имя (спека §2.2).
+    Store store;
+    CS::Deferred dead;
+    store.setGlobal("first", Value::number(1.0), dead);
+    const CS::Epoch *address = store.epochAddressAt(store.globalSlot("first"));
+
+    for (int i = 0; i < 500; ++i) {
+        store.setGlobal("name" + std::to_string(i), Value::number(i), dead);
+    }
+
+    EXPECT_EQ(store.epochAddressAt(store.globalSlot("first")), address);
+    store.setGlobal("first", Value::number(2.0), dead);
+    EXPECT_EQ(*address, store.epochAt(store.globalSlot("first")));
+}
+
+TEST(StoreEpoch, EveryCellIsBornWithItsOwnNumber) {
+    Store store;
+    CS::Deferred dead;
+    store.setGlobal("a", Value::number(1.0), dead);
+    store.setGlobal("b", Value::number(2.0), dead);
+
+    EXPECT_NE(store.epochAt(store.globalSlot("a")),
+              store.epochAt(store.globalSlot("b")));
+}
+
+TEST(StoreEpoch, TheClockIsSharedByCellsAndBoxes) {
+    // Одна лента на контекст: номер, выданный позже, строго больше выданного
+    // раньше, кому бы он ни достался (спека §2.1).
+    Store store;
+    CS::Deferred dead;
+    store.setGlobal("a", Value::number(1.0), dead);
+    const CS::Epoch afterCell = store.clock().now();
+    const CS::Epoch fresh = store.clock().tick();
+
+    EXPECT_GT(fresh, afterCell);
+}
+
 }  // namespace

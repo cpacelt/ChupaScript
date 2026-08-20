@@ -142,6 +142,10 @@ void Store::setGlobal(std::string_view name, Value v, Deferred &dead) {
         Value &slot = values_[slots_[at].slot];
         dead.take(slot);
         slot = v;
+        // Эпоха поднимается здесь, а не у вызывающего: запись без подъёма даёт
+        // не «медленно», а молча застывший экран (спека §4.5), поэтому она
+        // обязана быть невыразима мимо этой строки.
+        epochs_.bump(slots_[at].slot, clock_.tick());
         return;
     }
 
@@ -156,6 +160,9 @@ void Store::setGlobal(std::string_view name, Value v, Deferred &dead) {
     // не пишет.
     const GlobalSlot slot = static_cast<GlobalSlot>(values_.size());
     values_.push_back(v);
+    // Рождение ячейки берёт номер из той же ленты, что и мутация: номер,
+    // выданный позже, строго больше выданного раньше, и на этом стоит §4.4.
+    epochs_.open(slot, clock_.tick());
     slots_.insert(slots_.begin() + at,
                   detail::GlobalName{nameOffset, nameLength, slot});
 }

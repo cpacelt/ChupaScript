@@ -9,6 +9,7 @@
 #include "keytable.hpp"
 #include "box.hpp"
 #include "deferred.hpp"
+#include "epoch.hpp"
 #include "value.hpp"
 
 namespace CS {
@@ -154,6 +155,28 @@ class Store {
     /// в eval.
     [[nodiscard]] Value globalValueAt(GlobalSlot slot) const noexcept;
 
+    /// Лента этого контекста. Отдаётся изменяемой намеренно: номера из неё
+    /// берут не только ячейки, но и коробки, а те создаются и меняются
+    /// свободными функциями aggregate.hpp, которым хранилища не полагается.
+    ///
+    /// Мимо ленты записи не существует — это проверяется грепом по пяти
+    /// дверям (спека §2.2), а не дисциплиной.
+    [[nodiscard]] EpochClock &clock() noexcept { return clock_; }
+
+    /// Адрес эпохи ячейки. Жив, пока живо хранилище (эпохи лежат кусками,
+    /// epoch.hpp). Это тот самый адрес, что уезжает к читателю в Dep::epoch.
+    ///
+    /// Предусловие: номер выдан ЭТИМ хранилищем — как и у globalValueAt.
+    [[nodiscard]] const Epoch *epochAddressAt(GlobalSlot slot) const noexcept {
+        return epochs_.addressOf(slot);
+    }
+
+    /// Значение эпохи ячейки. Для тестов и отладки; горячий путь читает по
+    /// адресу и в движок не входит.
+    [[nodiscard]] Epoch epochAt(GlobalSlot slot) const noexcept {
+        return epochs_.at(slot);
+    }
+
     /// Заводит глобальную переменную либо заменяет значение существующей.
     /// Имя не проверяется: требование «всякая глобальная переменная адресуема
     /// идентификатором» держится на вызывающем, и единственный такой
@@ -225,6 +248,14 @@ class Store {
     // имён перед `width`: номер ячейки от места в таблице не зависит.
     std::vector<detail::GlobalName> slots_;  // имя → номер ячейки
     std::vector<Value> values_;              // номер ячейки → значение
+
+    /// Лента контекста: из неё берут номер и ячейки, и коробки.
+    EpochClock clock_;
+
+    /// Эпохи ячеек, параллельные values_ по номеру, но лежащие кусками:
+    /// параллельный вектор переехал бы вместе с values_ и увёл бы за собой
+    /// адрес, отданный читателю (epoch.hpp, спека §2.2).
+    EpochSlots epochs_;
 };
 
 }  // namespace CS

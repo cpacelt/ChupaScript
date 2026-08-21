@@ -167,6 +167,17 @@ void Store::setGlobal(std::string_view name, Value v, Deferred &dead) {
                   detail::GlobalName{nameOffset, nameLength, slot});
 }
 
+void Store::setGlobalAt(GlobalSlot slot, Value v, Deferred &dead) {
+    assert(slot < values_.size() && "номер ячейки выдан другим хранилищем");
+    // retain нового идёт первым: при записи значения в самоё себя порядок
+    // наоборот уронил бы счётчик в ноль между отпусканием и присваиванием.
+    detail::retainValue(v);
+    Value &cell = values_[slot];
+    dead.take(cell);
+    cell = v;
+    epochs_.bump(slot, clock_.tick());
+}
+
 std::uint32_t Store::globalCount() const noexcept {
     return static_cast<std::uint32_t>(slots_.size());
 }

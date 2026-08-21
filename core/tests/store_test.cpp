@@ -665,4 +665,59 @@ TEST(StoreEpoch, TheClockIsSharedByCellsAndBoxes) {
     EXPECT_GT(fresh, afterCell);
 }
 
+TEST(StoreGlobals, SetGlobalAtReplacesValueAndBumpsEpoch) {
+    Store store;
+    Deferred dead;
+    store.setGlobal("n", Value::number(1), dead);
+    const CS::GlobalSlot slot = store.globalSlot("n");
+    ASSERT_NE(slot, CS::kNoGlobalSlot);
+    const CS::Epoch before = store.epochAt(slot);
+
+    store.setGlobalAt(slot, Value::number(2), dead);
+
+    EXPECT_EQ(store.globalValueAt(slot).numberValue(), 2.0);
+    // Подъём эпохи стоит внутри двери: без него читатель кэша не узнает о
+    // записи и экран замрёт молча.
+    EXPECT_GT(store.epochAt(slot), before);
+}
+
+#ifndef NDEBUG
+TEST(StoreGlobals, SetGlobalAtReleasesTheDisplacedBox) {
+    Store store;
+    const std::size_t empty = CS::detail::liveBoxCount();
+    {
+        Deferred dead;
+        store.setGlobal("obj",
+                        CS::makeObject(store.keys(), 0, store.clock(), dead),
+                        dead);
+        const CS::GlobalSlot slot = store.globalSlot("obj");
+        // Ячейка — корень: без отпускания вытесненного повторная запись
+        // растила бы память вечно.
+        store.setGlobalAt(slot, Value::number(1), dead);
+    }
+    EXPECT_EQ(CS::detail::liveBoxCount(), empty);
+}
+
+TEST(StoreGlobals, SetGlobalAtSurvivesWritingTheSameValue) {
+    const std::size_t empty = CS::detail::liveBoxCount();
+    {
+        Store store;
+        Deferred dead;
+        store.setGlobal("obj",
+                        CS::makeObject(store.keys(), 0, store.clock(), dead),
+                        dead);
+        const CS::GlobalSlot slot = store.globalSlot("obj");
+
+        store.setGlobalAt(slot, store.globalValueAt(slot), dead);
+
+        // Запись значения в самоё себя коробку не убивает: retain нового идёт
+        // до отпускания старого.
+        EXPECT_EQ(CS::detail::liveBoxCount(), empty + 1);
+        EXPECT_EQ(store.globalValueAt(slot).kind(), Value::Kind::Object);
+    }
+    // Хранилище умерло — за собой оно ничего не оставило.
+    EXPECT_EQ(CS::detail::liveBoxCount(), empty);
+}
+#endif
+
 }  // namespace

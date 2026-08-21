@@ -65,7 +65,7 @@ WebAssembly. Контракт проверки обязан быть дёшев 
 
 | зацепка | где | кто поднимает |
 |---|---|---|
-| ячейка глобальной переменной | массив в `Store`, параллельный `globalValues_` | `setGlobal`, `Assign` в имя |
+| ячейка глобальной переменной | массив в `Store`, параллельный `globalValues_` | `setGlobal`, `setGlobalAt` |
 | заголовок `ObjectBox` | рядом с `rc` и `kind` | `objectSet` |
 | заголовок `ArrayBox` | там же | `arraySet`, `arrayPush`, `arrayPop` |
 

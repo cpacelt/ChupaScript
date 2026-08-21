@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "aggregate.hpp"
 #include "box.hpp"
 #include "diagnostic.hpp"
 #include "data.hpp"
@@ -335,5 +336,189 @@ TEST(Expression, LiteralOutlivesTheStoreItWasCompiledAgainst) {
     EXPECT_EQ(CS::detail::liveBoxCount(), before);
 }
 #endif
+
+TEST(EvalTracked, AConstantFillsTheWholeSetWithTheEternalZero) {
+    CS::Store store;
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("42", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    EXPECT_EQ(n, 0u) << "ноль — законный ответ, и это не переполнение";
+    for (const CS::Dep &dep : deps) {
+        EXPECT_EQ(dep.epoch, &CS::kZeroEpoch);
+        EXPECT_EQ(dep.owner.kind(), CS::Value::Kind::Null);
+    }
+}
+
+TEST(EvalTracked, TheTailPointsAtTheEternalZero) {
+    // Читатель складывает ровно kMaxDeps слов, не заглядывая в счётчик, —
+    // ради этого хвост обязан быть настоящим нулевым слагаемым, а не nullptr.
+    CS::Store store;
+    CS::Deferred dead;
+    store.setGlobal("a", CS::Value::number(1.0), dead);
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("a", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    ASSERT_EQ(n, 1u);
+    EXPECT_NE(deps[0].epoch, &CS::kZeroEpoch);
+    for (std::uint32_t i = 1; i < CS::kMaxDeps; ++i) {
+        EXPECT_EQ(deps[i].epoch, &CS::kZeroEpoch);
+    }
+}
+
+TEST(EvalTracked, TheSumMovesExactlyWhenTheAnswerCanChange) {
+    CS::Store store;
+    CS::Deferred dead;
+    CS::Diagnostic setup;
+    ASSERT_TRUE(CS::setVariable(store, dead, "users",
+                                "[{'name': 'Вася'}, {'name': 'Петя'}]", setup));
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("users[0].name", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+    ASSERT_EQ(n, 3u);
+
+    const auto sum = [&deps]() {
+        CS::Epoch total = 0;
+        for (const CS::Dep &dep : deps) { total += *dep.epoch; }
+        return total;
+    };
+    const CS::Epoch snapshot = sum();
+
+    // Правка соседнего элемента читателя нулевого не задевает — то, ради чего
+    // схема с коробками стоит своих денег (спека §3.2).
+    const CS::Value users = store.global("users");
+    CS::objectSet(CS::arrayAt(users, 1), "name", CS::Value::null(), store.clock(), dead);
+    EXPECT_EQ(sum(), snapshot);
+
+    // Правка своего — задевает.
+    CS::objectSet(CS::arrayAt(users, 0), "name", CS::Value::null(), store.clock(), dead);
+    EXPECT_GT(sum(), snapshot);
+}
+
+TEST(EvalTracked, OverflowPoisonsTheSetSoAForgetfulReaderCrashesLoudly) {
+    CS::Store store;
+    CS::Deferred dead;
+    CS::Diagnostic setup;
+    ASSERT_TRUE(CS::setVariable(store, dead, "u",
+                                "{'a': {'b': {'c': {'d': {'e': 1}}}}}", setup));
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("u.a.b.c.d.e", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    EXPECT_EQ(n, CS::kDepsOverflow);
+    for (const CS::Dep &dep : deps) { EXPECT_EQ(dep.epoch, nullptr); }
+}
+
+TEST(EvalTracked, AnAggregateResultIsNotCached) {
+    // Спека §2.8: кэшировать нечего — возврат ручки это копия шестнадцати
+    // байт. И граница ответственности: за содержимое агрегата движок не
+    // ручается, читает его хост своими вызовами.
+    CS::Store store;
+    CS::Deferred dead;
+    CS::Diagnostic setup;
+    ASSERT_TRUE(CS::setVariable(store, dead, "items", "[1, 2, 3]", setup));
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("items", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    EXPECT_EQ(out.kind(), CS::Value::Kind::Array);
+    EXPECT_EQ(n, CS::kDepsOverflow);
+}
+
+TEST(EvalTracked, ALongStringResultIsStillCached) {
+    // Строка под правило §2.8 не попадает: мутирующих операций над строками в
+    // языке нет, ручка на строку вечно свежая. Обобщив правило на строки, кэш
+    // выключили бы ровно там, ради чего он затевался.
+    CS::Store store;
+    CS::Deferred dead;
+    CS::Diagnostic setup;
+    ASSERT_TRUE(CS::setVariable(store, dead, "title",
+                                "'строка заведомо длиннее пятнадцати байт'",
+                                setup));
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("title", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    EXPECT_EQ(out.kind(), CS::Value::Kind::String);
+    EXPECT_EQ(n, 1u);
+}
+
+TEST(EvalTracked, AFailedEvaluationLeavesNothingToCache) {
+    CS::Store store;
+    CS::Deferred dead;
+    store.setGlobal("n", CS::Value::number(1.0), dead);
+    CS::Execution exec(store);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("n.field", store, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::boolean(true);
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    EXPECT_FALSE(expr.evalTracked(exec, &out, deps, &n, diag));
+
+    EXPECT_EQ(n, CS::kDepsOverflow);
+    EXPECT_EQ(out.kind(), CS::Value::Kind::Boolean) << "при отказе *out не трогается";
+}
+
+TEST(EvalTracked, AUnitFromAnotherStoreIsRefused) {
+    CS::Store mine;
+    CS::Store other;
+    CS::Execution exec(mine);
+    CS::Expression expr;
+    CS::Diagnostic diags[4];
+    ASSERT_EQ(CS::Expression::compile("42", other, &expr, diags, 4), 0u);
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    CS::Diagnostic diag;
+    EXPECT_FALSE(expr.evalTracked(exec, &out, deps, &n, diag));
+    EXPECT_EQ(diag.code, CS::ErrorCode::Usage);
+}
 
 }  // namespace

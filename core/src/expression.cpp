@@ -28,6 +28,46 @@ bool Expression::eval(Execution &exec, Value *out,
     return evalExpression(ast_, source_, exec, out, diag);
 }
 
+namespace {
+
+/// Набивает набор так, чтобы читатель, не посмотревший на *n, упал сразу.
+void poison(Dep *deps, std::uint32_t *n) noexcept {
+    for (std::uint32_t i = 0; i < kMaxDeps; ++i) { deps[i] = Dep{nullptr, Value::null()}; }
+    *n = kDepsOverflow;
+}
+
+}  // namespace
+
+bool Expression::evalTracked(Execution &exec, Value *out, Dep *deps,
+                             std::uint32_t *n, Diagnostic &diag) const {
+    if (!exec.acceptsUnit(storeId_, diag)) {
+        poison(deps, n);
+        return false;
+    }
+    if (!evalExpression(ast_, source_, exec, out, diag)) {
+        poison(deps, n);
+        return false;
+    }
+    // Отметка с компиляции, а не разбор дерева здесь: список вызываемых
+    // известен с компиляции, и платить за него на каждом промахе незачем.
+    // Агрегат в результате — спека §2.8: кэшировать нечего, а ручаться за
+    // содержимое движок и не может. Строка сюда НЕ попадает: изменить её в
+    // языке нечем.
+    const bool aggregate = out->kind() == Value::Kind::Array ||
+                           out->kind() == Value::Kind::Object;
+    if (!ast_.isCacheable() || aggregate || exec.deps().overflowed()) {
+        poison(deps, n);
+        return true;
+    }
+
+    const DepSet &found = exec.deps();
+    for (std::uint32_t i = 0; i < kMaxDeps; ++i) {
+        deps[i] = i < found.count() ? found.at(i) : Dep{&kZeroEpoch, Value::null()};
+    }
+    *n = found.count();
+    return true;
+}
+
 EvalStatus Expression::evalOfKind(Execution &exec, Value::Kind wanted,
                                   const char *message, Value *out,
                                   Diagnostic &diag) const {

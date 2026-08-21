@@ -40,6 +40,13 @@ bool Context::eval(const Expression &expr, Value *out, Diagnostic &diag) {
     return expr.eval(exec_, out, diag);
 }
 
+bool Context::evalTracked(const Expression &expr, Value *out, Dep *deps,
+                          std::uint32_t *n, Diagnostic &diag) {
+    EvaluationGuard guard(evaluating_);
+    beginOperation();
+    return expr.evalTracked(exec_, out, deps, n, diag);
+}
+
 EvalStatus Context::evalNumber(const Expression &expr, double *out,
                                Diagnostic &diag) {
     EvaluationGuard guard(evaluating_);

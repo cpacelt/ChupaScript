@@ -114,6 +114,53 @@ TEST(Context, ReportsEvaluationFailure) {
     EXPECT_DOUBLE_EQ(out.numberValue(), 42.0);
 }
 
+// Context::evalTracked проходит границу операции так же, как Context::eval:
+// та же охрана реентрантности (EvaluationGuard) и тот же beginOperation
+// (drain отложенного списка, сброс lastResult_) — оба door-метода зовут один
+// и тот же приватный beginOperation, и это не совпадение реализации, а
+// требование (LAYOUT: "операция, а не голая запись").
+TEST(Context, EvalTrackedReachesTheSameExpressionAndDeps) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("a", "1", diag));
+
+    const CS::Expression expr = compileIn(ctx, "a");
+
+    CS::Value out = CS::Value::null();
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    ASSERT_TRUE(ctx.evalTracked(expr, &out, deps, &n, diag));
+
+    EXPECT_DOUBLE_EQ(out.numberValue(), 1.0);
+    ASSERT_EQ(n, 1u);
+    EXPECT_NE(deps[0].epoch, &CS::kZeroEpoch);
+    for (std::uint32_t i = 1; i < CS::kMaxDeps; ++i) {
+        EXPECT_EQ(deps[i].epoch, &CS::kZeroEpoch);
+    }
+}
+
+/// Признак реентрантности снимается и на отказе evalTracked — тот же путь,
+/// что EvaluatingFlagClearsAfterFailure проверяет у Context::eval. При отказе
+/// набор отравлен nullptr'ами насквозь через дверь Context, а не только у
+/// Expression::evalTracked напрямую.
+TEST(Context, EvalTrackedClearsTheEvaluatingFlagAfterFailure) {
+    CS::Context ctx;
+    CS::Diagnostic diag;
+    ASSERT_TRUE(ctx.setVariableText("n", "1", diag));
+
+    const CS::Expression expr = compileIn(ctx, "n.field");
+
+    CS::Value out = CS::Value::boolean(true);
+    CS::Dep deps[CS::kMaxDeps];
+    std::uint32_t n = 0;
+    EXPECT_FALSE(ctx.evalTracked(expr, &out, deps, &n, diag));
+
+    EXPECT_FALSE(ctx.isEvaluating());
+    EXPECT_EQ(n, CS::kDepsOverflow);
+    for (const CS::Dep &dep : deps) { EXPECT_EQ(dep.epoch, nullptr); }
+    EXPECT_EQ(out.kind(), CS::Value::Kind::Boolean) << "при отказе *out не трогается";
+}
+
 /// A computed string handed straight back into a global variable keeps its
 /// bytes. This is defect Б1 from the design document: setGlobal opened the
 /// operation boundary, which cleared the arena, and only then promoted the

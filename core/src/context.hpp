@@ -85,6 +85,13 @@ class Context {
     /// (core/src/expression.hpp), включая то, что при отказе *out не трогается.
     bool eval(const Expression &expr, Value *out, Diagnostic &diag);
 
+    /// Вычисляет и заодно отдаёт зависимости — граница операции, как у eval,
+    /// поверх Expression::evalTracked (core/src/expression.hpp): контракт
+    /// заполнения deps дословно тот же, включая хвост на kZeroEpoch и
+    /// отравление nullptr'ами на переполнении.
+    bool evalTracked(const Expression &expr, Value *out, Dep *deps,
+                     std::uint32_t *n, Diagnostic &diag);
+
     /// Типизированные исходы — как у одноимённых методов Expression.
     EvalStatus evalNumber(const Expression &expr, double *out,
                           Diagnostic &diag);

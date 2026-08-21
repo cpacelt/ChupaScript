@@ -83,7 +83,6 @@ public final class CachedExpression<T: CSCached> {
             return cached
         }
 
-        missCount += 1
         let result = try evalTracked()
         cached = result
         hasValue = true
@@ -97,10 +96,26 @@ public final class CachedExpression<T: CSCached> {
     /// время вызова без malloc/free, ровно как `Context.readError()`
     /// обходится с `ChupaError` — оба типа импортированы из C и не получают
     /// от Swift пустого конструктора для локальной переменной.
+    ///
+    /// **Порядок «сначала разобрать, потом захватить» обязателен.** `capture`
+    /// удерживает новых владельцев и переписывает `epochs`/`snapshot` — если
+    /// это сделать до разбора, а `T.chupaValue` бросит (несовпадение вида,
+    /// `.unrepresentable`), читатель останется в раздвоенном состоянии:
+    /// новый снимок уже на месте, а `cached`/`hasValue` — от старого чтения.
+    /// Следующий вызов либо молча отдаст устаревшее значение (снимок
+    /// совпадёт, промаха не будет), либо, если это был самый первый захват,
+    /// потеряет retain на старых владельцах в `releaseOwners()` — тот
+    /// смотрит на `hasValue`, а он ещё `false`. Разбор до захвата убирает оба
+    /// исхода разом: бросок — и состояние читателя не тронуто вовсе, как
+    /// будто входа в C не было. Значение в `out` борроwed до следующей
+    /// операции над контекстом (`chupascript.h`, правило 1), а между вызовом
+    /// и разбором контекст не трогается ничем, так что читать его до захвата
+    /// зависимостей законно.
     private func evalTracked() throws -> T? {
         try withUnsafeTemporaryAllocation(of: ChupaValue.self, capacity: 1) { outBuf in
             try withUnsafeTemporaryAllocation(of: ChupaDep.self, capacity: Int(CHUPA_MAX_DEPS)) { depsBuf in
                 var n: UInt32 = 0
+                missCount += 1
                 guard chupa_expression_eval_tracked(expression.context.handle,
                                                      expression.handle,
                                                      outBuf.baseAddress!,
@@ -108,12 +123,9 @@ public final class CachedExpression<T: CSCached> {
                                                      &n)
                 else { throw expression.context.makeError() }
 
+                let result = try T.chupaValue(outBuf[0])
                 capture(deps: depsBuf, n: n)
-                // Разбор — до выхода из замыкания: `out` borrowed и живёт
-                // ровно до следующей операции над контекстом (`chupascript.h`,
-                // правило 1); между вызовом и разбором контекст не трогается
-                // ничем, так что предусловие держится само собой.
-                return try T.chupaValue(outBuf[0])
+                return result
             }
         }
     }

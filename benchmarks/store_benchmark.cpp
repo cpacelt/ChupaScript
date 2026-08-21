@@ -19,9 +19,9 @@ void BM_Store_ArrayPush(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = CS::makeArray(0, dead);
+        const Value a = CS::makeArray(0, store.clock(), dead);
         for (int i = 0; i < count; ++i) {
-            CS::arrayPush(a, Value::number(static_cast<double>(i)));
+            CS::arrayPush(a, Value::number(static_cast<double>(i)), store.clock());
         }
         // Локальная переменная, а не временное значение: DoNotOptimize от
         // rvalue не переживает смены версии Google Benchmark.
@@ -38,9 +38,9 @@ void BM_Store_ArrayPushReserved(benchmark::State &state) {
     const int count = static_cast<int>(state.range(0));
     for (auto _ : state) {
         Store store;
-        const Value a = CS::makeArray(static_cast<std::uint32_t>(count), dead);
+        const Value a = CS::makeArray(static_cast<std::uint32_t>(count), store.clock(), dead);
         for (int i = 0; i < count; ++i) {
-            CS::arrayPush(a, Value::number(static_cast<double>(i)));
+            CS::arrayPush(a, Value::number(static_cast<double>(i)), store.clock());
         }
         std::uint32_t filled = CS::arrayCount(a);
         benchmark::DoNotOptimize(filled);
@@ -53,9 +53,9 @@ BENCHMARK(BM_Store_ArrayPushReserved)->Arg(1000);
 void BM_Store_ArrayTraverse(benchmark::State &state) {
     Store store;
     CS::Deferred dead;
-    const Value a = CS::makeArray(1000, dead);
+    const Value a = CS::makeArray(1000, store.clock(), dead);
     for (int i = 0; i < 1000; ++i) {
-        CS::arrayPush(a, Value::number(static_cast<double>(i)));
+        CS::arrayPush(a, Value::number(static_cast<double>(i)), store.clock());
     }
 
     for (auto _ : state) {
@@ -73,9 +73,9 @@ BENCHMARK(BM_Store_ArrayTraverse);
 /// dead принадлежит вызывающему: единственная ссылка на новый объект — ссылка
 /// создателя, и слить список здесь значило бы убить его на возврате.
 Value makeFilledObject(Store &store, CS::Deferred &dead, int keys) {
-    const Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys), dead);
+    const Value o = CS::makeObject(store.keys(), static_cast<std::uint32_t>(keys), store.clock(), dead);
     for (int i = 0; i < keys; ++i) {
-        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), dead);
+        CS::objectSet(o, "key" + std::to_string(i), Value::number(static_cast<double>(i)), store.clock(), dead);
     }
     return o;
 }

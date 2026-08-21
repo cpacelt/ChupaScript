@@ -86,6 +86,35 @@ final class HostFunctionTests: XCTestCase {
         XCTAssertTrue(called)
     }
 
+    /// Функция без результата зовётся из скрипта и получает свой аргумент.
+    func testVoidOverloadIsCalledWithItsArgument() throws {
+        let context = Context()
+        var seen: String?
+        try context.register("link") { (url: String) in seen = url }
+        try context.run(context.compile(script: "link('/profile/1');"))
+        XCTAssertEqual(seen, "/profile/1")
+    }
+
+    /// Ей движок слота под результат не даёт, поэтому `.returnsValue` —
+    /// отказ на регистрации, а не ненаписанный `out` на вызове.
+    func testVoidOverloadWithReturnsValueIsRefusedAtRegistration() {
+        let context = Context()
+        XCTAssertThrowsError(
+            try context.register("link", flags: [.returnsValue]) { (_: String) in }
+        ) { error in
+            XCTAssertEqual((error as? ChupaScript.Error)?.code, .usage)
+        }
+    }
+
+    /// Аргумент не того вида — отказ вызова, а не тихий пропуск.
+    func testVoidOverloadRefusesAnArgumentOfAnotherKind() throws {
+        let context = Context()
+        var called = false
+        try context.register("link") { (_: String) in called = true }
+        XCTAssertThrowsError(try context.run(context.compile(script: "link(1);")))
+        XCTAssertFalse(called)
+    }
+
     /// Замыкание не переживает контекст и не течёт: release снимает удержание.
     func testClosureIsReleasedWithTheContext() throws {
         final class Witness { static var alive = 0; init() { Witness.alive += 1 }

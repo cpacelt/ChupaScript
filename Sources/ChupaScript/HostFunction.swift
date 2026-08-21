@@ -276,6 +276,20 @@ extension Context {
         }
     }
 
+    /// Перегрузке без результата флаг `.returnsValue` не положен.
+    ///
+    /// Зеркало `requireReturnsValue` выше. Там движок не дал бы слота, а
+    /// результат есть; здесь слот дан, а класть в него нечего — тело не
+    /// возвращает ничего, и движок получил бы ненаписанный `out`.
+    private func refuseReturnsValue(_ name: String,
+                                    _ flags: FunctionFlags) throws {
+        guard !flags.contains(.returnsValue) else {
+            throw Error(code: .usage,
+                        message: "\(name): перегрузке register без результата флаг .returnsValue не положен",
+                        offset: nil)
+        }
+    }
+
     /// Кладёт результат тела в слот движка.
     ///
     /// Оба отказа бросаются, а не глотаются: `intoChupa` возвращает false,
@@ -342,6 +356,30 @@ extension Context {
                 throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
             }
             try Context.deliver(name, body(a), ctx, out)
+        }
+    }
+
+    /// Зарегистрировать функцию хоста без результата.
+    ///
+    /// Действие, а не вычисление: `link(url)` уводит на другой экран, `log(payload)`
+    /// шлёт статистику — возвращать им нечего. Прежде такую функцию можно было
+    /// объявить только сырой перегрузкой, а она заставляет прикладной код
+    /// видеть `ChupaValue`, то есть тащить C туда, где вся работа — взять строку.
+    ///
+    /// Умолчание флагов пустое, и это не описка: у действия есть последствия,
+    /// `.effectFree` ему не положен, а значит звать его можно только из
+    /// скрипта, но не из выражения (`docs/semantics.md` §2.2).
+    public func register<A: CSConvertible>(
+        _ name: String,
+        flags: FunctionFlags = [],
+        _ body: @escaping (A) throws -> Void
+    ) throws {
+        try refuseReturnsValue(name, flags)
+        try registerDescriptor(name, minArgs: 1, maxArgs: 1, flags: flags) { args, _, _, _ in
+            guard let a = A.fromChupa(args![0]) else {
+                throw Error(code: .type, message: "\(name): аргумент 1 не \(A.self)", offset: nil)
+            }
+            try body(a)
         }
     }
 

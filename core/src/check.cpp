@@ -77,6 +77,12 @@ struct Checker {
             return;
         }
 
+        // Не ошибка, а свойство: такое выражение законно, просто его нельзя
+        // кэшировать. Дыра, которую это закрывает, — выражение вроде
+        // format('${}', now()), у которого набор зависимостей пуст, а значит
+        // сумма нулевая и попадание вечное.
+        if (!callee.cacheable) { ast.markUncacheable(); }
+
         if (isHostCallee(callee.ref) ||
             builtinOfCallee(callee.ref) != Builtin::Format) {
             return;

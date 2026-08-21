@@ -45,6 +45,7 @@ Ast &Ast::operator=(Ast &&other) noexcept {
     sourceLength_ = other.sourceLength_;
     root_ = other.root_;
     checked_ = other.checked_;
+    cacheable_ = other.cacheable_;
     return *this;
 }
 
@@ -67,6 +68,7 @@ void Ast::reset(std::uint32_t sourceLength) {
     for (detail::StringBox *literal : literals_) { detail::release(literal); }
     literals_.clear();
     checked_ = false;
+    cacheable_ = true;
 }
 
 void Ast::setRoot(NodeId node) noexcept { root_ = node; }

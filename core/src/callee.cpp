@@ -16,6 +16,11 @@ Callee fromBuiltin(Builtin id) noexcept {
     out.maxArgs = info.maxArgs;
     out.returnsValue = info.returnsValue;
     out.effectFree = info.effectFree;
+    // Билтины детерминированы: часов и флагов среди двенадцати их нет, а
+    // мутирующие Push/Pop до выражения не доходят — их результат Void, и
+    // §6.2 отвергает такое выражение раньше, чем вопрос о кэшируемости
+    // вообще встаёт.
+    out.cacheable = true;
     return out;
 }
 
@@ -28,6 +33,7 @@ Callee fromHost(const HostFunction &fn, std::uint8_t index) noexcept {
     out.effectFree = (fn.flags & CHUPA_FN_EFFECT_FREE) != 0;
     out.call = fn.call;
     out.userData = fn.userData;
+    out.cacheable = (fn.flags & CHUPA_FN_CACHEABLE) != 0;
     return out;
 }
 

@@ -21,6 +21,10 @@ class HostTable;
 ///   effectFree    false — may not be called from an expression
 ///   call          the callback; set only when isHostCallee(ref)
 ///   userData      the host's receiver; set only when isHostCallee(ref)
+///   cacheable     те же аргументы дают тот же ответ. У билтина — всегда:
+///                 часов и флагов среди них нет. У хост-функции — из
+///                 CHUPA_FN_CACHEABLE, и её отсутствие означает, что
+///                 выражение с таким вызовом не кэшируется вовсе.
 ///
 /// One shape for both tables, and one function producing it, because
 /// otherwise check.cpp and eval.cpp each grow their own "builtin or host"
@@ -39,6 +43,7 @@ struct Callee {
     bool              effectFree = false;
     ChupaHostFunction call = nullptr;
     void             *userData = nullptr;
+    bool              cacheable = false;
 };
 
 /// Builtins first; a name in both tables is impossible, chupa_register

@@ -89,6 +89,18 @@ class Ast {
     void markChecked() noexcept { checked_ = true; }
     [[nodiscard]] bool isChecked() const noexcept { return checked_; }
 
+    /// Помечает дерево некэшируемым: в нём есть вызов, который на тех же
+    /// входах вправе ответить иначе (chupascript.h, CHUPA_FN_CACHEABLE).
+    ///
+    /// Отметка на дереве, а не на узле: вопрос, который по ней решается, —
+    /// «годится ли прошлое значение ЭТОГО выражения», и один такой вызов где
+    /// угодно в дереве отвечает «нет» за всё выражение.
+    ///
+    /// Ставится только на компиляции: список вызываемых там уже известен, и
+    /// платить за это на каждом вычислении незачем.
+    void markUncacheable() noexcept { cacheable_ = false; }
+    [[nodiscard]] bool isCacheable() const noexcept { return cacheable_; }
+
     // ─── строитель: единственный способ создать узел ───
 
     NodeId number(const Token &token);
@@ -301,6 +313,7 @@ class Ast {
     std::uint32_t sourceLength_ = 0;
     NodeId root_ = kNoNode;
     bool checked_ = false;
+    bool cacheable_ = true;
     std::vector<Node> nodes_;
     std::vector<NodeId> children_; // TODO(B10): боковой пул детей
     std::vector<detail::StringBox *> literals_;  // one reference each

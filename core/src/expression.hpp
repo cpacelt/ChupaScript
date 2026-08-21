@@ -76,6 +76,11 @@ class Expression {
     /// уточняется отдельно.
     [[nodiscard]] std::string_view source() const noexcept { return source_; }
 
+    /// Годится ли прошлое значение этого выражения, пока его зависимости не
+    /// двигались. Ложь — в дереве есть вызов, отвечающий на тех же входах
+    /// иначе; evalTracked у такого выражения всегда отдаёт kDepsOverflow.
+    [[nodiscard]] bool isCacheable() const noexcept { return ast_.isCacheable(); }
+
     /// Вычисляет и достаёт результат нужного типа.
     ///
     /// Ok — значение положено в *out. Null — выражение дало null, *out не

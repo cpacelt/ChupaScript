@@ -13,6 +13,7 @@
 
 #include "data.hpp"
 #include "diagnostic.hpp"
+#include "epoch.hpp"
 #include "context.hpp"
 #include "expression.hpp"
 #include "box.hpp"
@@ -606,6 +607,48 @@ bool chupa_eval(ChupaContext* ctx, ChupaExpression* e, ChupaValue* out) {
     // Null is a kind, not an outcome: the value says so itself, and a separate
     // return code for it existed only because a double * had nowhere to put
     // "it came out null".
+    toC(value, out);
+    return true;
+}
+
+// static_assert, not a runtime check: two names for one number, declared
+// once in the public header (CHUPA_MAX_DEPS / CHUPA_DEPS_OVERFLOW) and once
+// in the core (CS::kMaxDeps / CS::kDepsOverflow). Diverge silently and the
+// engine writes more than the wrapper reads.
+static_assert(CHUPA_MAX_DEPS == CS::kMaxDeps,
+             "потолок объявлен дважды и разошёлся");
+static_assert(CHUPA_DEPS_OVERFLOW == CS::kDepsOverflow,
+             "переполнение объявлено дважды и разошлось");
+
+bool chupa_expression_eval_tracked(ChupaContext* ctx, ChupaExpression* e,
+                                   ChupaValue* out,
+                                   ChupaDep deps[CHUPA_MAX_DEPS],
+                                   uint32_t* n) {
+    auto* c = reinterpret_cast<::ChupaContext*>(ctx);
+    if (refuseWhileEvaluating(c)) { return false; }
+    auto* expr = reinterpret_cast<::ChupaExpression*>(e);
+    c->clearError();
+
+    CS::Value value = CS::Value::null();
+    CS::Dep found[CS::kMaxDeps];
+    std::uint32_t count = 0;
+    CS::Diagnostic diag;
+    if (!c->impl.evalTracked(expr->impl, &value, found, &count, diag)) {
+        for (std::uint32_t i = 0; i < CHUPA_MAX_DEPS; ++i) {
+            deps[i].epoch = nullptr;
+            toC(CS::Value::null(), &deps[i].owner);
+        }
+        *n = CHUPA_DEPS_OVERFLOW;
+        c->setError(diag);
+        return false;
+    }
+    // See chupa_eval above: same reason for the explicit clear on Ok.
+    c->clearError();
+    for (std::uint32_t i = 0; i < CHUPA_MAX_DEPS; ++i) {
+        deps[i].epoch = found[i].epoch;
+        toC(found[i].owner, &deps[i].owner);
+    }
+    *n = count;
     toC(value, out);
     return true;
 }

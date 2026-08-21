@@ -2042,3 +2042,178 @@ TEST(CApiMake, StringWithoutASlotRefusesWithUsage) {
 
     chupa_context_destroy(ctx);
 }
+
+// ─── Кэш выражений: chupa_expression_eval_tracked ───
+
+TEST(CApiTracked, AScalarDependsOnOneCellAndHitsForever) {
+    ChupaContext *ctx = chupa_context_create();
+    ASSERT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
+    ChupaExpression *expr = chupa_compile_expression(ctx, "flag", 4);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    ASSERT_EQ(n, 1u);
+
+    const auto sum = [&deps]() {
+        uint64_t total = 0;
+        for (const ChupaDep &dep : deps) { total += *dep.epoch; }
+        return total;
+    };
+    const uint64_t snapshot = sum();
+
+    // Ничего не писали — сумма не двинулась, читателю входить в C незачем.
+    EXPECT_EQ(sum(), snapshot);
+
+    ASSERT_TRUE(chupa_context_set_bool(ctx, "flag", 4, false));
+    EXPECT_GT(sum(), snapshot);
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiTracked, ABoxDependencyComesWithSomethingToHoldOnTo) {
+    ChupaContext *ctx = chupa_context_create();
+    ASSERT_TRUE(setGlobal(ctx, "user", "{'name': 'Вася'}"));
+    ChupaExpression *expr = chupa_compile_expression(ctx, "user.name", 9);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    ASSERT_EQ(n, 2u);
+
+    EXPECT_EQ(chupa_value_kind(&deps[0].owner), CHUPA_KIND_NULL)
+        << "у зависимости-ячейки владельца нет";
+    EXPECT_EQ(chupa_value_kind(&deps[1].owner), CHUPA_KIND_OBJECT);
+
+    // Держимся за коробку и переписываем переменную: адрес эпохи обязан
+    // остаться читаемым, иначе следующий кадр прочтёт освобождённую память.
+    chupa_value_retain(&deps[1].owner);
+    const uint64_t held = *deps[1].epoch;
+    ASSERT_TRUE(setGlobal(ctx, "user", "{'name': 'Петя'}"));
+    EXPECT_EQ(*deps[1].epoch, held) << "удержанная коробка не менялась";
+    chupa_value_release(&deps[1].owner);
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiTracked, LiteralExpressionHasZeroDepsNotOverflow) {
+    // Ноль и переполнение — разные ответы, и хост обязан их различать: у
+    // выражения из одних литералов зависимостей нет вовсе, а не «слишком
+    // много». Все четыре записи смотрят на один и тот же ненулевой адрес —
+    // вечный ноль движка, — а не на NULL, который означает переполнение.
+    ChupaContext *ctx = chupa_context_create();
+    ChupaExpression *expr = chupa_compile_expression(ctx, "1 + 2", 5);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    EXPECT_EQ(n, 0u);
+
+    ASSERT_NE(deps[0].epoch, nullptr);
+    for (const ChupaDep &dep : deps) {
+        EXPECT_EQ(dep.epoch, deps[0].epoch)
+            << "хвост целиком смотрит на один и тот же вечный ноль";
+    }
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+namespace {
+
+bool alwaysSeven(ChupaContext *, const ChupaValue *, size_t, ChupaValue *out,
+                 void *) {
+    chupa_make_number(out, 7.0);
+    return true;
+}
+
+}  // namespace
+
+TEST(CApiTracked, AnUncacheableCallReportsOverflow) {
+    // now() объявлена без CHUPA_FN_CACHEABLE: на тех же входах она вправе
+    // ответить иначе, и набор зависимостей у выражения с ней пуст. Без этой
+    // отметки такое выражение кэшировалось бы навсегда — часы бы встали.
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction desc = described("now", 0, 0, alwaysSeven);
+    desc.flags = CHUPA_FN_RETURNS_VALUE | CHUPA_FN_EFFECT_FREE;  // без CACHEABLE
+    ASSERT_TRUE(chupa_register(ctx, &desc));
+
+    ChupaExpression *expr = chupa_compile_expression(ctx, "now()", 5);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+
+    EXPECT_EQ(n, CHUPA_DEPS_OVERFLOW);
+    for (const ChupaDep &dep : deps) { EXPECT_EQ(dep.epoch, nullptr); }
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+namespace {
+
+/// Изнутри колбэка нельзя дотягиваться до nullptr под видом выражения — это
+/// законно только пока страж стоит первой строкой, и такой тест молча
+/// закреплял бы этот порядок. Настоящий указатель едет через user_data.
+/// chupa_register обязан отработать ДО первой компиляции на ctx (докблок
+/// chupa_register в заголовке), поэтому единицу для этого указателя нельзя
+/// скомпилировать на том же ctx перед регистрацией probe — она едет с
+/// отдельного, донорского контекста. Дверь всё равно откажет раньше, чем
+/// дело дойдёт до самого expr: страж стоит первой строкой и даже не
+/// разыменовывает указатель.
+bool probeReentrancy(ChupaContext *inner, const ChupaValue *, size_t,
+                     ChupaValue *out, void *user_data) {
+    auto *probeExpr = static_cast<ChupaExpression *>(user_data);
+    ChupaValue ignored;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    // Дверь закрыта: вернуть true отсюда нельзя.
+    EXPECT_FALSE(
+        chupa_expression_eval_tracked(inner, probeExpr, &ignored, deps, &n));
+    ChupaError error;
+    chupa_context_error(inner, &error);
+    EXPECT_EQ(error.code, CHUPA_ERR_USAGE);
+    chupa_make_number(out, 1.0);
+    return true;
+}
+
+}  // namespace
+
+TEST(CApiTracked, RefusedWhileACallbackIsRunning) {
+    // Та же дверь, что и у chupa_eval: колбэк, дотянувшийся до вычисления на
+    // том же контексте, слил бы список отложенного освобождения, на котором
+    // стоит идущий обход. Проверяется тем же приёмом, что соседний тест на
+    // chupa_eval: колбэк зовёт закрытую дверь и обязан получить отказ с
+    // CHUPA_ERR_USAGE, а само вычисление — завершиться успешно.
+    ChupaContext *donor = chupa_context_create();
+    ChupaExpression *probeExpr = chupa_compile_expression(donor, "1", 1);
+    ASSERT_NE(probeExpr, nullptr);
+
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction desc = described("probe", 0, 0, probeReentrancy, probeExpr);
+    ASSERT_TRUE(chupa_register(ctx, &desc));
+
+    ChupaExpression *expr = chupa_compile_expression(ctx, "probe()", 7);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    EXPECT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+
+    chupa_expression_destroy(expr);
+    chupa_expression_destroy(probeExpr);
+    chupa_context_destroy(ctx);
+    chupa_context_destroy(donor);
+}

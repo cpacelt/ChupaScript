@@ -208,6 +208,6 @@ REPL: `:set liked = false`, затем `script: liked = true;`, затем
 | `core/src/store.hpp`, `core/src/store.cpp` | `setGlobalAt` |
 | `core/src/eval.cpp` | `assignToName` |
 | `core/tests/script_test.cpp` | распрямление трёх тестов, новые тесты |
-| `docs/backlog.md` | отметка, что предусловие [B57] снято |
+| `docs/backlog.md` | [B27] («запрет решается статическим проходом») — отменён вместе с запретом |
 
 `docs/grammar.md` не меняется.

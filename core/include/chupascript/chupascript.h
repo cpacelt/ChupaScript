@@ -202,6 +202,16 @@ chupa_context_set_string(ChupaContext *ctx,
  * same route.
  */
 
+/* Called when an operation CHANGED something, not when one merely finished.
+ * A setter that was rejected does not fire it, and neither does a script that
+ * wrote nothing — a gesture whose whole body is a host call that navigates
+ * away touches no variable, and waking the host for it would repaint a screen
+ * that did not move.
+ *
+ * One call per operation, not per write: a script that assigns four times
+ * fires once. Which names moved is not reported — the host is told that
+ * something did, and re-reads what it displays.
+ */
 typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 

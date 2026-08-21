@@ -616,6 +616,39 @@ TEST(CApiRedraw, FiresAfterRun) {
     chupa_context_destroy(ctx);
 }
 
+TEST(CApiRedraw, DoesNotFireAfterAScriptThatWroteNothing) {
+    g_redrawCount = 0;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
+    // Ровно та форма, что приходит из макета, пока у функции нет тела: весь
+    // вызов закомментирован, скрипт успешно выполняется и не пишет ничего.
+    const char* source = "/* reshare('media_topic:1'); */";
+    ChupaScript* s = chupa_compile_script(ctx, source, std::strlen(source));
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    EXPECT_EQ(g_redrawCount, 0);
+    chupa_script_destroy(s);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiRedraw, FiresOncePerRunThatWrote) {
+    g_redrawCount = 0;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, false));
+    chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
+    const char* source = "flag = true; flag = false;";
+    ChupaScript* s = chupa_compile_script(ctx, source, std::strlen(source));
+    ASSERT_NE(s, nullptr);
+    EXPECT_TRUE(chupa_run(ctx, s));
+    // Две записи — одно уведомление: колбэк говорит об операции, а не о
+    // каждой ячейке.
+    EXPECT_EQ(g_redrawCount, 1);
+    chupa_script_destroy(s);
+    chupa_context_destroy(ctx);
+}
+
 TEST(CApiRedraw, NoFireWithoutListener) {
     g_redrawCount = 0;
     ChupaContext* ctx = chupa_context_create();

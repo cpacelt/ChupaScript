@@ -825,13 +825,21 @@ bool chupa_run(ChupaContext* ctx, ChupaScript* script) {
     if (refuseWhileEvaluating(c)) { return false; }
     auto* s = reinterpret_cast<::ChupaScript*>(script);
 
+    // Отсчёт до прогона: колбэк должен значить «что-то изменилось», а не
+    // «операция закончилась». Скрипт, который ничего не записал, — не
+    // выдуманный случай, а обычный: вызов вроде reshare() уводит на другой
+    // экран и переменных не трогает, и будить им весь экран не за чем.
+    const CS::Epoch before = c->impl.store().epochNow();
+
     CS::Diagnostic diag;
     if (!c->impl.run(s->impl, diag)) {
         c->setError(diag);
         return false;
     }
     c->clearError();
-    c->notifyRedraw();
+    // Одно уведомление на операцию, а не на запись: сколько ячеек двинулось,
+    // отсюда не видно и хосту не сообщается.
+    if (c->impl.store().epochNow() != before) { c->notifyRedraw(); }
     return true;
 }
 

@@ -946,6 +946,65 @@ TEST(EvalAssignIndex, SubscriptMayBeAnExpression) {
     EXPECT_EQ(evaluate(exec, "items[2]").numberValue(), 99.0);
 }
 
+TEST(EvalAssignToName, WritesAScalar) {
+    Store store;
+    CS::Execution exec(store);
+    CS::Deferred dead;
+    store.setGlobal("liked", Value::boolean(false), dead);
+
+    run(exec, "liked = true;");
+
+    EXPECT_TRUE(evaluate(exec, "liked").booleanValue());
+}
+
+TEST(EvalAssignToName, CompoundAssignmentReadsTheCell) {
+    Store store;
+    CS::Execution exec(store);
+    CS::Deferred dead;
+    store.setGlobal("n", Value::number(1), dead);
+
+    // x op= e есть x = x op e, и читается x из ячейки.
+    run(exec, "n += 2; n *= 3;");
+
+    EXPECT_EQ(evaluate(exec, "n").numberValue(), 9.0);
+}
+
+TEST(EvalAssignToName, BumpsTheCellEpoch) {
+    Store store;
+    CS::Execution exec(store);
+    CS::Deferred dead;
+    store.setGlobal("n", Value::number(1), dead);
+    const CS::GlobalSlot slot = store.globalSlot("n");
+    const CS::Epoch before = store.epochAt(slot);
+
+    run(exec, "n = 2;");
+
+    // Без подъёма отслеживание зависимостей записи не увидит, и выражение,
+    // читающее n, останется на прежнем значении навсегда.
+    EXPECT_GT(store.epochAt(slot), before);
+}
+
+TEST(EvalAssignToName, ReplacingTheBindingLeavesTheAliasAlone) {
+    Store store;
+    CS::Execution exec(store);
+    CS::Deferred dead;
+    // Алиас создаёт хост, и создать его можно только отсюда: через C-границу
+    // одну коробку под двумя именами не передать — все четыре сеттера строят
+    // значение с нуля (спека §2.2).
+    const Value shared = CS::makeObject(store.keys(), 1, store.clock(), dead);
+    store.setGlobal("a", shared, dead);
+    store.setGlobal("b", shared, dead);
+
+    // Содержимое общее: изменение через одно имя видно через второе (§2.3).
+    run(exec, "a.k = 1;");
+    EXPECT_EQ(evaluate(exec, "b.k").numberValue(), 1.0);
+
+    // Привязка — не содержимое: b продолжает смотреть на прежнюю коробку.
+    run(exec, "a = 5;");
+    EXPECT_EQ(evaluate(exec, "a").numberValue(), 5.0);
+    EXPECT_EQ(evaluate(exec, "b.k").numberValue(), 1.0);
+}
+
 TEST(EvalCompound, FourOperatorsWorkOnAKey) {
     Store store;
     CS::Execution exec(store);

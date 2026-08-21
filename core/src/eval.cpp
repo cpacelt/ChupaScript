@@ -815,11 +815,47 @@ bool assignToIndex(const Ast &ast, std::string_view source, NodeId node,
     }
 }
 
+/// Присваивание имени: name = v.
+///
+/// Подвыражений у цели нет, поэтому требование §7.2 «подвыражения цели
+/// вычисляются до правой части» выполняется пусто.
+///
+/// Узел цели не вычисляется вовсе: номер ячейки проставлен проходом check и
+/// читается прямо из дерева. Пройти через eval значило бы записать ячейку в
+/// набор зависимостей — а запись в неё чтением не является, и зависимость
+/// была бы ложной.
+bool assignToName(const Ast &ast, std::string_view source, NodeId node,
+                  NodeId target, Execution &exec, Diagnostic &diag) {
+    const GlobalSlot slot = ast.globalValuesSlot(target);
+
+    Value value = Value::null();
+    if (!eval(ast, source, ast.child(node, 1), exec, &value, diag)) { return false; }
+
+    const TokenKind op = ast.op(node);
+    if (op != TokenKind::Assign) {
+        // x op= e есть x = x op e; порядок «правая часть, затем текущее
+        // значение» — тот же, что у цели-пути (assignToKey выше).
+        const Value current = exec.store().globalValueAt(slot);
+        Value combined = Value::null();
+        if (!applyBinary(compoundOperation(op), current, value,
+                         ast.offset(node), &combined, diag)) {
+            return false;
+        }
+        value = combined;
+    }
+
+    exec.store().setGlobalAt(slot, value, exec.deferred());
+    return true;
+}
+
 /// Присваивание: разбирает форму цели и передаёт дальше.
 bool assign(const Ast &ast, std::string_view source, NodeId node,
             Execution &exec, Diagnostic &diag) {
     const NodeId target = ast.child(node, 0);
     switch (ast.kind(target)) {
+        case NodeKind::Identifier:
+            return assignToName(ast, source, node, target, exec, diag);
+
         case NodeKind::Member:
             return assignToKey(ast, source, node, target, exec, diag);
 
@@ -828,10 +864,8 @@ bool assign(const Ast &ast, std::string_view source, NodeId node,
 
         default:
             // Грамматика строит целью Identifier, Member и Index
-            // (docs/grammar.md §5.2). Identifier как цель отсеян статическим
-            // проходом (core/src/check.hpp, docs/semantics.md §7.2) — дерево,
-            // дошедшее до вычислителя, эту форму содержать не может, и
-            // защитная ветка покрывает её наравне с прочими невозможными.
+            // (docs/grammar.md §5.2) — все три разобраны выше. Ветка
+            // защитная, на случай непроверенного дерева.
             return fail(ast, target, ErrorCode::Type,
                         "invalid assignment target", diag);
     }

@@ -129,14 +129,6 @@ struct Checker {
                 break;
             }
 
-            case NodeKind::Assign:
-                // Целью не может быть само имя (docs/semantics.md §7.2).
-                if (ast.kind(ast.child(node, 0)) == NodeKind::Identifier) {
-                    report(ast.child(node, 0), ErrorCode::Name,
-                           "cannot assign to a variable name");
-                }
-                break;
-
             default:
                 break;
         }

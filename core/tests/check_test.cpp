@@ -152,13 +152,28 @@ TEST(Check, FormatWithEscapesInTheTemplateIsStillChecked) {
     EXPECT_TRUE(checkExpr(store, "format('строка\\nи ${}', user.name)").empty());
 }
 
-TEST(Check, AssigningToANameIsACompileError) {
+TEST(Check, AssigningToANameIsAllowed) {
     Store store;
     put(store, "state", "{'n': 0}");
-    // Переезд из вычислителя: docs/semantics.md §7.2, закрывает B27.
-    ASSERT_EQ(checkScript(store, "state = 1;").size(), 1u);
-    EXPECT_EQ(checkScript(store, "state = 1;")[0].code, CS::ErrorCode::Name);
+    // Запрет снят целиком: docs/semantics.md §7.2, спека
+    // docs/superpowers/specs/2026-08-21-assign-to-name-design.md. Отменяет
+    // B27, ради которого проверка сюда переезжала.
+    EXPECT_TRUE(checkScript(store, "state = 1;").empty());
     EXPECT_TRUE(checkScript(store, "state.n = 1;").empty());
+}
+
+TEST(Check, AssigningToAnUnknownNameIsACompileError) {
+    Store store;
+    put(store, "state", "{'n': 0}");
+    // Ослаблен запрет менять имя, а не запрет заводить его: состав контекста
+    // программе по-прежнему неподвластен (docs/semantics.md §7.1).
+    //
+    // Диагностика сверяется дословно, а не по коду: ErrorCode::Name носят
+    // несколько проверок этого прохода, и тест по коду был бы зелёным, поймав
+    // не ту.
+    ASSERT_EQ(checkScript(store, "missing = 1;").size(), 1u);
+    EXPECT_EQ(checkScript(store, "missing = 1;")[0].code, CS::ErrorCode::Name);
+    EXPECT_STREQ(checkScript(store, "missing = 1;")[0].message, "unknown name");
 }
 
 TEST(Check, UnknownNameIsACompileError) {

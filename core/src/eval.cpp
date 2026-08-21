@@ -99,6 +99,37 @@ bool failHostCall(const Ast &ast, NodeId node, const Diagnostic &reason,
     return false;
 }
 
+/// Записывает агрегат, связанный аргументом вызова, зависимостью.
+///
+/// Спуск (Member, Index) записывает коробки, через которые прошёл, — но
+/// аргумент вызова спуском не является, а вызываемое читает СОДЕРЖИМОЕ
+/// коробки: count, keys, has и last (core/src/builtin.cpp) отвечают по нему,
+/// и всякая хост-функция с CHUPA_FN_CACHEABLE вправе делать то же самое.
+/// «Те же аргументы дают тот же ответ» (chupascript.h) — это та же ЛИЧНОСТЬ
+/// коробки, а личность при мутации не меняется: без этой записи count(items)
+/// и push(items, x) не встречались бы ни в одной зависимости, и читатель
+/// отдал бы устаревшее значение — ложное попадание, которого схема обещает
+/// не давать никогда (спека §2.3).
+///
+/// Пишется на всяком вызове и на всяком аргументе-агрегате, без разбора, кто
+/// именно вызван. Таблица «этот билтин читает содержимое, а этот нет» была
+/// отвергнута: она разошлась бы с builtin.cpp молча при добавлении
+/// тринадцатого билтина, а цена ошибки — не лишний пересчёт, а застывший
+/// экран. Направление огрубления остаётся односторонним: str(x) и push
+/// платят лишней записью и, самое худшее, переполнением набора — то есть
+/// пересчётом.
+///
+/// Отвергнутая альтернатива — помечать некэшируемым всякое выражение с
+/// агрегатом в аргументе. Грубее и убила бы count() в props, частую форму в
+/// BDUI: count(items) стоит две зависимости, count(state.items) — три, обе
+/// внутри потолка.
+void recordArgument(Execution &exec, const Value &argument) {
+    if (argument.kind() == Value::Kind::Array ||
+        argument.kind() == Value::Kind::Object) {
+        exec.deps().add(CS::epochAddressOf(argument), argument);
+    }
+}
+
 /// Calls one host function.
 ///
 /// The arguments are evaluated left to right into a frame on the Execution's
@@ -124,6 +155,10 @@ bool evalHostCall(const Ast &ast, std::string_view source, NodeId node,
         if (!eval(ast, source, ast.child(node, i), exec, &argument, diag)) {
             return false;
         }
+        // См. recordArgument выше: хост-функция, объявленная кэшируемой,
+        // вправе читать содержимое переданного агрегата, а личность коробки
+        // при мутации содержимого не меняется.
+        recordArgument(exec, argument);
         frame[i] = argument;
     }
 
@@ -227,6 +262,12 @@ bool evalFormat(const Ast &ast, std::string_view source, NodeId node,
             return false;
         }
         ++next;
+        // recordArgument здесь НЕ зовётся, и это решение, а не пропуск:
+        // единственное, что format делает с аргументом, — coerceToString
+        // строкой ниже, а она отвергает агрегат по типу (§4). До содержимого
+        // коробки format не добирается никогда, и вычисление, дошедшее сюда с
+        // агрегатом, кончится отказом, у которого набора зависимостей нет
+        // вовсе. Запись была бы мёртвым кодом, а не запасом прочности.
 
         char buffer[kNumberBufferSize];
         std::string_view text;
@@ -550,6 +591,10 @@ bool eval(const Ast &ast, std::string_view source, NodeId node, Execution &exec,
                 if (!eval(ast, source, ast.child(node, i), exec, &args[i], diag)) {
                     return false;
                 }
+                // См. recordArgument выше: count, keys, has и last читают
+                // содержимое коробки, а спуск сюда не заходит — аргумент
+                // вызова спуском не является.
+                recordArgument(exec, args[i]);
             }
             return applyBuiltin(id, exec, args, count, ast.offset(node),
                                 out, diag);

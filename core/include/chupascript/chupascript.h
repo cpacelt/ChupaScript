@@ -268,7 +268,31 @@ typedef enum ChupaFunctionFlags {
                                          * feature flag — MUST NOT be declared
                                          * cacheable; the engine cannot check this,
                                          * so it is on the host, same as UTF-8 above.
-                                         * Room for a props cache; not read yet. */
+                                         *
+                                         * READ, and it decides caching: without this
+                                         * flag every expression containing the call
+                                         * is marked uncacheable at compile time, and
+                                         * chupa_expression_eval_tracked answers
+                                         * CHUPA_DEPS_OVERFLOW for it forever.
+                                         *
+                                         * "The same arguments" means the same box
+                                         * IDENTITY, and identity does not change
+                                         * when the box is mutated: the array handed
+                                         * to total(items) is the same handle before
+                                         * and after push(items, x). A cacheable
+                                         * function that reads the CONTENTS of an
+                                         * aggregate argument therefore is not
+                                         * constant in its arguments in the naive
+                                         * sense — and the engine covers exactly this
+                                         * for it: an aggregate bound as a call
+                                         * argument is recorded as a dependency of
+                                         * the expression, so mutating its contents
+                                         * moves the epoch and the reader misses.
+                                         * The price is a dependency slot: total(items)
+                                         * costs two of CHUPA_MAX_DEPS, and an
+                                         * expression that runs past the ceiling stops
+                                         * being cached — recomputation, never a stale
+                                         * answer. */
 } ChupaFunctionFlags;
 
 /* No upper bound on argument count — as format has. */
@@ -460,9 +484,10 @@ typedef struct ChupaDep {
 /* Вычислить и заодно отдать зависимости.
  *
  * deps — буфер вызывающего ровно на CHUPA_MAX_DEPS записей. Заполняется
- *        ЦЕЛИКОМ и на всяком исходе. Незанятый хвост смотрит на вечный ноль
- *        движка: читатель складывает ровно CHUPA_MAX_DEPS слов, не заглядывая
- *        в *n и не ветвясь.
+ *        ЦЕЛИКОМ и на всяком исходе — включая отказ двери (вызов изнутри
+ *        колбэка), где буфер заполняется тем же, чем при переполнении.
+ *        Незанятый хвост смотрит на вечный ноль движка: читатель складывает
+ *        ровно CHUPA_MAX_DEPS слов, не заглядывая в *n и не ветвясь.
  * n    — сколько записано, либо CHUPA_DEPS_OVERFLOW. Ноль — законный ответ и
  *        НЕ то же самое, что переполнение: выражение из одних литералов не
  *        зависит ни от чего и кэшируется навсегда.

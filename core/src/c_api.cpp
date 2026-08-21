@@ -625,7 +625,27 @@ bool chupa_expression_eval_tracked(ChupaContext* ctx, ChupaExpression* e,
                                    ChupaDep deps[CHUPA_MAX_DEPS],
                                    uint32_t* n) {
     auto* c = reinterpret_cast<::ChupaContext*>(ctx);
-    if (refuseWhileEvaluating(c)) { return false; }
+    if (refuseWhileEvaluating(c)) {
+        // Заголовок обещает буфер, заполненный ЦЕЛИКОМ и на ВСЯКОМ исходе.
+        // Возврат отсюда — тоже исход, и без этой отравы у вызывающего
+        // остался бы набор от прошлого, удавшегося вычисления: адреса живые,
+        // суммы сходятся, и читатель, не посмотревший на false, показал бы
+        // застывший экран. Отравляется тем же способом, что и ветка отказа
+        // вычисления ниже, — NULL в каждом epoch плюс CHUPA_DEPS_OVERFLOW, —
+        // чтобы у двери был один вид отказа, а не два.
+        //
+        // Отвергнутая альтернатива — назвать исключение в заголовке рядом с
+        // рамкой: она превращает обещание «на всяком исходе» в обещание с
+        // оговоркой, которую обязана помнить каждая из трёх обёрток, и
+        // экономит при этом восемь записей на пути, по которому никто не
+        // ходит в установившемся режиме.
+        for (uint32_t i = 0; i < CHUPA_MAX_DEPS; ++i) {
+            deps[i].epoch = nullptr;
+            toC(CS::Value::null(), &deps[i].owner);
+        }
+        *n = CHUPA_DEPS_OVERFLOW;
+        return false;
+    }
     auto* expr = reinterpret_cast<::ChupaExpression*>(e);
     c->clearError();
 

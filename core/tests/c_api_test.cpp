@@ -2163,6 +2163,65 @@ TEST(CApiTracked, AnUncacheableCallReportsOverflow) {
 
 namespace {
 
+/// Хост-функция, объявленная кэшируемой и читающая СОДЕРЖИМОЕ агрегата.
+///
+/// Ровно та форма, о которой предупреждает оговорка у CHUPA_FN_CACHEABLE:
+/// «те же аргументы» — это та же ЛИЧНОСТЬ коробки, а личность при мутации не
+/// меняется. Ответ функции при этом меняется, поэтому коробка обязана попасть
+/// в набор зависимостей — иначе кэш хоста застынет на старой сумме.
+bool sumOfArray(ChupaContext *, const ChupaValue *args, size_t, ChupaValue *out,
+                void *) {
+    double total = 0;
+    const size_t n = chupa_array_count(&args[0]);
+    for (size_t i = 0; i < n; ++i) {
+        ChupaValue element;
+        chupa_array_at(&args[0], i, &element);
+        total += chupa_value_number(&element);
+    }
+    chupa_make_number(out, total);
+    return true;
+}
+
+}  // namespace
+
+TEST(CApiTracked, ACacheableHostCallRecordsTheAggregateItWasHanded) {
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction desc = described("total", 1, 1, sumOfArray);
+    ASSERT_TRUE(chupa_register(ctx, &desc));
+    ASSERT_TRUE(setGlobal(ctx, "items", "[1, 2, 3]"));
+
+    ChupaExpression *expr = chupa_compile_expression(ctx, "total(items)", 12);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    EXPECT_EQ(chupa_value_number(&out), 6.0);
+    ASSERT_EQ(n, 2u) << "ячейка имени плюс коробка, содержимое которой прочла "
+                        "хост-функция";
+
+    // Снимок читателя — сумма эпох набора (спека §2.4).
+    uint64_t snapshot = 0;
+    for (uint32_t i = 0; i < n; ++i) { snapshot += *deps[i].epoch; }
+
+    ChupaScript *script = chupa_compile_script(ctx, "push(items, 9);", 15);
+    ASSERT_NE(script, nullptr);
+    ASSERT_TRUE(chupa_run(ctx, script));
+
+    uint64_t now = 0;
+    for (uint32_t i = 0; i < n; ++i) { now += *deps[i].epoch; }
+    EXPECT_NE(now, snapshot)
+        << "ложное попадание: содержимое аргумента изменилось, а набор "
+           "зависимостей этого не заметил";
+
+    chupa_script_destroy(script);
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+namespace {
+
 /// Изнутри колбэка нельзя дотягиваться до nullptr под видом выражения — это
 /// законно только пока страж стоит первой строкой, и такой тест молча
 /// закреплял бы этот порядок. Настоящий указатель едет через user_data.
@@ -2176,14 +2235,27 @@ bool probeReentrancy(ChupaContext *inner, const ChupaValue *, size_t,
                      ChupaValue *out, void *user_data) {
     auto *probeExpr = static_cast<ChupaExpression *>(user_data);
     ChupaValue ignored;
+    // Буфер заранее набит правдоподобным мусором: без этого «заполнен целиком
+    // и на всяком исходе» не отличить от «не тронут вовсе». Адрес взят
+    // заведомо не-NULL, потому что именно NULL дверь обязана положить.
+    static const uint64_t kJunkEpoch = 1;
     ChupaDep deps[CHUPA_MAX_DEPS];
-    uint32_t n = 0;
+    for (ChupaDep &dep : deps) { dep.epoch = &kJunkEpoch; }
+    uint32_t n = 7;
     // Дверь закрыта: вернуть true отсюда нельзя.
     EXPECT_FALSE(
         chupa_expression_eval_tracked(inner, probeExpr, &ignored, deps, &n));
     ChupaError error;
     chupa_context_error(inner, &error);
     EXPECT_EQ(error.code, CHUPA_ERR_USAGE);
+    // Заголовок обещает буфер на всяком исходе, и отказ охраны — тоже исход:
+    // прежний набор, оставленный стоять, читался бы как «ничего не менялось».
+    EXPECT_EQ(n, CHUPA_DEPS_OVERFLOW);
+    for (const ChupaDep &dep : deps) {
+        EXPECT_EQ(dep.epoch, nullptr)
+            << "дверь вернулась, не тронув буфер вызывающего";
+        EXPECT_EQ(chupa_value_kind(&dep.owner), CHUPA_KIND_NULL);
+    }
     chupa_make_number(out, 1.0);
     return true;
 }

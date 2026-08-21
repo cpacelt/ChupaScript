@@ -7,6 +7,7 @@
 #include <deque>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "ast.hpp"
 #include "box.hpp"
@@ -1631,6 +1632,168 @@ TEST(EvalDeps, TheSetIsRebuiltOnEveryEvaluation) {
     evaluate(exec, "42");
 
     EXPECT_EQ(exec.deps().count(), 0u);
+}
+
+TEST(EvalDeps, TheSameExpressionRebuildsADifferentNonEmptySet) {
+    // Свидетельство выше — переход «1 зависимость → 0», и то на ДВУХ РАЗНЫХ
+    // выражениях: оно не отличает «набор перестроен» от «набор дописывается,
+    // а второе выражение просто ничего не добавило». Здесь выражение ОДНО и
+    // то же, набор непустой в обоих прогонах, а состав между прогонами
+    // меняется — ровно то свойство, ради которого §2.6 требует считать набор
+    // годным только до следующего вычисления.
+    Store store;
+    CS::Execution exec(store);
+    put(store, "flag", "true");
+    put(store, "left", "{'v': 1}");
+    put(store, "right", "{'v': 2}");
+
+    // Тернарник вычисляет только выбранную ветвь (docs/semantics.md §5.7),
+    // поэтому в наборе всегда ровно одна из двух коробок.
+    evaluate(exec, "flag ? left.v : right.v");
+    ASSERT_EQ(exec.deps().count(), 3u);
+    const CS::Epoch *chosen = exec.deps().at(2).epoch;
+    EXPECT_EQ(chosen, CS::epochAddressOf(store.global("left")));
+
+    put(store, "flag", "false");
+    evaluate(exec, "flag ? left.v : right.v");
+    ASSERT_EQ(exec.deps().count(), 3u)
+        << "набор второго прогона обязан быть непустым, а не просто короче";
+    EXPECT_EQ(exec.deps().at(2).epoch,
+              CS::epochAddressOf(store.global("right")))
+        << "набор перестроен под новый путь, а не дописан к старому";
+    for (std::uint32_t i = 0; i < exec.deps().count(); ++i) {
+        EXPECT_NE(exec.deps().at(i).epoch, chosen)
+            << "коробка невыбранной ветви осталась в наборе от прошлого раза";
+    }
+}
+
+TEST(EvalDeps, ACallRecordsItsCalleeArgumentBoxes) {
+    // Состав набора для вызова: у count(items) их две — ячейка имени и сама
+    // коробка, содержимое которой билтин прочитал. Без второй набор не
+    // отличает push(items, x) от отсутствия изменений (C1).
+    Store store;
+    CS::Execution exec(store);
+    put(store, "items", "[1, 2, 3]");
+    evaluate(exec, "count(items)");
+
+    ASSERT_EQ(exec.deps().count(), 2u);
+    EXPECT_EQ(exec.deps().at(0).epoch,
+              store.epochAddressAt(store.globalSlot("items")));
+    EXPECT_EQ(exec.deps().at(1).epoch,
+              CS::epochAddressOf(store.global("items")));
+    EXPECT_EQ(exec.deps().at(1).owner.kind(), Value::Kind::Array)
+        << "за коробку читателю надо держаться ретейном (§2.7)";
+}
+
+/// Снимок читателя: адреса эпох набора и их сумма (спека §2.4).
+///
+/// Копируется НЕМЕДЛЕННО после вычисления и живёт своей жизнью: следующий
+/// шаг теста — скрипт, а runScript набор не сбрасывает и пишет в него мусор
+/// за все стейтменты (execution.hpp). Читатель на границе кадра устроен так
+/// же: он уносит адреса к себе, а не подглядывает в движок.
+struct EpochSnapshot {
+    std::vector<const CS::Epoch *> epochs;
+    std::uint64_t sum = 0;
+};
+
+EpochSnapshot captureEpochs(const CS::Execution &exec) {
+    EpochSnapshot snapshot;
+    for (std::uint32_t i = 0; i < exec.deps().count(); ++i) {
+        const CS::Epoch *address = exec.deps().at(i).epoch;
+        snapshot.epochs.push_back(address);
+        snapshot.sum += *address;
+    }
+    return snapshot;
+}
+
+std::uint64_t resum(const EpochSnapshot &snapshot) {
+    std::uint64_t total = 0;
+    for (const CS::Epoch *address : snapshot.epochs) { total += *address; }
+    return total;
+}
+
+/// Прогон одного случая «изменение обязано быть замечено».
+///
+/// Вычисляет выражение, снимает сумму эпох, выполняет скрипт, меняющий
+/// СОДЕРЖИМОЕ агрегата, и требует, чтобы сумма разошлась. Совпадение здесь —
+/// ложное попадание: читатель отдал бы устаревшее значение, а схема обещает
+/// никогда этого не делать (спека §2.3).
+void expectSetSeesMutation(CS::Execution &exec, std::string_view expression,
+                           std::string_view mutation) {
+    evaluate(exec, expression);
+    const EpochSnapshot snapshot = captureEpochs(exec);
+    run(exec, mutation);
+    EXPECT_NE(resum(snapshot), snapshot.sum)
+        << "ложное попадание: " << expression << " против " << mutation;
+}
+
+TEST(EvalDeps, CountSeesTheContentsItRead) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "items", "[1, 2, 3]");
+    expectSetSeesMutation(exec, "count(items)", "push(items, 9);");
+}
+
+TEST(EvalDeps, KeysSeesTheContentsItRead) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "o", "{'a': 1}");
+    expectSetSeesMutation(exec, "count(keys(o))", "o.b = 2;");
+}
+
+TEST(EvalDeps, HasSeesTheContentsItRead) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "o", "{'a': 1}");
+    expectSetSeesMutation(exec, "has(o, 'b')", "o.b = 2;");
+}
+
+TEST(EvalDeps, LastSeesTheContentsItRead) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "items", "[1, 2, 3]");
+    expectSetSeesMutation(exec, "last(items)", "push(items, 9);");
+}
+
+TEST(EvalDeps, ANestedArgumentAggregateIsRecordedToo) {
+    // Вложенный случай: спуск записывает ячейку state и коробку state, а
+    // аргументом связывается третья коробка — сам массив. Три зависимости,
+    // потолок четыре (спека §2.3).
+    Store store;
+    CS::Execution exec(store);
+    put(store, "state", "{'items': [1, 2, 3]}");
+    evaluate(exec, "count(state.items)");
+    EXPECT_EQ(exec.deps().count(), 3u);
+
+    expectSetSeesMutation(exec, "count(state.items)", "push(state.items, 9);");
+}
+
+TEST(EvalDeps, AnObjectArgumentIsRecordedToo) {
+    Store store;
+    CS::Execution exec(store);
+    put(store, "state", "{'o': {'a': 1}}");
+    expectSetSeesMutation(exec, "count(state.o)", "state.o.b = 2;");
+}
+
+TEST(EvalDeps, IndexingIntoACallResultStillRecordsTheSourceBox) {
+    // Коробка, которую вернул вызов, рождается заново на каждом вычислении, и
+    // её эпоха после рождения не двигается уже никогда: спуск через неё
+    // записывает адрес, вечно совпадающий сам с собой. Держать набор на одном
+    // таком адресе нельзя — в нём обязан стоять и источник содержимого,
+    // коробка o, которую прочитал keys.
+    Store store;
+    CS::Execution exec(store);
+    put(store, "o", "{'a': 1}");
+    evaluate(exec, "keys(o)[0]");
+
+    const CS::Epoch *source = CS::epochAddressOf(store.global("o"));
+    bool recorded = false;
+    for (std::uint32_t i = 0; i < exec.deps().count(); ++i) {
+        if (exec.deps().at(i).epoch == source) { recorded = true; }
+    }
+    EXPECT_TRUE(recorded)
+        << "в наборе только свежерождённая коробка результата — её эпоха "
+           "никогда не двинется, и набор застыл бы навсегда";
 }
 
 }  // namespace

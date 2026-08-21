@@ -2182,7 +2182,89 @@ bool sumOfArray(ChupaContext *, const ChupaValue *args, size_t, ChupaValue *out,
     return true;
 }
 
+/// Кэшируемая хост-функция, читающая НИЖЕ первого уровня своего аргумента:
+/// ей передаётся объект, а суммирует она элементы вложенного массива.
+///
+/// Записать эпоху этого массива движок не может — она не всплывает вверх по
+/// дереву (arrayPush поднимает эпоху своей коробки и ничьей больше), а сам
+/// массив аргументом не связывался. Единственный честный ответ здесь —
+/// выражение не кэшируется вовсе.
+bool sumOfNestedItems(ChupaContext *, const ChupaValue *args, size_t,
+                      ChupaValue *out, void *) {
+    ChupaValue items;
+    if (!chupa_object_get(&args[0], "items", 5, &items)) { return false; }
+    double total = 0;
+    const size_t n = chupa_array_count(&items);
+    for (size_t i = 0; i < n; ++i) {
+        ChupaValue element;
+        chupa_array_at(&items, i, &element);
+        total += chupa_value_number(&element);
+    }
+    chupa_make_number(out, total);
+    return true;
+}
+
 }  // namespace
+
+TEST(CApiTracked, ANestedAggregateInAHostArgumentDisablesCaching) {
+    // Ложное попадание, найденное ре-ревью: total(state) читает state.items,
+    // push(state.items, 9) поднимает эпоху ArrayBox — коробки, которой нет ни
+    // в спуске (спуск дошёл только до state), ни среди аргументов (аргументом
+    // связан state, а не items). Оговоркой «не читайте ниже первого уровня»
+    // это не закрывается: такое правило хост нарушит случайно. Закрыто в
+    // движке — вложенный агрегат на верхнем уровне аргумента хост-вызова
+    // выключает кэширование выражения, тот же исход, что у переполнения.
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction desc = described("total", 1, 1, sumOfNestedItems);
+    ASSERT_TRUE(chupa_register(ctx, &desc));
+    ASSERT_TRUE(setGlobal(ctx, "state", "{'items': [1, 2, 3]}"));
+
+    ChupaExpression *expr = chupa_compile_expression(ctx, "total(state)", 12);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    EXPECT_EQ(chupa_value_number(&out), 6.0);
+    EXPECT_EQ(n, CHUPA_DEPS_OVERFLOW)
+        << "набор не может поручиться за содержимое, до которого хост "
+           "дотянулся сам";
+    for (const ChupaDep &dep : deps) { EXPECT_EQ(dep.epoch, nullptr); }
+
+    // Ответ и правда меняется — то есть попадание здесь было бы ложным, а не
+    // безвредным.
+    ChupaScript *script = chupa_compile_script(ctx, "push(state.items, 9);", 21);
+    ASSERT_NE(script, nullptr);
+    ASSERT_TRUE(chupa_run(ctx, script));
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    EXPECT_EQ(chupa_value_number(&out), 15.0);
+
+    chupa_script_destroy(script);
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
+
+TEST(CApiTracked, AFlatAggregateInAHostArgumentStaysCacheable) {
+    // Односторонность правила: плоский агрегат из скаляров кэшируется
+    // по-прежнему, и его собственная эпоха ловит любую правку элементов.
+    ChupaContext *ctx = chupa_context_create();
+    ChupaFunction desc = described("total", 1, 1, sumOfArray);
+    ASSERT_TRUE(chupa_register(ctx, &desc));
+    ASSERT_TRUE(setGlobal(ctx, "items", "[1, 2, 3]"));
+
+    ChupaExpression *expr = chupa_compile_expression(ctx, "total(items)", 12);
+    ASSERT_NE(expr, nullptr);
+
+    ChupaValue out;
+    ChupaDep deps[CHUPA_MAX_DEPS];
+    uint32_t n = 0;
+    ASSERT_TRUE(chupa_expression_eval_tracked(ctx, expr, &out, deps, &n));
+    EXPECT_EQ(n, 2u);
+
+    chupa_expression_destroy(expr);
+    chupa_context_destroy(ctx);
+}
 
 TEST(CApiTracked, ACacheableHostCallRecordsTheAggregateItWasHanded) {
     ChupaContext *ctx = chupa_context_create();

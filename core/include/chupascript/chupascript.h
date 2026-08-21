@@ -283,16 +283,33 @@ typedef enum ChupaFunctionFlags {
                                          * function that reads the CONTENTS of an
                                          * aggregate argument therefore is not
                                          * constant in its arguments in the naive
-                                         * sense — and the engine covers exactly this
-                                         * for it: an aggregate bound as a call
-                                         * argument is recorded as a dependency of
-                                         * the expression, so mutating its contents
-                                         * moves the epoch and the reader misses.
-                                         * The price is a dependency slot: total(items)
-                                         * costs two of CHUPA_MAX_DEPS, and an
-                                         * expression that runs past the ceiling stops
-                                         * being cached — recomputation, never a stale
-                                         * answer. */
+                                         * sense — and the engine covers this for it,
+                                         * at any depth the function chooses to read,
+                                         * with no rule for the host to remember:
+                                         *
+                                         *   - a FLAT aggregate bound as a call
+                                         *     argument is recorded as a dependency
+                                         *     of the expression, so mutating its
+                                         *     contents moves the epoch and the
+                                         *     reader misses. The price is a
+                                         *     dependency slot: total(items) costs two
+                                         *     of CHUPA_MAX_DEPS;
+                                         *   - an aggregate that holds another
+                                         *     aggregate at its top level disables
+                                         *     caching for the whole expression, the
+                                         *     same outcome as overflow. Epochs do not
+                                         *     bubble up a tree — push(state.items, x)
+                                         *     moves the array's epoch and nothing
+                                         *     else — so no dependency set could stand
+                                         *     for what the function reaches through a
+                                         *     nested handle, and the engine declines
+                                         *     to pretend otherwise.
+                                         *
+                                         * So read as deep as you like: the answer is
+                                         * either watched or recomputed, never stale.
+                                         * An expression past the ceiling likewise
+                                         * stops being cached — recomputation, never a
+                                         * stale answer. */
 } ChupaFunctionFlags;
 
 /* No upper bound on argument count — as format has. */

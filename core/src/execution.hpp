@@ -66,6 +66,18 @@ class DepSet {
         deps_[count_++] = Dep{epoch, owner};
     }
 
+    /// Отказаться ручаться за это вычисление: набор описать его не может.
+    ///
+    /// Исход для читателя тот же, что у переполнения — CHUPA_DEPS_OVERFLOW,
+    /// полный путь на каждом кадре, — поэтому флаг один, а не два: у
+    /// переполнения и у отказа разные причины, но последствие ровно одно, и
+    /// второй флаг пришлось бы сводить с первым в каждом читателе.
+    ///
+    /// Сегодня зовётся из одного места: хост-вызову передан агрегат, у
+    /// которого на верхнем уровне лежит другой агрегат (recordArgument и
+    /// соседи в core/src/eval.cpp).
+    void refuse() noexcept { overflowed_ = true; }
+
     [[nodiscard]] std::uint32_t count() const noexcept { return count_; }
     [[nodiscard]] bool overflowed() const noexcept { return overflowed_; }
 

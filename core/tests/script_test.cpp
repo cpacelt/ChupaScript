@@ -34,42 +34,33 @@ TEST(Script, CompilesAndRuns) {
 
 TEST(Script, OwnsItsSource) {
     CS::Deferred dead;
-    // Прямое присваивание имени переменной запрещено языком
-    // (core/src/check.cpp: "cannot assign to a variable name",
-    // docs/semantics.md §7.2) — целью обязана быть Member/Index. Поэтому
-    // вместо "n = n + 1;" из брифа берём поле объекта: та же суть теста
-    // (владение исходником, временный буфер умирает сразу), синтаксис —
-    // тот, что разрешает check.cpp.
     CS::Store store;
     CS::Execution exec(store);
     CS::Diagnostic diag;
-    ASSERT_TRUE(CS::setVariable(store, dead, "obj", "{'n': 1}", diag));
+    store.setGlobal("n", CS::Value::number(1), dead);
 
     CS::Script script;
     CS::Diagnostic diags[1];
     {
-        std::string temporary = "obj.n = obj.n + 1;";
+        std::string temporary = "n = n + 1;";
         ASSERT_EQ(CS::Script::compile(temporary, store, &script, diags, 1), 0u);
     }
-    EXPECT_EQ(script.source(), "obj.n = obj.n + 1;");
+    // Временный буфер умер вместе с областью видимости: единица обязана
+    // держать собственную копию исходника.
+    EXPECT_EQ(script.source(), "n = n + 1;");
     EXPECT_TRUE(script.run(exec, diag));
+    EXPECT_EQ(store.global("n").numberValue(), 2.0);
 }
 
 TEST(Script, ReportsUnknownName) {
-    // Цель присваивания — Member, а не голый Identifier, чтобы сработала
-    // только проверка "unknown name": "missing = 1;" из брифа даёт вдобавок
-    // "cannot assign to a variable name" (check.cpp), то есть 2 ошибки, а не
-    // 1, как утверждает бриф.
-    //
     // diags[0].message пришпилен к точному тексту (review round 2, M8):
-    // код ErrorCode::Name общий у обеих проверок check.cpp — "unknown name"
-    // и "cannot assign to a variable name" — тест был бы зелёным, поймав
-    // не ту.
+    // код ErrorCode::Name общий у нескольких проверок check.cpp — тест был
+    // бы зелёным, поймав не ту.
     CS::Store store;
     CS::Execution exec(store);
     CS::Script script;
     CS::Diagnostic diags[2];
-    EXPECT_EQ(CS::Script::compile("missing.field = 1;", store, &script, diags, 2),
+    EXPECT_EQ(CS::Script::compile("missing = 1;", store, &script, diags, 2),
               1u);
     EXPECT_EQ(diags[0].code, CS::ErrorCode::Name);
     EXPECT_STREQ(diags[0].message, "unknown name");
@@ -155,16 +146,13 @@ TEST(Script, RefusesToEvaluateOnAnotherStore) {
     CS::Store foreign;
     CS::Deferred dead;
     CS::Diagnostic diag;
-    // Direct assignment to a variable name is rejected by the language
-    // (check.cpp: "cannot assign to a variable name"), so the target is an
-    // object field, same as OwnsItsSource above.
-    ASSERT_TRUE(CS::setVariable(home, dead, "x", "{'n': 1}", diag));
+    ASSERT_TRUE(CS::setVariable(home, dead, "x", "1", diag));
 
     CS::Script script;
     CS::Diagnostic diags[1];
-    // Assigns a value different from the field's current one, so a run that
-    // slipped through despite the refusal would be visible below.
-    ASSERT_EQ(CS::Script::compile("x.n = 2;", home, &script, diags, 1), 0u);
+    // Assigns a value different from the variable's current one, so a run
+    // that slipped through despite the refusal would be visible below.
+    ASSERT_EQ(CS::Script::compile("x = 2;", home, &script, diags, 1), 0u);
 
     CS::Execution elsewhere(foreign);
     CS::Diagnostic failure;
@@ -172,8 +160,7 @@ TEST(Script, RefusesToEvaluateOnAnotherStore) {
     EXPECT_EQ(failure.code, CS::ErrorCode::Usage);
 
     // The refused run must not have written through to home's variable.
-    const CS::Value x = home.global("x");
-    EXPECT_DOUBLE_EQ(CS::objectGet(x, "n").numberValue(), 1.0);
+    EXPECT_DOUBLE_EQ(home.global("x").numberValue(), 1.0);
 }
 
 }  // namespace

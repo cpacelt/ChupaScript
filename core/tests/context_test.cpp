@@ -206,9 +206,11 @@ TEST(Context, StoredComputedStringSurvivesLaterOperations) {
 
 #ifndef NDEBUG
 TEST(ContextMemory, RewrittenGlobalDoesNotGrowForever) {
-    // Присваивать переменную целиком язык не даёт (check.cpp: «cannot assign
-    // to a variable name»), так что переписывает её только хост — и это
-    // основной случай: бэкенд шлёт новые данные на каждое обновление экрана.
+    // Здесь меряется путь хоста — setVariableText: бэкенд шлёт новые данные на
+    // каждое обновление экрана, и это основной случай перезаписи. Путь
+    // программы (присваивание имени, docs/semantics.md §7.2) отпускает
+    // вытесненное той же дверью Store и меряется в store_test.cpp
+    // (StoreGlobals.SetGlobalAtReleasesTheDisplacedBox).
     //
     // Раньше прежний массив оставался в пуле навсегда, и двести обновлений
     // держали двести массивов. Меряется счётчиком живых коробок: память коробки

@@ -15,8 +15,7 @@ public enum ErrorCode: Sendable, Equatable {
     /// Текст не разобрался (`docs/grammar.md`).
     case syntax
 
-    /// Имя неизвестно, либо цель присваивания негодная
-    /// (`docs/semantics.md` §7).
+    /// Имя неизвестно (`docs/semantics.md` §7).
     case name
 
     /// Значение оказалось не того типа, которого требует операция.

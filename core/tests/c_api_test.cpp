@@ -711,8 +711,9 @@ TEST(CApi, UnitOutlivesTheContextItWasCompiledAgainst) {
 TEST(CApi, ScriptIsOwnedByHost) {
     ChupaContext* ctx = chupa_context_create();
     ASSERT_NE(ctx, nullptr);
-    // Цель присваивания обязана быть Member или Index (docs/semantics.md
-    // §7.2), голый идентификатор язык отвергает — отсюда объект.
+    // Объект — не потому, что цель присваивания обязана быть Member или Index
+    // (голое имя тоже законно, docs/semantics.md §7.2): здесь просто нужно
+    // поле, которое скрипт читает и туда же пишет.
     ASSERT_TRUE(chupa_context_set_data(ctx, "obj", 3, "{ 'n': 1 }", 10));
 
     ChupaScript* s = chupa_compile_script(ctx, "obj.n = obj.n + 1;", 18);

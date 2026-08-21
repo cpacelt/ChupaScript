@@ -1005,6 +1005,34 @@ TEST(EvalAssignToName, ReplacingTheBindingLeavesTheAliasAlone) {
     EXPECT_EQ(evaluate(exec, "b.k").numberValue(), 1.0);
 }
 
+#ifndef NDEBUG
+TEST(EvalAssignToName,
+     ReplacingTheBindingWithAnAggregateReleasesTheDisplacedBox) {
+    const std::size_t empty = CS::detail::liveBoxCount();
+    {
+        Store store;
+        CS::Execution exec(store);
+        CS::Deferred dead;
+        // Тот же алиас, что и выше, но привязка меняется на агрегат, а не на
+        // скаляр: это единственный путь, которым evalTracked заходит в
+        // retain-a-box ветку setGlobalAt, а не только в retain-a-scalar.
+        const Value shared = CS::makeObject(store.keys(), 1, store.clock(), dead);
+        store.setGlobal("a", shared, dead);
+        store.setGlobal("b", shared, dead);
+        run(exec, "a.k = 1;");
+
+        run(exec, "a = {'k': 2};");
+
+        // Привязка a ушла на новую коробку; b по-прежнему смотрит на старую
+        // — алиас не следует за присваиванием имени (§2.3).
+        EXPECT_EQ(evaluate(exec, "b.k").numberValue(), 1.0);
+        EXPECT_EQ(evaluate(exec, "a.k").numberValue(), 2.0);
+    }
+    // Хранилище умерло вместе с обеими коробками — вытесненная не потекла.
+    EXPECT_EQ(CS::detail::liveBoxCount(), empty);
+}
+#endif
+
 TEST(EvalCompound, FourOperatorsWorkOnAKey) {
     Store store;
     CS::Execution exec(store);

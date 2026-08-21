@@ -224,6 +224,13 @@ void runCacheAllHits(benchmark::State &state, std::string_view source) {
 // пишется переменная, от которой это выражение НЕ зависит: у константы
 // набор зависимостей пуст, и никакая запись извне его не заденет — этот факт
 // стоит того, чтобы быть видимым в отчёте, а не спрятанным подменой строки.
+//
+// У этого режима есть безкэшевая пара — runCacheBaselineNoHits ниже — та же
+// запись, тем же писателем, на каждой же итерации, только вместо кэша прямой
+// ctx.eval. Без неё «дороже кэш или дешевле» неотличимо от «дороже одна
+// запись сама по себе»: запись — работа хоста, она идёт что с кэшем, что без
+// него, и не должна целиком записываться в счёт кэша (§5.4: сравнение на
+// одном дереве и одних данных, а значит и при одной и той же прочей работе).
 
 void runCacheNoHits(benchmark::State &state, std::string_view source,
                     Writer writer) {
@@ -264,15 +271,63 @@ void runCacheNoHits(benchmark::State &state, std::string_view source,
     publishHitRate(state, iters, misses);
 }
 
+/// Безкэшевая пара для NoHits: та же запись, тем же писателем, на каждой же
+/// итерации, вместо кэша — прямой ctx.eval. Изолирует цену промаха от цены
+/// самой записи (см. комментарий у runCacheNoHits).
+void runCacheBaselineNoHits(benchmark::State &state, std::string_view source,
+                            Writer writer) {
+    Context ctx;
+    if (!fillScreen(ctx)) { state.SkipWithError("fillScreen failed"); return; }
+
+    Expression expr;
+    Diagnostic diags[1];
+    if (ctx.compileExpression(source, &expr, diags, 1) != 0) {
+        state.SkipWithError("compile failed");
+        return;
+    }
+
+    if (!writer.prepare(ctx)) {
+        state.SkipWithError("writer prepare failed");
+        return;
+    }
+
+    Diagnostic diag;
+    for (auto _ : state) {
+        Diagnostic wdiag;
+        if (!writer.apply(ctx, wdiag)) {
+            state.SkipWithError("write failed");
+            return;
+        }
+        Value out = Value::null();
+        if (!ctx.eval(expr, &out, diag)) {
+            state.SkipWithError("eval failed");
+            return;
+        }
+        benchmark::DoNotOptimize(out);
+    }
+}
+
 // ─── Режим 3: смесь — доля попаданий из устройства потребителя (§5.2.3) ───
 //
 // У бенчмарка нет доступа к телеметрии живого экрана, поэтому "устройство
-// потребителя" смоделировано явно: восемь переменных типичного экрана
-// (§1 спеки — одна запись, потом полная раскладка, потом чтение всех
-// выражений), запись идёт по кругу равномерно. Доля попаданий НЕ назначена
-// числом — она следует из того, сколько из восьми переменных пула
-// действительно затрагивает зависимости конкретного выражения, и печатается
-// в hit_rate по факту прогона, а не заранее.
+// потребителя" смоделировано явно: восемь переменных типичного экрана,
+// запись идёт по кругу равномерно. Доля попаданий НЕ назначена числом — она
+// следует из того, сколько из восьми переменных пула действительно
+// затрагивает зависимости конкретного выражения, и печатается в hit_rate по
+// факту прогона, а не заранее.
+//
+// §1/§5.2.3 описывают устройство потребителя так: одна запись — полная
+// раскладка — чтение ВСЕХ выражений экрана, а не одно выражение на одну
+// запись. Первая версия этого файла читала ровно одно выражение на каждую
+// запись — цена записи оказывалась полностью на счету однократного чтения,
+// вместо того чтобы размазаться по всей раскладке, как в реальном кадре.
+// Здесь запись пула происходит не на каждой итерации, а раз в kLayoutSize
+// итераций — kLayoutSize смоделирован как размер "раскладки" в шесть
+// выражений, зафиксированных составом §5.1 (сам список строк отчёта и есть
+// модельный экран: одна запись, потом шесть чтений, потом снова запись).
+// Это по-прежнему модель, а не телеметрия — оговорка называется явно, как
+// того требует правило "число без оговорки не число".
+constexpr std::size_t kLayoutSize = 6;
 
 struct ScreenPool {
     std::vector<Writer> writers;
@@ -323,15 +378,18 @@ void runCacheMixed(benchmark::State &state, std::string_view source) {
 
     CacheReader reader;
     Diagnostic diag;
-    std::size_t idx = 0;
+    std::size_t writeIdx = 0;
     std::uint64_t misses = 0, iters = 0;
     for (auto _ : state) {
-        Diagnostic wdiag;
-        if (!pool.writers[idx % pool.writers.size()].apply(ctx, wdiag)) {
-            state.SkipWithError("write failed");
-            return;
+        if (iters % kLayoutSize == 0) {
+            Diagnostic wdiag;
+            if (!pool.writers[writeIdx % pool.writers.size()].apply(ctx,
+                                                                     wdiag)) {
+                state.SkipWithError("write failed");
+                return;
+            }
+            ++writeIdx;
         }
-        ++idx;
         Value out = Value::null();
         ReadResult r = reader.read(ctx, expr, &out, diag);
         if (r == ReadResult::Failed) {
@@ -343,6 +401,50 @@ void runCacheMixed(benchmark::State &state, std::string_view source) {
         benchmark::DoNotOptimize(out);
     }
     publishHitRate(state, iters, misses);
+}
+
+/// Безкэшевая пара для Mixed: тот же пул, то же расписание записи (раз в
+/// kLayoutSize итераций, та же последовательность писателей от нуля), вместо
+/// кэша — прямой ctx.eval на каждой итерации. Изолирует цену смеси от цены
+/// записи, которая идёт одинаково по обе стороны сравнения.
+void runCacheBaselineMixed(benchmark::State &state, std::string_view source) {
+    Context ctx;
+    if (!fillScreen(ctx)) { state.SkipWithError("fillScreen failed"); return; }
+
+    Expression expr;
+    Diagnostic diags[1];
+    if (ctx.compileExpression(source, &expr, diags, 1) != 0) {
+        state.SkipWithError("compile failed");
+        return;
+    }
+
+    ScreenPool pool = makeScreenPool();
+    if (!preparePool(ctx, pool)) {
+        state.SkipWithError("pool prepare failed");
+        return;
+    }
+
+    Diagnostic diag;
+    std::size_t writeIdx = 0;
+    std::uint64_t iters = 0;
+    for (auto _ : state) {
+        if (iters % kLayoutSize == 0) {
+            Diagnostic wdiag;
+            if (!pool.writers[writeIdx % pool.writers.size()].apply(ctx,
+                                                                     wdiag)) {
+                state.SkipWithError("write failed");
+                return;
+            }
+            ++writeIdx;
+        }
+        Value out = Value::null();
+        if (!ctx.eval(expr, &out, diag)) {
+            state.SkipWithError("eval failed");
+            return;
+        }
+        ++iters;
+        benchmark::DoNotOptimize(out);
+    }
 }
 
 // ─── Базовая линия: то же дерево, те же данные, без кэша (§5.4) ───────────
@@ -380,10 +482,18 @@ void runCacheBaseline(benchmark::State &state, std::string_view source) {
         runCacheNoHits(state, Source, WriterExpr);                          \
     }                                                                       \
     BENCHMARK(BM_Cache_##Name##_NoHits);                                    \
+    void BM_Cache_##Name##_Baseline_NoHits(benchmark::State &state) {        \
+        runCacheBaselineNoHits(state, Source, WriterExpr);                  \
+    }                                                                       \
+    BENCHMARK(BM_Cache_##Name##_Baseline_NoHits);                           \
     void BM_Cache_##Name##_Mixed(benchmark::State &state) {                  \
         runCacheMixed(state, Source);                                       \
     }                                                                       \
     BENCHMARK(BM_Cache_##Name##_Mixed);                                     \
+    void BM_Cache_##Name##_Baseline_Mixed(benchmark::State &state) {         \
+        runCacheBaselineMixed(state, Source);                               \
+    }                                                                       \
+    BENCHMARK(BM_Cache_##Name##_Baseline_Mixed);                            \
     void BM_Cache_##Name##_Baseline(benchmark::State &state) {               \
         runCacheBaseline(state, Source);                                    \
     }                                                                       \

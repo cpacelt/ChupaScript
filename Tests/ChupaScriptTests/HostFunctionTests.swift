@@ -117,7 +117,11 @@ final class HostFunctionTests: XCTestCase {
 
     /// Замыкание не переживает контекст и не течёт: release снимает удержание.
     func testClosureIsReleasedWithTheContext() throws {
-        final class Witness { static var alive = 0; init() { Witness.alive += 1 }
+        // nonisolated(unsafe): счётчик живых экземпляров — единственный способ
+        // увидеть освобождение изнутри теста, а `deinit` в изолированный
+        // контекст не поставить. Тест однопоточный, гонки взяться неоткуда.
+        final class Witness { nonisolated(unsafe) static var alive = 0
+                              init() { Witness.alive += 1 }
                               deinit { Witness.alive -= 1 } }
         XCTAssertEqual(Witness.alive, 0)
         do {

@@ -14,7 +14,9 @@ wrapper (pod `ChupaScript`); host code has no reason to depend on this pod
 directly.
                        DESC
   s.homepage         = 'https://github.com/cpacelt/ChupaScript'
-  s.license          = { :type => 'Proprietary' }
+  # Вендоренная double-conversion компилируется именно в этот под, поэтому
+  # обязанность воспроизвести её BSD-3 лежит здесь (docs/backlog.md B44).
+  s.license          = { :type => 'Proprietary', :file => 'NOTICE.md' }
   s.author           = { 'Roman Putintsev' => 'roman.putincev@ok.ru' }
   s.source           = { :git => 'https://github.com/cpacelt/ChupaScript.git', :tag => s.version.to_s }
 
@@ -32,7 +34,7 @@ directly.
     'third_party/double-conversion/double-conversion/*.{h,cc}'
   ]
 
-  s.preserve_paths = 'core/include/**/*'
+  s.preserve_paths = ['core/include/**/*', 'third_party/double-conversion/LICENSE']
 
   s.libraries = 'c++'
 

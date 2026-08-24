@@ -129,4 +129,72 @@ final class CachedExpressionTests: XCTestCase {
         XCTAssertEqual(try cached.value(), 42)
         XCTAssertEqual(cached.missCount, 2)
     }
+
+    // MARK: - isStale
+
+    func testANewReaderIsStale() throws {
+        let ctx = Context()
+        try ctx.set("name", "Вася")
+        let cached = CachedExpression(try ctx.compile(expression: "name") as ChupaScript.Expression<String>)
+
+        XCTAssertTrue(cached.isStale, "до первого чтения сравнивать не с чем")
+    }
+
+    func testAReadClearsStale() throws {
+        let ctx = Context()
+        try ctx.set("name", "Вася")
+        let cached = CachedExpression(try ctx.compile(expression: "name") as ChupaScript.Expression<String>)
+
+        _ = try cached.value()
+
+        XCTAssertFalse(cached.isStale)
+    }
+
+    func testAWriteMakesItStale() throws {
+        let ctx = Context()
+        try ctx.set("name", "Вася")
+        let cached = CachedExpression(try ctx.compile(expression: "name") as ChupaScript.Expression<String>)
+        _ = try cached.value()
+
+        try ctx.set("name", "Петя")
+
+        XCTAssertTrue(cached.isStale)
+    }
+
+    func testTouchingANeighbourLeavesItFresh() throws {
+        // Ровно то, ради чего вопрос задаётся: сосед сдвинулся, а виджет,
+        // читающий другой элемент, будиться не должен.
+        let ctx = Context()
+        try ctx.set("users", text: "[{'name': 'Вася'}, {'name': 'Петя'}]")
+        let cached = CachedExpression(try ctx.compile(expression: "users[0].name") as ChupaScript.Expression<String>)
+        _ = try cached.value()
+
+        try ctx.run(try ctx.compile(script: "users[1].name = 'Аня';"))
+
+        XCTAssertFalse(cached.isStale)
+    }
+
+    func testAskingDoesNotEnterTheEngine() throws {
+        let ctx = Context()
+        try ctx.set("name", "Вася")
+        let cached = CachedExpression(try ctx.compile(expression: "name") as ChupaScript.Expression<String>)
+        _ = try cached.value()
+
+        try ctx.set("name", "Петя")
+        XCTAssertTrue(cached.isStale)
+        XCTAssertTrue(cached.isStale)
+
+        XCTAssertEqual(cached.missCount, 1, "вопрос задаётся без вычисления")
+    }
+
+    func testAnUncacheableExpressionIsAlwaysStale() throws {
+        let ctx = Context()
+        try ctx.register("now", flags: [.returnsValue, .effectFree]) { 7.0 }
+        let cached = CachedExpression(
+            try ctx.compile(expression: "format('${}', now())") as ChupaScript.Expression<String>)
+
+        _ = try cached.value()
+
+        XCTAssertTrue(cached.isStale, "набор не годится — ответить «свежий» нечем")
+    }
 }

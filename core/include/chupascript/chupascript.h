@@ -216,15 +216,28 @@ typedef void (*ChupaRedrawListener)(ChupaContext *ctx,
                                     void *CHUPA_NULLABLE user_data);
 
 /* ╔══════════════════════════════════════════════════════════════════════╗
- * ║ UAF-2 — ctx does NOT retain user_data and cannot know when it dies.  ║
+ * ║ ctx does NOT retain user_data and cannot know when it dies.          ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  * chupa_context_destroy does NOT clear the listener and does NOT call it a
  * final time. Clearing it is the host's duty — chupa_context_on_redraw(ctx,
  * NULL, NULL) — BEFORE the object that user_data points at is destroyed.
- * The Swift wrapper does not do this today: see swift/Context.swift, UAF-2.
+ *
+ * Clear it before chupa_context_destroy, not after and not instead: destroy
+ * refuses while an evaluation is on the stack, and that call is reachable —
+ * the evaluation mark is already down when the redraw listener runs, so a
+ * host that releases its last reference from inside the notification lands
+ * in its own teardown mid-operation. On that path the context outlives the
+ * host object, and only a clear that happened first keeps user_data honest.
+ *
+ * The Swift wrapper does this in Context.deinit.
  */
+/* listener is nullable, and that is the whole unregister mechanism: passing
+ * NULL is how a host takes the listener back. Marking it non-null (which the
+ * assume_nonnull region does by default) makes the contract two lines above
+ * unreachable from Swift, where a non-optional function pointer cannot be
+ * given a nil. */
 CHUPA_API void chupa_context_on_redraw(ChupaContext *ctx,
-                                       ChupaRedrawListener listener,
+                                       ChupaRedrawListener CHUPA_NULLABLE listener,
                                        void *CHUPA_NULLABLE user_data);
 
 CHUPA_API ChupaExpression *CHUPA_NULLABLE

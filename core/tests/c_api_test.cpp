@@ -658,6 +658,48 @@ TEST(CApiRedraw, NoFireWithoutListener) {
     chupa_context_destroy(ctx);
 }
 
+// Снятие слушателя — тот самый механизм, на который опирается Context.deinit
+// в Swift-обвязке (docs/backlog.md B38). До этого теста он не проверялся
+// ничем: NoFireWithoutListener выше слушателя вовсе не ставит, то есть
+// проверяет отсутствие, а не снятие.
+TEST(CApiRedraw, ClearingTheListenerStopsFiring) {
+    g_redrawCount = 0;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    chupa_context_on_redraw(ctx, testRedrawListener, nullptr);
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
+    ASSERT_EQ(g_redrawCount, 1);
+
+    chupa_context_on_redraw(ctx, nullptr, nullptr);
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, false));
+
+    EXPECT_EQ(g_redrawCount, 1);
+    chupa_context_destroy(ctx);
+}
+
+// Снятие обязано убирать и user_data: хост зовёт его именно потому, что
+// объект, на который тот указывает, вот-вот перестанет существовать. Ставим
+// слушателя заново с другими данными и убеждаемся, что прежние не всплывают.
+TEST(CApiRedraw, ClearingForgetsTheUserData) {
+    g_redrawCount = 0;
+    int first = 1;
+    int second = 2;
+    ChupaContext* ctx = chupa_context_create();
+    ASSERT_NE(ctx, nullptr);
+    auto listener = [](ChupaContext* /*ctx*/, void* user_data) {
+        g_redrawCount++;
+        EXPECT_EQ(*static_cast<int*>(user_data), 2);
+    };
+
+    chupa_context_on_redraw(ctx, listener, &first);
+    chupa_context_on_redraw(ctx, nullptr, nullptr);
+    chupa_context_on_redraw(ctx, listener, &second);
+    EXPECT_TRUE(chupa_context_set_bool(ctx, "flag", 4, true));
+
+    EXPECT_EQ(g_redrawCount, 1);
+    chupa_context_destroy(ctx);
+}
+
 TEST(CApiRedraw, UserDataPassedThrough) {
     g_redrawCount = 0;
     int marker = 42;

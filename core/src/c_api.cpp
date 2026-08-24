@@ -132,13 +132,16 @@ void chupa_context_destroy(ChupaContext* ctx) {
     // the host really does this — a host bug either way — and a leak beats
     // destruction out from under yourself.
     if (refuseWhileEvaluating(c)) { return; }
-    // ⚠️ UAF-2 — ЗДЕСЬ НИЧЕГО НЕ СНИМАЕТСЯ.
-    // Ни redrawListener, ни redrawUserData не обнуляются перед delete.
-    // Снятия колбэка нет ни здесь, ни в Swift: swift/Context.swift не зовёт
-    // chupa_context_on_redraw(handle, nil, nil) ни в deinit, ни где-либо ещё.
-    // (Раньше здесь приводилась цитата из шапки swift/ChupaContext.swift,
-    // утверждавшей обратное. Задача 7 ложную фразу удалила — дефект от этого
-    // не исчез, см. B38.)
+    // Слушатель здесь намеренно не снимается, и это не пропуск.
+    //
+    // Обнулять его перед delete незачем: следующая строка забирает всю
+    // структуру, и обнулённое поле никто уже не прочтёт. А на единственном
+    // пути, где контекст переживает вызов — отказ выше, — обнулять нельзя:
+    // живой контекст молча перестал бы уведомлять.
+    //
+    // Снятие поэтому живёт у хоста и до вызова, который вправе отказать:
+    // Sources/ChupaScript/Context.swift, deinit. Контракт записан в
+    // chupascript.h рядом с chupa_context_on_redraw.
     delete c;
 }
 

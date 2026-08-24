@@ -30,7 +30,21 @@ public final class Context {
         registerRedrawCallback()
     }
 
+    /// Снятие слушателя — до уничтожения, и порядок здесь не косметический.
+    ///
+    /// `chupa_context_destroy` отказывает, если его позвали посреди вычисления
+    /// (`refuseWhileEvaluating`), и такой вызов достижим: флаг вычисления к
+    /// моменту уведомления о перерисовке уже снят, поэтому хост, отпустивший
+    /// последнюю ссылку прямо из своего `contextNeedsRedraw`, приходит сюда
+    /// изнутри кадра той самой операции. На этом пути ядро остаётся жить — и
+    /// без снятия в нём остался бы указатель на объект, который вот-вот
+    /// перестанет существовать.
+    ///
+    /// Отменить `deinit` нельзя, а отказать в уничтожении ядро может. Значит
+    /// единственное место, где снятие гарантированно происходит, — здесь, и
+    /// до вызова, который вправе не сработать.
     deinit {
+        chupa_context_on_redraw(handle, nil, nil)
         chupa_context_destroy(handle)
     }
 
@@ -186,14 +200,16 @@ public final class Context {
 
     // MARK: - Redraw trampoline
 
-    /// UAF-2 (backlog B38) — not fixed here, and this comment must not read as
-    /// if it were. The engine neither retains `user_data` nor unregisters the
-    /// listener in `chupa_context_destroy`; unregistering is the host's job
-    /// (`chupa_context_on_redraw(ctx, nil, nil)`), and this wrapper does not do
-    /// it anywhere, including `deinit`. `passUnretained` is the right half of
-    /// the pair — `passRetained` would make the context own itself and `deinit`
-    /// would never run — but the other half, the guaranteed unregister, is
-    /// missing.
+    /// `passUnretained`, и вторая половина пары — снятие в `deinit`.
+    ///
+    /// Ядро `user_data` не удерживает и о смерти того, на кого он указывает,
+    /// узнать не может; снятие — обязанность хоста (`chupascript.h`, блок про
+    /// владение). `passRetained` эту обязанность не заменил бы, а сделал бы
+    /// невыполнимой: контекст стал бы владельцем самого себя, `deinit` не
+    /// случился бы никогда, а вместе с ним и снятие, которое в нём живёт.
+    ///
+    /// Сторожит `RedrawTests.testTheContextDoesNotRetainItself`: подмена
+    /// одного слова здесь ломает освобождение тихо, отказом она не выглядит.
     private func registerRedrawCallback() {
         let ptr = Unmanaged.passUnretained(self).toOpaque()
         // The closure captures nothing, so it converts to a C function pointer.

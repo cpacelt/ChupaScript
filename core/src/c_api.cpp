@@ -43,18 +43,16 @@ struct ChupaContext {
     /// приходит выходным параметром Diagnostic & (core/src/expression.hpp).
     CS::Diagnostic lastError;
 
-    // ╔════════════════════════════════════════════════════════════════════╗
-    // ║ UAF-2 (C-половина) — колбэк переживает того, на кого указывает     ║
-    // ╚════════════════════════════════════════════════════════════════════╝
-    //
     // redrawUserData — непрозрачный указатель на объект хоста. В Swift это
-    // Unmanaged.passUnretained(Context), см. swift/Context.swift.
-    // Здесь его никто не удерживает и никто не проверяет на живость.
+    // Unmanaged.passUnretained(Context), см. Sources/ChupaScript/Context.swift.
+    // Здесь его никто не удерживает и никто не проверяет на живость: узнать о
+    // смерти того, на кого он указывает, ядру нечем.
     //
-    // chupa_context_destroy (ниже) просто delete'ит — листенер не обнуляется
-    // и не вызывается на прощание. Пока хост сам не снимет колбэк перед
-    // разрушением, любой notifyRedraw по мёртвому user_data — это UAF.
-    // Swift-обёртка этого не делает: снятия нет нигде.
+    // Поэтому снятие — обязанность хоста, и она записана в chupascript.h рядом
+    // с chupa_context_on_redraw: chupa_context_on_redraw(ctx, NULL, NULL) до
+    // того, как объект перестанет существовать. Swift-обвязка делает это в
+    // Context.deinit, до вызова chupa_context_destroy — тот вправе отказать,
+    // а deinit отменить нельзя.
     ChupaRedrawListener redrawListener = nullptr;
     void* redrawUserData = nullptr;
 
